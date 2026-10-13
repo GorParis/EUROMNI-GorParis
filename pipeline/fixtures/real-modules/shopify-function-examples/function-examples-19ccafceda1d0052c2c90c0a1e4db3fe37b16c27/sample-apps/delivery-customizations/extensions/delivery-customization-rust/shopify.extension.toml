@@ -1,0 +1,21 @@
+api_version = "2024-04"
+
+[[extensions]]
+handle = "delivery-customization-rust"
+name = "t:name"
+description = "t:description"
+type = "function"
+
+  [[extensions.targeting]]
+  target = "purchase.delivery-customization.run"
+  input_query = "src/run.graphql"
+  export = "run"
+
+  [extensions.build]
+  command = "cargo build --target=wasm32-wasip1 --release"
+  path = "target/wasm32-wasip1/release/delivery-customization-rust.wasm"
+  watch = [ "src/**/*.rs" ]
+
+  [extensions.ui.paths]
+  create = "/app/delivery-customization/:functionId/new"
+  details = "/app/delivery-customization/:functionId/:id"

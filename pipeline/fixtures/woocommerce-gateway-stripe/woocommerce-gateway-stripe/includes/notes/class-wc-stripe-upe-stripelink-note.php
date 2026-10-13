@@ -1,0 +1,93 @@
+<?php
+/**
+ * Display a notice to merchants to inform about Stripe Link.
+ *
+ * @package WooCommerce\Payments\Admin
+ */
+
+use Automattic\WooCommerce\Admin\Notes\NoteTraits;
+use Automattic\WooCommerce\Admin\Notes\Note;
+
+defined( 'ABSPATH' ) || exit;
+
+/**
+ * Class WC_Stripe_UPE_StripeLink_Note
+ */
+class WC_Stripe_UPE_StripeLink_Note {
+	use NoteTraits;
+
+	/**
+	 * Name of the note for use in the database.
+	 */
+	public const NOTE_NAME = 'wc-stripe-upe-stripelink-note';
+
+	/**
+	 * Link to Stripe Link documentation.
+	 */
+	public const NOTE_DOCUMENTATION_URL = 'https://woocommerce.com/document/stripe/setup-and-configuration/express-checkouts/';
+
+	/**
+	 * Get the note.
+	 *
+	 * @return Note
+	 */
+	public static function get_note() {
+		$note = new Note();
+
+		$note->set_title( __( 'Increase conversion at checkout', 'woocommerce-gateway-stripe' ) );
+		$note->set_content( __( 'Reduce cart abandonment and create a frictionless checkout experience with Link by Stripe. Link autofills your customer’s payment and shipping details so they can check out in just six seconds with the Link optimized experience.', 'woocommerce-gateway-stripe' ) );
+
+		$note->set_type( Note::E_WC_ADMIN_NOTE_INFORMATIONAL );
+		$note->set_name( self::NOTE_NAME );
+		$note->set_source( 'woocommerce-gateway-stripe' );
+		$note->add_action(
+			self::NOTE_NAME,
+			__( 'Set up now', 'woocommerce-gateway-stripe' ),
+			self::NOTE_DOCUMENTATION_URL,
+			Note::E_WC_ADMIN_NOTE_UNACTIONED,
+			true
+		);
+
+		return $note;
+	}
+
+	/**
+	 * Init Link payment method notification
+	 *
+	 * @param WC_Stripe_Payment_Gateway $gateway
+	 *
+	 * @return void
+	 * @throws \Automattic\WooCommerce\Admin\Notes\NotesUnavailableException
+	 */
+	public static function init( WC_Stripe_Payment_Gateway $gateway ) {
+		// Skip if the Stripe gateway itself is disabled — no UPE note is relevant in that case.
+		$stripe_settings = WC_Stripe_Helper::get_stripe_settings();
+		if ( empty( $stripe_settings['enabled'] ) || 'yes' !== $stripe_settings['enabled'] ) {
+			return;
+		}
+
+		// Check if Link payment is available.
+		$available_upe_payment_methods = $gateway->get_upe_available_payment_methods();
+
+		if ( ! in_array( WC_Stripe_UPE_Payment_Method_Link::STRIPE_ID, $available_upe_payment_methods, true ) ) {
+			return;
+		}
+
+		// If store currency is not USD, skip
+		if ( WC_Stripe_Currency_Code::UNITED_STATES_DOLLAR !== get_woocommerce_currency() ) {
+			return;
+		}
+
+		// Retrieve enabled payment methods at checkout.
+		$enabled_payment_methods = $gateway->get_upe_enabled_at_checkout_payment_method_ids();
+		// If card payment method is not enabled, skip. If Link payment method is enabled, skip.
+		if (
+			! in_array( WC_Stripe_UPE_Payment_Method_CC::STRIPE_ID, $enabled_payment_methods, true ) ||
+			in_array( WC_Stripe_UPE_Payment_Method_Link::STRIPE_ID, $enabled_payment_methods, true )
+		) {
+			return;
+		}
+
+		self::possibly_add_note();
+	}
+}

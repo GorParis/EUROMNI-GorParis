@@ -1,0 +1,162 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+
+	"euromni/frontend"
+	"euromni/internal/seed"
+	"euromni/internal/store"
+)
+
+var productReader store.ProductReader = store.ProductReaderFromEnv()
+
+func SetProductReader(r store.ProductReader) {
+	productReader = r
+}
+
+func currentProductReader() store.ProductReader {
+	if productReader == nil {
+		productReader = store.ProductReaderFromEnv()
+	}
+	return productReader
+}
+
+func Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /health", health)
+	mux.HandleFunc("GET /v1/status", status)
+	mux.HandleFunc("GET /v1/products", productsList)
+	mux.HandleFunc("GET /v1/products/{id}", productByID)
+	mux.HandleFunc("GET /v1/categories", categoriesList)
+	mux.HandleFunc("GET /v1/categories/{id}", categoryByID)
+	mux.HandleFunc("GET /v1/cart", cartView)
+	mux.HandleFunc("POST /v1/cart", cartCreate)
+	mux.HandleFunc("POST /v1/cart/add", cartAdd)
+	mux.HandleFunc("POST /v1/checkout", checkout)
+	mux.HandleFunc("POST /graphql", graphql)
+	mux.HandleFunc("GET /graphql", graphql)
+	mux.Handle("GET /storefront/", http.StripPrefix("/storefront/", http.FileServer(http.FS(frontend.Assets))))
+}
+
+func health(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok\n"))
+}
+
+func status(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"name":      "euromni",
+		"layers":    []string{"pipeline", "cms-go", "storefront"},
+		"runtime":   "wasmtime",
+		"api":       []string{"rest", "graphql"},
+		"abi":       "euromni.abi.v1",
+		"datastore": "postgresql",
+	})
+}
+
+func productsList(w http.ResponseWriter, r *http.Request) {
+	categoryID := strings.TrimSpace(r.URL.Query().Get("category"))
+	reader := currentProductReader()
+
+	var products []store.ProductView
+	var err error
+	if categoryID != "" {
+		if categoryReader, ok := reader.(interface {
+			ListProductsByCategory(context.Context, string, string) ([]store.ProductView, error)
+		}); ok {
+			products, err = categoryReader.ListProductsByCategory(r.Context(), seed.ShopID, categoryID)
+		} else {
+			products, err = reader.ListProducts(r.Context(), seed.ShopID)
+			if err == nil {
+				filtered := make([]store.ProductView, 0, len(products))
+				for _, product := range products {
+					if product.ID == categoryID {
+						filtered = append(filtered, product)
+					}
+				}
+				products = filtered
+			}
+		}
+	} else {
+		products, err = reader.ListProducts(r.Context(), seed.ShopID)
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	if products == nil {
+		products = []store.ProductView{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": products})
+}
+
+func productByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing product id"})
+		return
+	}
+
+	p, err := currentProductReader().GetProduct(r.Context(), seed.ShopID, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"error": "product not found",
+				"id":    id,
+			})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": p})
+}
+
+func categoriesList(w http.ResponseWriter, r *http.Request) {
+	reader, ok := currentProductReader().(store.CategoryReader)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	categories, err := reader.ListCategories(r.Context(), seed.ShopID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": categories})
+}
+
+func categoryByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing category id"})
+		return
+	}
+
+	reader, ok := currentProductReader().(store.CategoryReader)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	category, err := reader.GetCategory(r.Context(), seed.ShopID, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "category not found", "id": id})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": category})
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}

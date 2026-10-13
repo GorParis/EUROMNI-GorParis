@@ -1,0 +1,586 @@
+<?php
+/**
+ * WooCommerce Settings.
+ */
+
+namespace Automattic\WooCommerce\Internal\Admin;
+
+use Automattic\WooCommerce\Admin\API\Plugins;
+use Automattic\WooCommerce\Admin\API\Reports\Orders\DataStore as OrdersDataStore;
+use Automattic\WooCommerce\Admin\Features\Features;
+use Automattic\WooCommerce\Admin\PageController;
+use Automattic\WooCommerce\Admin\PluginsHelper;
+use Automattic\WooCommerce\Enums\OrderStatus;
+use Automattic\WooCommerce\Internal\Admin\Settings\SettingsUIRequestContext;
+use Automattic\WooCommerce\Internal\Utilities\PriceSeparators;
+use Automattic\WooCommerce\Utilities\FeaturesUtil;
+use Automattic\WooCommerce\Utilities\OrderUtil;
+use WC_Marketplace_Suggestions;
+
+/**
+ * Contains logic in regards to WooCommerce Admin Settings.
+ */
+class Settings {
+
+	/**
+	 * Class instance.
+	 *
+	 * @var Settings instance
+	 */
+	protected static $instance = null;
+
+	/**
+	 * Get class instance.
+	 */
+	public static function get_instance() {
+		if ( ! self::$instance ) {
+			self::$instance = new self();
+		}
+		return self::$instance;
+	}
+
+	/**
+	 * Hook into WooCommerce.
+	 */
+	public function __construct() {
+		// Old settings injection.
+		add_filter( 'woocommerce_components_settings', array( $this, 'add_component_settings' ) );
+		// New settings injection.
+		add_filter( 'woocommerce_admin_shared_settings', array( $this, 'add_component_settings' ) );
+		add_filter( 'woocommerce_settings_groups', array( $this, 'add_settings_group' ) );
+		add_filter( 'woocommerce_settings-wc_admin', array( $this, 'add_settings' ) );
+	}
+
+	/**
+	 * Format order statuses by removing a leading 'wc-' if present.
+	 *
+	 * @param array $statuses Order statuses.
+	 * @return array formatted statuses.
+	 */
+	public static function get_order_statuses( $statuses ) {
+		$formatted_statuses = array();
+		foreach ( $statuses as $key => $value ) {
+			$formatted_key                        = preg_replace( '/^wc-/', '', $key );
+			$formatted_statuses[ $formatted_key ] = $value;
+		}
+		return $formatted_statuses;
+	}
+
+	/**
+	 * Get all order statuses present in analytics tables that aren't registered.
+	 *
+	 * @return array Unregistered order statuses.
+	 */
+	private function get_unregistered_order_statuses() {
+		$registered_statuses   = wc_get_order_statuses();
+		$all_synced_statuses   = OrdersDataStore::get_all_statuses();
+		$unregistered_statuses = array_diff( $all_synced_statuses, array_keys( $registered_statuses ) );
+		$formatted_status_keys = self::get_order_statuses( array_fill_keys( $unregistered_statuses, '' ) );
+		$formatted_statuses    = array_keys( $formatted_status_keys );
+
+		return array_combine( $formatted_statuses, $formatted_statuses );
+	}
+
+	/**
+	 * Validate a filtered list of default order statuses for display in the Settings UI.
+	 *
+	 * Drops slugs that are not registered or synced (they cannot be shown as checkboxes).
+	 * An explicitly empty list stays empty so the UI agrees with the runtime accessors; a
+	 * non-empty list with nothing displayable left falls back to the built-in default, and
+	 * a non-array falls back too. This cross-check is a display-only concern: runtime
+	 * consumers of the same options accept any string slug via
+	 * get_valid_order_statuses_or_default().
+	 *
+	 * @param mixed $statuses     Value returned by a default-order-statuses filter.
+	 * @param array $all_statuses Known order statuses, keyed by status slug.
+	 * @param array $fallback     Built-in default to use if nothing displayable remains.
+	 * @return array
+	 */
+	private function sanitize_default_order_statuses( $statuses, $all_statuses, $fallback ) {
+		$valid_statuses = self::get_valid_order_statuses_or_default( $statuses, $fallback );
+		if ( empty( $valid_statuses ) ) {
+			return $valid_statuses;
+		}
+		$sanitized = array_values( array_intersect( $valid_statuses, array_keys( $all_statuses ) ) );
+		return empty( $sanitized ) ? $fallback : $sanitized;
+	}
+
+	/**
+	 * The default order statuses excluded from Analytics report totals, before a merchant
+	 * saves the option. Single source of truth for the Settings UI and every runtime
+	 * consumer, so the filtered value applies everywhere without saving the option.
+	 *
+	 * @since 11.2.0
+	 *
+	 * @return array
+	 */
+	public static function get_default_excluded_order_statuses(): array {
+		$builtin_default = array( OrderStatus::PENDING, OrderStatus::CANCELLED, OrderStatus::FAILED );
+
+		/**
+		 * Filters the default set of order statuses excluded from Analytics report totals.
+		 *
+		 * @since 11.2.0
+		 *
+		 * @param array $default_statuses Default excluded order statuses.
+		 */
+		$filtered = apply_filters( 'woocommerce_analytics_settings_default_excluded_order_statuses', $builtin_default );
+
+		return self::get_valid_order_statuses_or_default( $filtered, $builtin_default );
+	}
+
+	/**
+	 * The default order statuses considered actionable in Analytics, before a merchant
+	 * saves the option. Single source of truth for the Settings UI and every runtime
+	 * consumer, so the filtered value applies everywhere without saving the option.
+	 *
+	 * @since 11.2.0
+	 *
+	 * @return array
+	 */
+	public static function get_default_actionable_order_statuses(): array {
+		$builtin_default = array( OrderStatus::PROCESSING, OrderStatus::ON_HOLD );
+
+		/**
+		 * Filters the default set of order statuses considered actionable in Analytics.
+		 *
+		 * @since 11.2.0
+		 *
+		 * @param array $default_statuses Default actionable order statuses.
+		 */
+		$filtered = apply_filters( 'woocommerce_analytics_settings_default_actionable_order_statuses', $builtin_default );
+
+		return self::get_valid_order_statuses_or_default( $filtered, $builtin_default );
+	}
+
+	/**
+	 * Validate a value that should be an array of order status slugs (an option value or a
+	 * default-order-statuses filter's return value), falling back to the passed default if
+	 * it is not an array.
+	 *
+	 * An explicitly saved empty array passes through: the merchant intentionally cleared
+	 * the selection, and replacing it with the defaults would make reports disagree with
+	 * the Settings page. Non-string elements are dropped, and string slugs are trimmed,
+	 * so a broken filter return value cannot raise warnings or leave a blank slug that
+	 * the Settings UI drops but runtime consumers keep.
+	 *
+	 * This is a cheap type check only. Slugs are not cross-checked against registered or
+	 * synced order statuses, because runtime call sites intentionally accept slugs outside
+	 * that set and must not pay for OrdersDataStore::get_all_statuses()'s DB-backed lookup
+	 * on every request. Only add_settings() needs the fuller display cross-check, via
+	 * sanitize_default_order_statuses().
+	 *
+	 * @since 11.2.0
+	 *
+	 * @param mixed $value    Value to validate.
+	 * @param array $fallback Default to use if $value is not an array.
+	 * @return array
+	 */
+	public static function get_valid_order_statuses_or_default( $value, array $fallback ): array {
+		if ( ! is_array( $value ) ) {
+			return $fallback;
+		}
+
+		// An intentionally empty array means "no statuses" and must survive as-is, whether
+		// it came from a saved option or a filter.
+		if ( empty( $value ) ) {
+			return array();
+		}
+
+		$statuses = array_map( 'trim', array_filter( $value, 'is_string' ) );
+		$statuses = array_values(
+			array_filter(
+				$statuses,
+				static function ( $status ) {
+					return '' !== $status;
+				}
+			)
+		);
+
+		// A non-empty array whose elements are all unusable is treated as invalid, so a
+		// broken callback does not silently empty the selection.
+		return empty( $statuses ) ? $fallback : $statuses;
+	}
+
+	/**
+	 * Return an object defining the currency options for the site's current currency
+	 *
+	 * @return  array  Settings for the current currency {
+	 *     Array of settings.
+	 *
+	 *     @type string $code       Currency code.
+	 *     @type string $precision  Number of decimals.
+	 *     @type string $symbol     Symbol for currency.
+	 * }
+	 */
+	public static function get_currency_settings() {
+		$code = get_woocommerce_currency();
+
+		/**
+		 * The wc_currency_settings hook
+		 *
+		 * @since 6.5.0
+		 */
+		return apply_filters(
+			'wc_currency_settings',
+			array(
+				'code'              => $code,
+				'precision'         => wc_get_price_decimals(),
+				'symbol'            => html_entity_decode( get_woocommerce_currency_symbol( $code ) ),
+				'symbolPosition'    => get_option( 'woocommerce_currency_pos' ),
+				'decimalSeparator'  => PriceSeparators::get_decimal(),
+				'thousandSeparator' => PriceSeparators::get_thousand(),
+				'priceFormat'       => html_entity_decode( get_woocommerce_price_format() ),
+			)
+		);
+	}
+
+	/**
+	 * Hooks extra necessary data into the component settings array already set in WooCommerce core.
+	 *
+	 * @param array $settings Array of component settings.
+	 * @return array Array of component settings.
+	 */
+	public function add_component_settings( $settings ) {
+		if ( ! is_admin() ) {
+			return $settings;
+		}
+
+		if ( ! function_exists( 'wc_blocks_container' ) ) {
+			global $wp_locale;
+			// inject data not available via older versions of wc_blocks/woo.
+			$settings['orderStatuses'] = self::get_order_statuses( wc_get_order_statuses() );
+			$settings['stockStatuses'] = self::get_order_statuses( wc_get_product_stock_status_options() );
+			$settings['currency']      = self::get_currency_settings();
+			$settings['locale']        = array(
+				'siteLocale'    => isset( $settings['siteLocale'] )
+					? $settings['siteLocale']
+					: get_locale(),
+				'userLocale'    => isset( $settings['l10n']['userLocale'] )
+					? $settings['l10n']['userLocale']
+					: get_user_locale(),
+				'weekdaysShort' => isset( $settings['l10n']['weekdaysShort'] )
+					? $settings['l10n']['weekdaysShort']
+					: array_values( $wp_locale->weekday_abbrev ),
+			);
+		}
+
+		//phpcs:ignore
+		$preload_data_endpoints = apply_filters( 'woocommerce_component_settings_preload_endpoints', array() );
+
+		if ( ! empty( $preload_data_endpoints ) ) {
+			$preload_data = array_reduce(
+				array_values( $preload_data_endpoints ),
+				'rest_preload_api_request'
+			);
+		}
+
+		//phpcs:ignore
+		$preload_options = apply_filters( 'woocommerce_admin_preload_options', array() );
+		if ( ! empty( $preload_options ) ) {
+			// Prime caches to reduce future queries.
+			wp_prime_option_caches( $preload_options );
+			foreach ( $preload_options as $option ) {
+				$settings['preloadOptions'][ $option ] = get_option( $option );
+			}
+		}
+
+		//phpcs:ignore
+		$preload_settings = apply_filters( 'woocommerce_admin_preload_settings', array() );
+		if ( ! empty( $preload_settings ) ) {
+			$setting_options = new \WC_REST_Setting_Options_V2_Controller();
+			foreach ( $preload_settings as $group ) {
+				$group_settings   = $setting_options->get_group_settings( $group );
+				$preload_settings = array();
+				foreach ( $group_settings as $option ) {
+					if ( array_key_exists( 'id', $option ) && array_key_exists( 'value', $option ) ) {
+						$preload_settings[ $option['id'] ] = $option['value'];
+					}
+				}
+				$settings['preloadSettings'][ $group ] = $preload_settings;
+			}
+		}
+
+		$settings['currentUserData']      = WCAdminUser::get_user_data();
+		$settings['reviewsEnabled']       = get_option( 'woocommerce_enable_reviews' );
+		$settings['manageStock']          = get_option( 'woocommerce_manage_stock' );
+		$settings['commentModeration']    = get_option( 'comment_moderation' );
+		$settings['notifyLowStockAmount'] = get_option( 'woocommerce_notify_low_stock_amount' );
+
+		/**
+		 * Deprecate wcAdminAssetUrl as we no longer need it after The Merge.
+		 * Use wcAssetUrl instead.
+		 *
+		 * @deprecated 6.7.0
+		 * @var string
+		 */
+		$settings['wcAdminAssetUrl'] = WC_ADMIN_IMAGES_FOLDER_URL;
+		$settings['wcVersion']       = WC_VERSION;
+		$settings['siteUrl']         = site_url();
+		$settings['shopUrl']         = get_permalink( wc_get_page_id( 'shop' ) );
+		$settings['homeUrl']         = home_url();
+		$settings['dateFormat']      = get_option( 'date_format' );
+		$settings['timeZone']        = wc_timezone_string();
+		$settings['plugins']         = array(
+			'installedPlugins' => PluginsHelper::get_installed_plugin_slugs(),
+			'activePlugins'    => Plugins::get_active_plugins(),
+		);
+
+		// DO NOT use outside of core, these can be removed without deprecation.
+		$settings['__experimentalFlags'] = array();
+
+		// Plugins that depend on changing the translation work on the server but not the client -
+		// WooCommerce Branding is an example of this - so pass through the translation of
+		// 'WooCommerce' to wcSettings.
+		$settings['woocommerceTranslation'] = __( 'WooCommerce', 'woocommerce' );
+
+		if ( PageController::is_admin_page() && FeaturesUtil::feature_is_enabled( 'analytics' ) ) {
+			// We may have synced orders with a now-unregistered status.
+			// E.g. an extension that added statuses is now inactive or removed.
+			$settings['unregisteredOrderStatuses'] = $this->get_unregistered_order_statuses();
+			$settings['usesNewFullRefundData']     = OrderUtil::uses_new_full_refund_data();
+		}
+
+		// The separator used for attributes found in Variation titles.
+		//phpcs:ignore
+		$settings['variationTitleAttributesSeparator'] = apply_filters( 'woocommerce_product_variation_title_attributes_separator', ' - ', new \WC_Product() );
+
+		$settings = $this->add_settings_ui_schema( $settings );
+
+		// Performance note: refer back to https://github.com/woocommerce/woocommerce/pull/41092: unconditionally loading /jetpack/v4/connection.
+		// As automattic/jetpack-connection package is a direct dependency, we can return the Jetpack connection status via its public API.
+		$settings['dataEndpoints'] = $settings['dataEndpoints'] ?? array();
+		try {
+			$settings['dataEndpoints']['jetpackStatus'] = \Automattic\Jetpack\Connection\REST_Connector::connection_status( false );
+		} catch ( \Throwable $e ) {
+			$settings['dataEndpoints']['jetpackStatus'] = array();
+		}
+
+		if ( ! empty( $preload_data_endpoints ) ) {
+			foreach ( $preload_data_endpoints as $key => $endpoint ) {
+				// Handle error case: rest_do_request() doesn't guarantee success.
+				if ( empty( $preload_data[ $endpoint ] ) ) {
+					$settings['dataEndpoints'][ $key ] = array();
+				} else {
+					$settings['dataEndpoints'][ $key ] = $preload_data[ $endpoint ]['body'];
+				}
+			}
+		}
+		$settings = $this->get_custom_settings( $settings );
+		if ( PageController::is_embed_page() ) {
+			$settings['embedBreadcrumbs'] = wc_admin_get_breadcrumbs();
+		}
+
+		$settings['allowMarketplaceSuggestions']      = WC_Marketplace_Suggestions::allow_suggestions();
+		$settings['connectNonce']                     = wp_create_nonce( 'connect' );
+		$settings['wcpay_welcome_page_connect_nonce'] = wp_create_nonce( 'wcpay-connect' );
+		$settings['email_preview_nonce']              = wp_create_nonce( 'email-preview-nonce' );
+		$settings['email_listing_nonce']              = wp_create_nonce( 'email-listing-nonce' );
+		$settings['wc_helper_nonces']                 = array(
+			'refresh' => wp_create_nonce( 'refresh' ),
+		);
+
+		$settings['features'] = $this->get_features();
+
+		$has_gutenberg     = is_plugin_active( 'gutenberg/gutenberg.php' );
+		$gutenberg_version = '';
+		if ( $has_gutenberg ) {
+			if ( defined( 'GUTENBERG_VERSION' ) ) {
+				$gutenberg_version = GUTENBERG_VERSION;
+			}
+
+			if ( ! $gutenberg_version ) {
+				$gutenberg_data    = get_plugin_data( WP_PLUGIN_DIR . '/gutenberg/gutenberg.php' );
+				$gutenberg_version = $gutenberg_data['Version'];
+			}
+		}
+		$settings['gutenberg_version'] = $has_gutenberg ? $gutenberg_version : 0;
+
+		return $settings;
+	}
+
+	/**
+	 * Removes non-necessary feature properties for the client side.
+	 *
+	 * @return array
+	 */
+	public function get_features() {
+		$features     = FeaturesUtil::get_features( true, true );
+		$new_features = array();
+
+		foreach ( array_keys( $features ) as $feature_id ) {
+			$new_features[ $feature_id ] = array(
+				'is_enabled'      => $features[ $feature_id ]['is_enabled'],
+				'is_experimental' => $features[ $feature_id ]['is_experimental'] ?? false,
+			);
+		}
+
+		return $new_features;
+	}
+
+	/**
+	 * Register the admin settings for use in the WC REST API
+	 *
+	 * @param array $groups Array of setting groups.
+	 * @return array
+	 */
+	public function add_settings_group( $groups ) {
+		$groups[] = array(
+			'id'          => 'wc_admin',
+			'label'       => __( 'WooCommerce Admin', 'woocommerce' ),
+			'description' => __( 'Settings for WooCommerce admin reporting.', 'woocommerce' ),
+		);
+		return $groups;
+	}
+
+	/**
+	 * Add WC Admin specific settings
+	 *
+	 * @param array $settings Array of settings in wc admin group.
+	 * @return array
+	 */
+	public function add_settings( $settings ) {
+		$unregistered_statuses = $this->get_unregistered_order_statuses();
+		$registered_statuses   = self::get_order_statuses( wc_get_order_statuses() );
+		$all_statuses          = array_merge( $unregistered_statuses, $registered_statuses );
+
+		// Only the Settings UI needs the display cross-check; runtime consumers use the
+		// accessor values as-is.
+		$default_excluded_statuses   = $this->sanitize_default_order_statuses( self::get_default_excluded_order_statuses(), $all_statuses, array( OrderStatus::PENDING, OrderStatus::CANCELLED, OrderStatus::FAILED ) );
+		$default_actionable_statuses = $this->sanitize_default_order_statuses( self::get_default_actionable_order_statuses(), $all_statuses, array( OrderStatus::PROCESSING, OrderStatus::ON_HOLD ) );
+
+		$settings[] = array(
+			'id'          => 'woocommerce_excluded_report_order_statuses',
+			'option_key'  => 'woocommerce_excluded_report_order_statuses',
+			'label'       => __( 'Excluded report order statuses', 'woocommerce' ),
+			'description' => __( 'Statuses that should not be included when calculating report totals.', 'woocommerce' ),
+			'default'     => $default_excluded_statuses,
+			'type'        => 'multiselect',
+			'options'     => $all_statuses,
+		);
+		$settings[] = array(
+			'id'          => 'woocommerce_actionable_order_statuses',
+			'option_key'  => 'woocommerce_actionable_order_statuses',
+			'label'       => __( 'Actionable order statuses', 'woocommerce' ),
+			'description' => __( 'Statuses that require extra action on behalf of the store admin.', 'woocommerce' ),
+			'default'     => $default_actionable_statuses,
+			'type'        => 'multiselect',
+			'options'     => $all_statuses,
+		);
+		$settings[] = array(
+			'id'          => 'woocommerce_default_date_range',
+			'option_key'  => 'woocommerce_default_date_range',
+			'label'       => __( 'Default Date Range', 'woocommerce' ),
+			'description' => __( 'Default Date Range', 'woocommerce' ),
+			'default'     => 'period=month&compare=previous_year',
+			'type'        => 'text',
+		);
+		$settings[] = array(
+			'id'          => 'woocommerce_date_type',
+			'option_key'  => 'woocommerce_date_type',
+			'label'       => __( 'Date Type', 'woocommerce' ),
+			'description' => __( 'Database date field considered for Revenue and Orders reports', 'woocommerce' ),
+			'default'     => 'date_paid',
+			'type'        => 'select',
+			'options'     => array(
+				'date_created'   => 'date_created',
+				'date_paid'      => 'date_paid',
+				'date_completed' => 'date_completed',
+			),
+		);
+
+		$settings[] = array(
+			'id'          => 'woocommerce_analytics_scheduled_import',
+			'option_key'  => 'woocommerce_analytics_scheduled_import',
+			'label'       => __( 'Updates', 'woocommerce' ),
+			'description' => __( 'Controls how analytics data is imported from orders.', 'woocommerce' ),
+			'type'        => 'radio',
+			// Default to null so we can know if it's a new site or an existing site. New sites will have the option set.
+			'default'     => null,
+			'options'     => array(
+				'yes' => __( 'Scheduled (recommended)', 'woocommerce' ),
+				'no'  => __( 'Immediately', 'woocommerce' ),
+			),
+		);
+
+		// Add hidden setting for the import interval to display in the client side.
+		$import_interval = \Automattic\WooCommerce\Internal\Admin\Schedulers\OrdersScheduler::get_import_interval();
+		$import_interval = absint( $import_interval );
+		// Format the import interval to a human-readable string.
+		$import_interval_string = human_time_diff( 0, $import_interval );
+		$settings[]             = array(
+			'id'         => 'woocommerce_analytics_import_interval',
+			'option_key' => 'woocommerce_analytics_import_interval',
+			'type'       => 'hidden',
+			'default'    => $import_interval_string,
+		);
+
+		return $settings;
+	}
+
+	/**
+	 * Gets custom settings used for WC Admin.
+	 *
+	 * @param array $settings Array of settings to merge into.
+	 * @return array
+	 */
+	private function get_custom_settings( $settings ) {
+		$wc_rest_settings_options_controller = new \WC_REST_Setting_Options_Controller();
+		$wc_admin_group_settings             = $wc_rest_settings_options_controller->get_group_settings( 'wc_admin' );
+		$settings['wcAdminSettings']         = array();
+
+		foreach ( $wc_admin_group_settings as $setting ) {
+			if ( ! empty( $setting['id'] ) ) {
+				$settings['wcAdminSettings'][ $setting['id'] ] = $setting['value'];
+			}
+		}
+		return $settings;
+	}
+
+	/**
+	 * Add the settings UI schema for the current classic settings page.
+	 *
+	 * @param array $settings Array of component settings.
+	 * @return array
+	 */
+	private function add_settings_ui_schema( array $settings ): array {
+		try {
+			if ( ! class_exists( SettingsUIRequestContext::class ) ) {
+				return $settings;
+			}
+
+			$context = SettingsUIRequestContext::get_current();
+		} catch ( \Throwable $e ) {
+			return $settings;
+		}
+
+		if ( ! $context ) {
+			return $settings;
+		}
+
+		try {
+			$schema = $context->get_schema();
+			if ( ! is_array( $schema ) ) {
+				return $settings;
+			}
+
+			$page_id     = $context->get_page_id();
+			$section_key = $context->get_current_section_key();
+		} catch ( \Throwable $e ) {
+			return $settings;
+		}
+
+		if ( ! isset( $settings['settingsUI'] ) || ! is_array( $settings['settingsUI'] ) ) {
+			$settings['settingsUI'] = array();
+		}
+		if ( ! isset( $settings['settingsUI'][ $page_id ] ) || ! is_array( $settings['settingsUI'][ $page_id ] ) ) {
+			$settings['settingsUI'][ $page_id ] = array();
+		}
+
+		// PHP converts numeric-string array keys to integers. Keep groups as a JSON object for the client.
+		$schema['groups']                                   = (object) $schema['groups'];
+		$settings['settingsUI'][ $page_id ][ $section_key ] = $schema;
+
+		return $settings;
+	}
+}

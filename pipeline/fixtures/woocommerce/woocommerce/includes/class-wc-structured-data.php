@@ -1,0 +1,897 @@
+<?php
+/**
+ * Structured data's handler and generator using JSON-LD format.
+ *
+ * When making changes to this file, please make sure to test the generated
+ * markup with Schema Markup Validator and Google Search Console.
+ * * https://validator.schema.org/
+ * * https://search.google.com/test/rich-results
+ *
+ * @package WooCommerce\Classes
+ * @since   3.0.0
+ * @version 3.0.0
+ */
+
+use Automattic\WooCommerce\Enums\OrderStatus;
+use Automattic\WooCommerce\Enums\ProductStatus;
+use Automattic\WooCommerce\Enums\ProductType;
+use Automattic\WooCommerce\Enums\ProductStockStatus;
+use Automattic\WooCommerce\Enums\TaxDisplayMode;
+
+defined( 'ABSPATH' ) || exit;
+
+/**
+ * Structured data class.
+ */
+class WC_Structured_Data {
+
+	/**
+	 * Stores the structured data.
+	 *
+	 * @var array $_data Array of structured data.
+	 */
+	private $_data = array();
+
+	/**
+	 * Constructor.
+	 */
+	public function __construct() {
+		// Generate structured data.
+		add_action( 'woocommerce_before_main_content', array( $this, 'generate_website_data' ), 30 );
+		add_action( 'woocommerce_breadcrumb', array( $this, 'generate_breadcrumblist_data' ), 10 );
+		add_action( 'woocommerce_single_product_summary', array( $this, 'generate_product_data' ), 60 );
+		add_action( 'woocommerce_email_order_details', array( $this, 'generate_order_data' ), 20, 3 );
+
+		// Output structured data.
+		add_action( 'woocommerce_email_order_details', array( $this, 'output_email_structured_data' ), 30, 3 );
+		add_action( 'wp_footer', array( $this, 'output_structured_data' ), 10 );
+	}
+
+	/**
+	 * Sets data.
+	 *
+	 * @since 3.0.0
+	 * @since 11.2.0 Added support for multiple schema types in `@type`.
+	 *
+	 * @param  array $data  Structured data. The `@type` value accepts a string or an array of strings.
+	 *                      Every type must contain 1 to 20 ASCII letters; any invalid array member rejects the node.
+	 * @param  bool  $reset Unset data (default: false).
+	 * @return bool
+	 */
+	public function set_data( $data, $reset = false ) {
+		if ( isset( $data['@type'] ) && is_array( $data['@type'] ) ) {
+			if ( empty( $data['@type'] ) ) {
+				return false;
+			}
+
+			foreach ( $data['@type'] as $type ) {
+				if ( ! is_string( $type ) || ! preg_match( '|^[a-zA-Z]{1,20}$|', $type ) ) {
+					return false;
+				}
+			}
+
+			$data['@type'] = array_values( $data['@type'] );
+		} elseif ( ! isset( $data['@type'] ) || ! preg_match( '|^[a-zA-Z]{1,20}$|', $data['@type'] ) ) {
+			return false;
+		}
+
+		if ( $reset && isset( $this->_data ) ) {
+			unset( $this->_data );
+		}
+
+		$this->_data[] = $data;
+
+		return true;
+	}
+
+	/**
+	 * Gets data.
+	 *
+	 * @return array
+	 */
+	public function get_data() {
+		return $this->_data;
+	}
+
+	/**
+	 * Structures and returns data.
+	 *
+	 * List of types available by default for specific request:
+	 *
+	 * 'product',
+	 * 'review',
+	 * 'breadcrumblist',
+	 * 'website',
+	 * 'order',
+	 *
+	 * @param  array $types Structured data types.
+	 * @return array
+	 */
+	public function get_structured_data( $types ) {
+		$data = array();
+
+		// Put together the values of same type of structured data.
+		foreach ( $this->get_data() as $value ) {
+			if ( is_array( $value['@type'] ) ) {
+				$value_types    = array_map( 'strtolower', $value['@type'] );
+				$matching_types = is_array( $types ) ? array_intersect( $types, $value_types ) : array();
+				$type           = $matching_types ? reset( $matching_types ) : reset( $value_types );
+
+				$data[ $type ][] = $value;
+			} else {
+				$data[ strtolower( $value['@type'] ) ][] = $value;
+			}
+		}
+
+		// Wrap the multiple values of each type inside a graph... Then add context to each type.
+		foreach ( $data as $type => $value ) {
+			$data[ $type ] = count( $value ) > 1 ? array( '@graph' => $value ) : $value[0];
+			$data[ $type ] = apply_filters( 'woocommerce_structured_data_context', array( '@context' => 'https://schema.org/' ), $data, $type, $value ) + $data[ $type ];
+		}
+
+		// If requested types, pick them up... Finally change the associative array to an indexed one.
+		$data = $types ? array_values( array_intersect_key( $data, array_flip( $types ) ) ) : array_values( $data );
+
+		if ( ! empty( $data ) ) {
+			if ( 1 < count( $data ) ) {
+				$data = apply_filters( 'woocommerce_structured_data_context', array( '@context' => 'https://schema.org/' ), $data, '', '' ) + array( '@graph' => $data );
+			} else {
+				$data = $data[0];
+			}
+		}
+
+		return $data;
+	}
+
+	/**
+	 * Get data types for pages.
+	 *
+	 * @return array
+	 */
+	protected function get_data_type_for_page() {
+		$types   = array();
+		$types[] = is_shop() || is_product_category() || is_product() ? 'product' : '';
+		$types[] = is_shop() && is_front_page() ? 'website' : '';
+		$types[] = is_product() ? 'review' : '';
+		$types[] = 'breadcrumblist';
+		$types[] = 'order';
+
+		return array_filter( apply_filters( 'woocommerce_structured_data_type_for_page', $types ) );
+	}
+
+	/**
+	 * Makes sure email structured data only outputs on non-plain text versions.
+	 *
+	 * @param WP_Order $order         Order data.
+	 * @param bool     $sent_to_admin Send to admin (default: false).
+	 * @param bool     $plain_text    Plain text email (default: false).
+	 */
+	public function output_email_structured_data( $order, $sent_to_admin = false, $plain_text = false ) {
+		if ( $plain_text ) {
+			return;
+		}
+		echo '<div style="display: none; font-size: 0; max-height: 0; line-height: 0; padding: 0; mso-hide: all;">';
+		$this->output_structured_data();
+		echo '</div>';
+	}
+
+	/**
+	 * Sanitizes, encodes and outputs structured data.
+	 *
+	 * Hooked into `wp_footer` action hook.
+	 * Hooked into `woocommerce_email_order_details` action hook.
+	 */
+	public function output_structured_data() {
+		$types = $this->get_data_type_for_page();
+		$data  = $this->get_structured_data( $types );
+
+		if ( $data ) {
+			echo '<script type="application/ld+json">' . wc_esc_json( wp_json_encode( $data, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES ), true ) . '</script>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		}
+	}
+
+	/*
+	|--------------------------------------------------------------------------
+	| Generators
+	|--------------------------------------------------------------------------
+	|
+	| Methods for generating specific structured data types:
+	|
+	| - Product
+	| - Review
+	| - BreadcrumbList
+	| - WebSite
+	| - Order
+	|
+	| The generated data is stored into `$this->_data`.
+	| See the methods above for handling `$this->_data`.
+	|
+	*/
+
+	/**
+	 * Generates Product structured data.
+	 *
+	 * Hooked into `woocommerce_single_product_summary` action hook.
+	 *
+	 * @param WC_Product $product Product data (default: null).
+	 */
+	public function generate_product_data( $product = null ) {
+		if ( ! is_object( $product ) ) {
+			global $product;
+		}
+
+		if ( ! is_a( $product, 'WC_Product' ) ) {
+			return;
+		}
+
+		$shop_name = get_bloginfo( 'name' );
+		$shop_url  = home_url();
+		$currency  = get_woocommerce_currency();
+		$permalink = get_permalink( $product->get_id() );
+		$image     = wp_get_attachment_url( (int) $product->get_image_id() );
+
+		$markup = array(
+			'@type'       => 'Product',
+			'@id'         => $permalink . '#product', // Append '#product' to differentiate between this @id and the @id generated for the Breadcrumblist.
+			'name'        => wp_kses_post( $product->get_name() ),
+			'url'         => $permalink,
+			'description' => wp_strip_all_tags( do_shortcode( $product->get_short_description() ? $product->get_short_description() : $product->get_description() ) ),
+		);
+
+		if ( $image ) {
+			$markup['image'] = $image;
+		}
+
+		// Declare SKU or fallback to ID.
+		if ( $product->get_sku() ) {
+			$markup['sku'] = $product->get_sku();
+		} else {
+			$markup['sku'] = $product->get_id();
+		}
+
+		// Prepare GTIN and load it if it's valid.
+		$gtin = $this->prepare_gtin( $product->get_global_unique_id() );
+		if ( $this->is_valid_gtin( $gtin ) ) {
+			$markup['gtin'] = $gtin;
+		}
+
+		if ( '' !== $product->get_price() ) {
+			// Assume prices will be valid until the end of next year, unless on sale and there is an end date.
+			$price_valid_until = gmdate( 'Y-12-31', time() + YEAR_IN_SECONDS );
+
+			// If the request targets a single, fully-specified variation (e.g. a variation-specific URL
+			// submitted to a product feed), describe that variation with a single Offer and its exact
+			// price instead of the parent's AggregateOffer price range. This keeps the landing page's
+			// structured data consistent with the variation price and avoids Google Merchant Center
+			// "price mismatch" disapprovals. See https://github.com/woocommerce/woocommerce/issues/30799.
+			$selected_variation = $product->is_type( ProductType::VARIABLE )
+				? $this->get_selected_variation( $product )
+				: null;
+			$offer_source       = $selected_variation ? $selected_variation : $product;
+
+			if ( $selected_variation ) {
+				// Reference the parent product group so variations stay grouped (Google `item_group_id`).
+				$markup['inProductGroupWithID'] = $product->get_sku() ? $product->get_sku() : (string) $product->get_id();
+
+				// Prefer the selected variation's own identifiers when set.
+				if ( $selected_variation->get_sku() ) {
+					$markup['sku'] = $selected_variation->get_sku();
+				}
+				// A GTIN uniquely identifies a single trade item, so the parent's GTIN must not leak onto a
+				// specific variation. Use the variation's own GTIN, or drop it entirely when it has none.
+				$variation_gtin = $this->prepare_gtin( $selected_variation->get_global_unique_id() );
+				if ( $this->is_valid_gtin( $variation_gtin ) ) {
+					$markup['gtin'] = $variation_gtin;
+				} else {
+					unset( $markup['gtin'] );
+				}
+			}
+
+			if ( $product->is_type( ProductType::VARIABLE ) && ! $selected_variation ) {
+				$lowest  = $product->get_variation_price( 'min', true );
+				$highest = $product->get_variation_price( 'max', true );
+
+				$variation_prices = $product->get_variation_prices( true );
+
+				if ( $lowest === $highest ) {
+					$unit_price_spec = array(
+						'@type'         => 'UnitPriceSpecification',
+						'price'         => wc_format_decimal( $lowest, wc_get_price_decimals() ),
+						'priceCurrency' => $currency,
+						'validThrough'  => $price_valid_until,
+					);
+					if ( wc_tax_enabled() ) {
+						$unit_price_spec['valueAddedTaxIncluded'] = TaxDisplayMode::INCLUSIVE === get_option( 'woocommerce_tax_display_shop' );
+					}
+					$markup_offer = array(
+						'@type'              => 'Offer',
+						'priceSpecification' => array( $unit_price_spec ),
+					);
+				} else {
+					$markup_offer = array(
+						'@type'      => 'AggregateOffer',
+						'lowPrice'   => wc_format_decimal( $lowest, wc_get_price_decimals() ),
+						'highPrice'  => wc_format_decimal( $highest, wc_get_price_decimals() ),
+						'offerCount' => count( $variation_prices['price'] ),
+					);
+
+					if ( $product->is_on_sale() ) {
+						$lowest_child_sale_price = $product->get_variation_sale_price( 'min', true );
+						foreach ( $variation_prices['sale_price'] as $variation_id => $variation_price ) {
+							if ( $variation_price === $lowest_child_sale_price ) {
+								break;
+							}
+						}
+						$date_on_sale_to        = isset( $variation_id )
+							? wc_get_product( $variation_id )->get_date_on_sale_to()
+							: null;
+						$sale_price_valid_until = $date_on_sale_to
+							? gmdate( 'Y-m-d', $date_on_sale_to->getTimestamp() )
+							: null;
+
+						$sale_unit_price_spec = array(
+							'@type'         => 'UnitPriceSpecification',
+							'priceType'     => 'https://schema.org/SalePrice',
+							'price'         => wc_format_decimal( $lowest_child_sale_price, wc_get_price_decimals() ),
+							'priceCurrency' => $currency,
+							'validThrough'  => $sale_price_valid_until ?? $price_valid_until,
+						);
+						if ( wc_tax_enabled() ) {
+							$sale_unit_price_spec['valueAddedTaxIncluded'] = TaxDisplayMode::INCLUSIVE === get_option( 'woocommerce_tax_display_shop' );
+						}
+						$markup_offer['priceSpecification'] = array( $sale_unit_price_spec );
+					}
+				}
+			} elseif ( $product->is_type( ProductType::GROUPED ) ) {
+				$tax_display_mode = get_option( 'woocommerce_tax_display_shop' );
+				$child_ids        = $product->get_children();
+				_prime_post_caches( $child_ids );
+				$children       = array_filter( array_map( 'wc_get_product', $child_ids ), 'wc_products_array_filter_visible_grouped' );
+				$price_function = TaxDisplayMode::INCLUSIVE === $tax_display_mode ? 'wc_get_price_including_tax' : 'wc_get_price_excluding_tax';
+
+				foreach ( $children as $child ) {
+					if ( '' !== $child->get_regular_price() ) {
+						$child_prices[] = $price_function( $child, array( 'price' => $child->get_regular_price() ) );
+					}
+					if ( '' !== $child->get_sale_price() ) {
+						$child_sale_prices[] = $price_function( $child, array( 'price' => $child->get_sale_price() ) );
+					}
+				}
+				if ( empty( $child_prices ) ) {
+					$min_price = 0;
+				} else {
+					$min_price = min( $child_prices );
+				}
+				if ( empty( $child_sale_prices ) ) {
+					$min_sale_price = 0;
+				} else {
+					$min_sale_price = min( $child_sale_prices );
+				}
+
+				$unit_price_specification = array(
+					'@type'         => 'UnitPriceSpecification',
+					'price'         => wc_format_decimal( $min_price, wc_get_price_decimals() ),
+					'priceCurrency' => $currency,
+					'validThrough'  => $price_valid_until,
+				);
+				if ( wc_tax_enabled() ) {
+					$unit_price_specification['valueAddedTaxIncluded'] = TaxDisplayMode::INCLUSIVE === $tax_display_mode;
+				}
+				if ( $product->is_on_sale() && $min_price !== $min_sale_price ) {
+					// `priceType` should only be specified in prices which are not the current offer.
+					// https://developers.google.com/search/docs/appearance/structured-data/merchant-listing#sale-pricing-example
+					$unit_price_specification['priceType'] = 'https://schema.org/ListPrice';
+				}
+				$markup_offer = array(
+					'@type'              => 'Offer',
+					'priceSpecification' => array(
+						$unit_price_specification,
+					),
+				);
+
+				if ( $product->is_on_sale() && $min_price !== $min_sale_price ) {
+					if ( $product->get_date_on_sale_to() ) {
+						$sale_price_valid_until = gmdate( 'Y-m-d', $product->get_date_on_sale_to()->getTimestamp() );
+					}
+
+					// We add the sale price to the top of the array so it's the first offer.
+					// See https://github.com/woocommerce/woocommerce/issues/55043.
+					$grouped_sale_spec = array(
+						'@type'         => 'UnitPriceSpecification',
+						'price'         => wc_format_decimal( $min_sale_price, wc_get_price_decimals() ),
+						'priceCurrency' => $currency,
+						'validThrough'  => $sale_price_valid_until ?? $price_valid_until,
+					);
+					if ( wc_tax_enabled() ) {
+						$grouped_sale_spec['valueAddedTaxIncluded'] = TaxDisplayMode::INCLUSIVE === $tax_display_mode;
+					}
+					array_unshift( $markup_offer['priceSpecification'], $grouped_sale_spec );
+				}
+			} else {
+				// Simple product, or a single selected variation treated as a simple product.
+				$tax_display_mode         = get_option( 'woocommerce_tax_display_shop' );
+				$regular_price            = TaxDisplayMode::INCLUSIVE === $tax_display_mode
+					? wc_get_price_including_tax( $offer_source, array( 'price' => $offer_source->get_regular_price() ) )
+					: wc_get_price_excluding_tax( $offer_source, array( 'price' => $offer_source->get_regular_price() ) );
+				$unit_price_specification = array(
+					'@type'         => 'UnitPriceSpecification',
+					'price'         => wc_format_decimal( $regular_price, wc_get_price_decimals() ),
+					'priceCurrency' => $currency,
+					'validThrough'  => $price_valid_until,
+				);
+				if ( wc_tax_enabled() ) {
+					$unit_price_specification['valueAddedTaxIncluded'] = TaxDisplayMode::INCLUSIVE === $tax_display_mode;
+				}
+				if ( $offer_source->is_on_sale() ) {
+					// `priceType` should only be specified in prices which are not the current offer.
+					// https://developers.google.com/search/docs/appearance/structured-data/merchant-listing#sale-pricing-example
+					$unit_price_specification['priceType'] = 'https://schema.org/ListPrice';
+				}
+				$markup_offer = array(
+					'@type'              => 'Offer',
+					'priceSpecification' => array(
+						$unit_price_specification,
+					),
+				);
+
+				if ( $offer_source->is_on_sale() ) {
+					$sale_price = TaxDisplayMode::INCLUSIVE === $tax_display_mode
+						? wc_get_price_including_tax( $offer_source, array( 'price' => $offer_source->get_sale_price() ) )
+						: wc_get_price_excluding_tax( $offer_source, array( 'price' => $offer_source->get_sale_price() ) );
+					if ( $offer_source->get_date_on_sale_to() ) {
+						$sale_price_valid_until = gmdate( 'Y-m-d', $offer_source->get_date_on_sale_to()->getTimestamp() );
+					}
+
+					// We add the sale price to the top of the array so it's the first offer.
+					// See https://github.com/woocommerce/woocommerce/issues/55043.
+					$simple_sale_spec = array(
+						'@type'         => 'UnitPriceSpecification',
+						'price'         => wc_format_decimal( $sale_price, wc_get_price_decimals() ),
+						'priceCurrency' => $currency,
+						'validThrough'  => $sale_price_valid_until ?? $price_valid_until,
+					);
+					if ( wc_tax_enabled() ) {
+						$simple_sale_spec['valueAddedTaxIncluded'] = TaxDisplayMode::INCLUSIVE === $tax_display_mode;
+					}
+					array_unshift( $markup_offer['priceSpecification'], $simple_sale_spec );
+				}
+			}
+
+			if ( $offer_source->is_in_stock() ) {
+				$stock_status_schema = ( ProductStockStatus::ON_BACKORDER === $offer_source->get_stock_status() ) ? 'BackOrder' : 'InStock';
+			} else {
+				$stock_status_schema = 'OutOfStock';
+			}
+
+			$markup_offer += array(
+				'priceValidUntil' => $sale_price_valid_until ?? $price_valid_until,
+				'availability'    => 'https://schema.org/' . $stock_status_schema,
+				'url'             => $offer_source->get_permalink(),
+				'seller'          => array(
+					'@type' => 'Organization',
+					'name'  => $shop_name,
+					'url'   => $shop_url,
+				),
+			);
+			if ( 'Offer' === $markup_offer['@type'] && empty( $markup_offer['price'] ) && ! empty( $markup_offer['priceSpecification'][0]['price'] ) ) {
+				$markup_offer['price'] = $markup_offer['priceSpecification'][0]['price'];
+			}
+			if (
+				( ! empty( $markup_offer['price'] ) ||
+					! empty( $markup_offer['lowPrice'] ) ||
+					! empty( $markup_offer['highPrice'] )
+				)
+			) {
+				$markup_offer['priceCurrency'] = $currency;
+			}
+
+			$markup['offers'] = array( apply_filters( 'woocommerce_structured_data_product_offer', $markup_offer, $product ) );
+		}
+
+		if ( $product->get_rating_count() && wc_review_ratings_enabled() ) {
+			$markup['aggregateRating'] = array(
+				'@type'       => 'AggregateRating',
+				'ratingValue' => $product->get_average_rating(),
+				'reviewCount' => $product->get_review_count(),
+			);
+
+			// Markup 5 most recent rating/review.
+			$comments = get_comments(
+				array(
+					'number'      => 5,
+					'post_id'     => $product->get_id(),
+					'status'      => 'approve',
+					'post_status' => 'publish',
+					'post_type'   => 'product',
+					'parent'      => 0,
+					'meta_query'  => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+						array(
+							'key'     => 'rating',
+							'type'    => 'NUMERIC',
+							'compare' => '>',
+							'value'   => 0,
+						),
+					),
+				)
+			);
+
+			if ( $comments ) {
+				$markup['review'] = array();
+				foreach ( $comments as $comment ) {
+					$markup['review'][] = array(
+						'@type'         => 'Review',
+						'reviewRating'  => array(
+							'@type'       => 'Rating',
+							'bestRating'  => '5',
+							'ratingValue' => get_comment_meta( $comment->comment_ID, 'rating', true ),
+							'worstRating' => '1',
+						),
+						'author'        => array(
+							'@type' => 'Person',
+							'name'  => get_comment_author( $comment ),
+						),
+						'reviewBody'    => get_comment_text( $comment ),
+						'datePublished' => get_comment_date( 'c', $comment ),
+					);
+				}
+			}
+		}
+
+		// Check we have required data.
+		if ( empty( $markup['aggregateRating'] ) && empty( $markup['offers'] ) && empty( $markup['review'] ) ) {
+			return;
+		}
+
+		$this->set_data( apply_filters( 'woocommerce_structured_data_product', $markup, $product ) );
+	}
+
+	/**
+	 * Generates Review structured data.
+	 *
+	 * Hooked into `woocommerce_review_meta` action hook.
+	 *
+	 * @param WP_Comment $comment Comment data.
+	 */
+	public function generate_review_data( $comment ) {
+		$markup                  = array();
+		$markup['@type']         = 'Review';
+		$markup['@id']           = get_comment_link( $comment->comment_ID );
+		$markup['datePublished'] = get_comment_date( 'c', $comment->comment_ID );
+		$markup['description']   = get_comment_text( $comment->comment_ID );
+		$markup['itemReviewed']  = array(
+			'@type' => 'Product',
+			'name'  => get_the_title( $comment->comment_post_ID ),
+		);
+
+		// Skip replies unless they have a rating.
+		$rating = get_comment_meta( $comment->comment_ID, 'rating', true );
+
+		if ( $rating ) {
+			$markup['reviewRating'] = array(
+				'@type'       => 'Rating',
+				'bestRating'  => '5',
+				'ratingValue' => $rating,
+				'worstRating' => '1',
+			);
+		} elseif ( $comment->comment_parent ) {
+			return;
+		}
+
+		$markup['author'] = array(
+			'@type' => 'Person',
+			'name'  => get_comment_author( $comment->comment_ID ),
+		);
+
+		$this->set_data( apply_filters( 'woocommerce_structured_data_review', $markup, $comment ) );
+	}
+
+	/**
+	 * Generates BreadcrumbList structured data.
+	 *
+	 * Hooked into `woocommerce_breadcrumb` action hook.
+	 *
+	 * @param WC_Breadcrumb $breadcrumbs Breadcrumb data.
+	 */
+	public function generate_breadcrumblist_data( $breadcrumbs ) {
+		$crumbs = $breadcrumbs->get_breadcrumb();
+
+		if ( empty( $crumbs ) || ! is_array( $crumbs ) ) {
+			return;
+		}
+
+		$markup                    = array();
+		$markup['@type']           = 'BreadcrumbList';
+		$markup['itemListElement'] = array();
+
+		foreach ( $crumbs as $key => $crumb ) {
+			$markup['itemListElement'][ $key ] = array(
+				'@type'    => 'ListItem',
+				'position' => $key + 1,
+				'item'     => array(
+					'name' => $crumb[0],
+				),
+			);
+
+			if ( ! empty( $crumb[1] ) ) {
+				$markup['itemListElement'][ $key ]['item'] += array( '@id' => $crumb[1] );
+			} elseif ( isset( $_SERVER['HTTP_HOST'], $_SERVER['REQUEST_URI'] ) ) {
+				$current_url = set_url_scheme( 'http://' . wp_unslash( $_SERVER['HTTP_HOST'] ) . wp_unslash( $_SERVER['REQUEST_URI'] ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+
+				$markup['itemListElement'][ $key ]['item'] += array( '@id' => $current_url );
+			}
+		}
+
+		$this->set_data( apply_filters( 'woocommerce_structured_data_breadcrumblist', $markup, $breadcrumbs ) );
+	}
+
+	/**
+	 * Generates WebSite structured data.
+	 *
+	 * Hooked into `woocommerce_before_main_content` action hook.
+	 */
+	public function generate_website_data() {
+		$markup                    = array();
+		$markup['@type']           = 'WebSite';
+		$markup['name']            = get_bloginfo( 'name' );
+		$markup['url']             = home_url();
+		$markup['potentialAction'] = array(
+			'@type'       => 'SearchAction',
+			'target'      => home_url( '?s={search_term_string}&post_type=product' ),
+			'query-input' => 'required name=search_term_string',
+		);
+
+		$this->set_data( apply_filters( 'woocommerce_structured_data_website', $markup ) );
+	}
+
+	/**
+	 * Generates Order structured data.
+	 *
+	 * Hooked into `woocommerce_email_order_details` action hook.
+	 *
+	 * @param WP_Order $order         Order data.
+	 * @param bool     $sent_to_admin Send to admin (default: false).
+	 * @param bool     $plain_text    Plain text email (default: false).
+	 */
+	public function generate_order_data( $order, $sent_to_admin = false, $plain_text = false ) {
+		if ( $plain_text || ! is_a( $order, 'WC_Order' ) ) {
+			return;
+		}
+
+		$shop_name      = get_bloginfo( 'name' );
+		$shop_url       = home_url();
+		$order_url      = $sent_to_admin ? $order->get_edit_order_url() : $order->get_view_order_url();
+		$order_statuses = array(
+			OrderStatus::PENDING    => 'https://schema.org/OrderPaymentDue',
+			OrderStatus::PROCESSING => 'https://schema.org/OrderProcessing',
+			OrderStatus::ON_HOLD    => 'https://schema.org/OrderProblem',
+			OrderStatus::COMPLETED  => 'https://schema.org/OrderDelivered',
+			OrderStatus::CANCELLED  => 'https://schema.org/OrderCancelled',
+			OrderStatus::REFUNDED   => 'https://schema.org/OrderReturned',
+			OrderStatus::FAILED     => 'https://schema.org/OrderProblem',
+		);
+
+		$markup_offers = array();
+		foreach ( $order->get_items() as $item ) {
+			if ( ! apply_filters( 'woocommerce_order_item_visible', true, $item ) ) {
+				continue;
+			}
+
+			$product        = $item->get_product();
+			$product_exists = is_object( $product );
+			$is_visible     = $product_exists && $product->is_visible();
+
+			$markup_offers[] = array(
+				'@type'              => 'Offer',
+				'price'              => $order->get_line_subtotal( $item ),
+				'priceCurrency'      => $order->get_currency(),
+				'priceSpecification' => array(
+					'price'            => $order->get_line_subtotal( $item ),
+					'priceCurrency'    => $order->get_currency(),
+					'eligibleQuantity' => array(
+						'@type' => 'QuantitativeValue',
+						'value' => apply_filters( 'woocommerce_email_order_item_quantity', $item->get_quantity(), $item ),
+					),
+				),
+				'itemOffered'        => array(
+					'@type' => 'Product',
+					'name'  => wp_kses_post( apply_filters( 'woocommerce_order_item_name', $item->get_name(), $item, $is_visible ) ),
+					'sku'   => $product_exists ? $product->get_sku() : '',
+					'image' => $product_exists ? wp_get_attachment_image_url( (int) $product->get_image_id() ) : '',
+					'url'   => $is_visible ? get_permalink( $product->get_id() ) : get_home_url(),
+				),
+				'seller'             => array(
+					'@type' => 'Organization',
+					'name'  => $shop_name,
+					'url'   => $shop_url,
+				),
+			);
+		}
+
+		$markup                       = array();
+		$markup['@type']              = 'Order';
+		$markup['url']                = $order_url;
+		$markup['orderStatus']        = isset( $order_statuses[ $order->get_status() ] ) ? $order_statuses[ $order->get_status() ] : '';
+		$markup['orderNumber']        = $order->get_order_number();
+		$markup['orderDate']          = $order->get_date_created()->format( 'c' );
+		$markup['acceptedOffer']      = $markup_offers;
+		$markup['discount']           = $order->get_total_discount();
+		$markup['discountCurrency']   = $order->get_currency();
+		$markup['price']              = $order->get_total();
+		$markup['priceCurrency']      = $order->get_currency();
+		$markup['priceSpecification'] = array(
+			'price'         => $order->get_total(),
+			'priceCurrency' => $order->get_currency(),
+		);
+		if ( wc_tax_enabled() ) {
+			$markup['priceSpecification']['valueAddedTaxIncluded'] = wc_prices_include_tax();
+		}
+		$markup['billingAddress']  = array(
+			'@type'           => 'PostalAddress',
+			'name'            => $order->get_formatted_billing_full_name(),
+			'streetAddress'   => $order->get_billing_address_1(),
+			'postalCode'      => $order->get_billing_postcode(),
+			'addressLocality' => $order->get_billing_city(),
+			'addressRegion'   => $order->get_billing_state(),
+			'addressCountry'  => $order->get_billing_country(),
+			'email'           => $order->get_billing_email(),
+			'telephone'       => $order->get_billing_phone(),
+		);
+		$markup['customer']        = array(
+			'@type' => 'Person',
+			'name'  => $order->get_formatted_billing_full_name(),
+		);
+		$markup['merchant']        = array(
+			'@type' => 'Organization',
+			'name'  => $shop_name,
+			'url'   => $shop_url,
+		);
+		$markup['potentialAction'] = array(
+			'@type'  => 'ViewAction',
+			'name'   => 'View Order',
+			'url'    => $order_url,
+			'target' => $order_url,
+		);
+
+		$this->set_data( apply_filters( 'woocommerce_structured_data_order', $markup, $sent_to_admin, $order ), true );
+	}
+
+	/**
+	 * Check if a GTIN is valid.
+	 * A valid GTIN is a string containing 8,12,13 or 14 digits.
+	 *
+	 * @see https://schema.org/gtin
+	 * @param string $gtin The GTIN to check.
+	 * @return bool True if valid. False otherwise.
+	 */
+	public function is_valid_gtin( $gtin ) {
+		return is_string( $gtin ) && preg_match( '/^(\d{8}|\d{12,14})$/', $gtin );
+	}
+
+	/**
+	 * Prepare a GTIN input removing everything except numbers.
+	 *
+	 * @param string $gtin The GTIN to prepare.
+	 * @return string Empty string if no GTIN is provided or the string with the replacements.
+	 */
+	public function prepare_gtin( $gtin ) {
+		if ( ! $gtin || ! is_string( $gtin ) ) {
+			return '';
+		}
+
+		return preg_replace( '/[^0-9]/', '', $gtin );
+	}
+
+	/**
+	 * Resolve the variation targeted by the current request, if any.
+	 *
+	 * A variation is only returned when every variation attribute of the product is present in the
+	 * request (e.g. `?attribute_pa_size=large&attribute_color=red`) and they unambiguously identify a
+	 * single, purchasable variation. Partial or missing selections return null so the parent product's
+	 * AggregateOffer is used instead.
+	 *
+	 * @param WC_Product $product Variable product.
+	 * @return WC_Product_Variation|null The selected variation, or null when not uniquely identified.
+	 */
+	private function get_selected_variation( $product ) {
+		if ( ! $product instanceof WC_Product_Variable ) {
+			return null;
+		}
+
+		$variation_attributes = $product->get_variation_attributes();
+
+		if ( empty( $variation_attributes ) ) {
+			return null;
+		}
+
+		$match_attributes = array();
+
+		foreach ( $variation_attributes as $attribute_name => $options ) {
+			$key = wc_variation_attribute_name( $attribute_name );
+
+			// Require every variation attribute to be specified so a single variation is identified.
+			if ( ! isset( $_GET[ $key ] ) || '' === $_GET[ $key ] ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				return null;
+			}
+
+			$match_attributes[ $key ] = wc_clean( wp_unslash( $_GET[ $key ] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
+
+		$data_store = WC_Data_Store::load( 'product' );
+		// @phpstan-ignore-next-line method.notFound (Called via __call() on the underlying product data store instance.)
+		$variation_id = $data_store->find_matching_product_variation( $product, $match_attributes );
+
+		if ( ! $variation_id ) {
+			return null;
+		}
+
+		// `find_matching_product_variation()` returns the first match by menu order, so a fully-specified
+		// selection can still be ambiguous when an overlapping "Any" variation also matches it. Only treat
+		// the selection as a single Offer when exactly one variation matches; otherwise the price is
+		// ambiguous and we keep the parent's AggregateOffer.
+		if ( 1 !== $this->count_matching_variations( $product, $match_attributes ) ) {
+			return null;
+		}
+
+		$variation = wc_get_product( $variation_id );
+
+		if ( ! $variation instanceof WC_Product_Variation || '' === $variation->get_price() ) {
+			return null;
+		}
+
+		return $variation;
+	}
+
+	/**
+	 * Count how many of a variable product's variations match the given attribute selection.
+	 *
+	 * Mirrors the matching rules of `find_matching_product_variation()` (an empty stored attribute
+	 * value means the variation accepts any value), but counts every match so callers can detect an
+	 * ambiguous selection. Short-circuits once a second match is found.
+	 *
+	 * @param WC_Product $product          Variable product.
+	 * @param array      $match_attributes Requested attributes keyed by `attribute_*` name.
+	 * @return int Number of matching variations (0, 1, or 2 when more than one matches).
+	 */
+	private function count_matching_variations( $product, $match_attributes ) {
+		$match_count = 0;
+		$child_ids   = $product->get_children();
+
+		if ( ! empty( $child_ids ) ) {
+			// Prime caches to reduce future queries.
+			_prime_post_caches( $child_ids );
+		}
+
+		foreach ( $child_ids as $variation_id ) {
+			$variation = wc_get_product( $variation_id );
+
+			if ( ! $variation instanceof WC_Product_Variation ) {
+				continue;
+			}
+
+			// `find_matching_product_variation()` only queries published variations, so private
+			// siblings must be ignored here to keep the count consistent with the resolved variation.
+			if ( ProductStatus::PUBLISH !== $variation->get_status() ) {
+				continue;
+			}
+
+			$matches = true;
+
+			foreach ( $variation->get_variation_attributes() as $attribute_key => $attribute_value ) {
+				// An empty stored value means the variation accepts any value for this attribute.
+				if ( '' === $attribute_value ) {
+					continue;
+				}
+				if ( ! isset( $match_attributes[ $attribute_key ] ) || $match_attributes[ $attribute_key ] !== $attribute_value ) {
+					$matches = false;
+					break;
+				}
+			}
+
+			if ( $matches && ++$match_count > 1 ) {
+				return $match_count;
+			}
+		}
+
+		return $match_count;
+	}
+}

@@ -1,0 +1,149 @@
+<?php
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * The Afterpay / Clearpay Payment Method class extending UPE base class
+ */
+class WC_Stripe_UPE_Payment_Method_Afterpay_Clearpay extends WC_Stripe_UPE_Payment_Method {
+
+	public const STRIPE_ID = WC_Stripe_Payment_Methods::AFTERPAY_CLEARPAY;
+
+	/**
+	 * Stripe account countries that may enable Clearpay / Afterpay.
+	 *
+	 * @var string[]
+	 */
+	protected const SUPPORTED_ACCOUNT_COUNTRIES = [
+		WC_Stripe_Country_Code::AUSTRALIA,
+		WC_Stripe_Country_Code::CANADA,
+		WC_Stripe_Country_Code::UNITED_KINGDOM,
+		WC_Stripe_Country_Code::NEW_ZEALAND,
+		WC_Stripe_Country_Code::UNITED_STATES,
+	];
+
+	/**
+	 * Shopper billing countries permitted to use Clearpay / Afterpay (domestic-only, so same as account).
+	 *
+	 * @var string[]
+	 */
+	protected const SUPPORTED_BILLING_COUNTRIES = [
+		WC_Stripe_Country_Code::AUSTRALIA,
+		WC_Stripe_Country_Code::CANADA,
+		WC_Stripe_Country_Code::UNITED_KINGDOM,
+		WC_Stripe_Country_Code::NEW_ZEALAND,
+		WC_Stripe_Country_Code::UNITED_STATES,
+	];
+
+	/**
+	 * Constructor for afterpay / clearpay payment method
+	 */
+	public function __construct() {
+		parent::__construct();
+
+		$this->stripe_id                    = self::STRIPE_ID;
+		$this->title                        = __( 'Clearpay / Afterpay', 'woocommerce-gateway-stripe' );
+		$this->is_reusable                  = false;
+		$this->supported_currencies         = [
+			WC_Stripe_Currency_Code::UNITED_STATES_DOLLAR,
+			WC_Stripe_Currency_Code::CANADIAN_DOLLAR,
+			WC_Stripe_Currency_Code::POUND_STERLING,
+			WC_Stripe_Currency_Code::AUSTRALIAN_DOLLAR,
+			WC_Stripe_Currency_Code::NEW_ZEALAND_DOLLAR,
+		];
+		$this->accept_only_domestic_payment = true;
+		$this->label                        = __( 'Clearpay / Afterpay', 'woocommerce-gateway-stripe' );
+		$this->description                  = __(
+			'Allow customers to pay over time with Clearpay / Afterpay.',
+			'woocommerce-gateway-stripe'
+		);
+		$this->limits_per_currency          = [
+			WC_Stripe_Currency_Code::AUSTRALIAN_DOLLAR    => [
+				WC_Stripe_Country_Code::AUSTRALIA => [
+					'min' => 100,
+					'max' => 400000,
+				], // Represents AUD 1 - 4,000 AUD.
+			],
+			WC_Stripe_Currency_Code::CANADIAN_DOLLAR      => [
+				WC_Stripe_Country_Code::CANADA => [
+					'min' => 100,
+					'max' => 200000,
+				], // Represents CAD 1 - 2,000 CAD.
+			],
+			WC_Stripe_Currency_Code::NEW_ZEALAND_DOLLAR   => [
+				WC_Stripe_Country_Code::NEW_ZEALAND => [
+					'min' => 100,
+					'max' => 400000,
+				], // Represents NZD 1 - 4,000 NZD.
+			],
+			WC_Stripe_Currency_Code::POUND_STERLING       => [
+				WC_Stripe_Country_Code::UNITED_KINGDOM => [
+					'min' => 100,
+					'max' => 120000,
+				], // Represents GBP 1 - 1,200 GBP.
+			],
+			WC_Stripe_Currency_Code::UNITED_STATES_DOLLAR => [
+				WC_Stripe_Country_Code::UNITED_STATES => [
+					'min' => 100,
+					'max' => 400000,
+				], // Represents USD 1 - 4,000 USD.
+			],
+		];
+	}
+
+	/**
+	 * Returns payment method title
+	 *
+	 * @param stdClass|array|bool $payment_details Optional payment details from charge object.
+	 *
+	 * @return string
+	 */
+	public function get_title( $payment_details = false ) {
+		if ( $this->is_gb_country() ) {
+			$this->title = __( 'Clearpay', 'woocommerce-gateway-stripe' );
+		} else {
+			$this->title = __( 'Afterpay', 'woocommerce-gateway-stripe' );
+		}
+
+		return parent::get_title( $payment_details );
+	}
+
+	/**
+	 * Returns payment method icon.
+	 *
+	 * @return string|null
+	 */
+	public function get_icon() {
+		$icon_file_name = $this->is_gb_country() ? 'clearpay' : 'afterpay';
+
+		$asset_url = sprintf( '%s/assets/images/%s.svg', WC_STRIPE_PLUGIN_URL, $icon_file_name );
+
+		return sprintf(
+			'<img src="%s" class="stripe-%s-icon stripe-icon" alt="%s">',
+			esc_url( $asset_url ),
+			esc_attr( $this->stripe_id ),
+			esc_attr( $this->get_title() )
+		);
+	}
+
+	/**
+	 * Returns whether the payment method requires automatic capture.
+	 *
+	 * @inheritDoc
+	 */
+	public function requires_automatic_capture() {
+		return false;
+	}
+
+	/**
+	 * Returns true if the Stripe account country is GB
+	 *
+	 * @return boolean
+	 */
+	private function is_gb_country() {
+		$cached_account_data = WC_Stripe::get_instance()->account->get_cached_account_data();
+		$account_country     = $cached_account_data['country'] ?? null;
+		return WC_Stripe_Country_Code::UNITED_KINGDOM === $account_country;
+	}
+}

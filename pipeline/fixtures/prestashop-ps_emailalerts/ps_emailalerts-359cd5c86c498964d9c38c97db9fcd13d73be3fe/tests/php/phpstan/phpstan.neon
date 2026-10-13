@@ -1,0 +1,14 @@
+parameters:
+  paths:
+    - ../../../upgrade
+    - ../../../controllers
+  scanFiles:
+    - ../../../ps_emailalerts.php
+    - ../../../MailAlert.php
+
+  reportUnmatchedIgnoredErrors: false
+  level: 5
+
+  ignoreErrors:
+    - '#Unreachable statement \- code above always terminates\.#'
+    - '#deprecated#'

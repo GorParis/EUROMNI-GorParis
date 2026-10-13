@@ -1,0 +1,1522 @@
+<?php
+/**
+ * WooCommerce Product CSV importer
+ *
+ * @package WooCommerce\Import
+ * @version 10.0.0
+ */
+
+use Automattic\WooCommerce\Enums\ProductStatus;
+use Automattic\WooCommerce\Enums\ProductStockStatus;
+use Automattic\WooCommerce\Enums\ProductTaxStatus;
+use Automattic\WooCommerce\Enums\ProductType;
+use Automattic\WooCommerce\Internal\CostOfGoodsSold\CostOfGoodsSoldController;
+use Automattic\WooCommerce\Utilities\ArrayUtil;
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Include dependencies.
+ */
+if ( ! class_exists( 'WC_Product_Importer', false ) ) {
+	include_once __DIR__ . '/abstract-wc-product-importer.php';
+}
+
+if ( ! class_exists( 'WC_Product_CSV_Importer_Controller', false ) ) {
+	include_once WC_ABSPATH . 'includes/admin/importers/class-wc-product-csv-importer-controller.php';
+}
+
+/**
+ * WC_Product_CSV_Importer Class.
+ */
+class WC_Product_CSV_Importer extends WC_Product_Importer {
+
+	/**
+	 * Tracks current row being parsed.
+	 *
+	 * @var integer
+	 */
+	protected $parsing_raw_data_index = 0;
+
+	/**
+	 * Is the Cost of Goods Sold feature enabled?
+	 *
+	 * @var bool
+	 */
+	private $cogs_is_enabled = false;
+
+	/**
+	 * Product IDs keyed by their original CSV IDs for this import request.
+	 *
+	 * @var array<int, int>
+	 */
+	private $original_id_map = array();
+
+	/**
+	 * Initialize importer.
+	 *
+	 * @param string $file   File to read.
+	 * @param array  $params Arguments for the parser.
+	 */
+	public function __construct( $file, $params = array() ) {
+		$this->cogs_is_enabled = wc_get_container()->get( CostOfGoodsSoldController::class )->feature_is_enabled();
+
+		$default_args = array(
+			'start_pos'        => 0, // File pointer start.
+			'end_pos'          => -1, // File pointer end.
+			'lines'            => -1, // Max lines to read.
+			'mapping'          => array(), // Column mapping. csv_heading => schema_heading.
+			'parse'            => false, // Whether to sanitize and format data.
+			'update_existing'  => false, // Whether to update existing items.
+			'delimiter'        => ',', // CSV delimiter.
+			'prevent_timeouts' => true, // Check memory and time usage and abort if reaching limit.
+			'enclosure'        => '"', // The character used to wrap text in the CSV.
+			'escape'           => "\0", // PHP uses '\' as the default escape character. This is not RFC-4180 compliant. This disables the escape character.
+		);
+
+		$this->params = wp_parse_args( $params, $default_args );
+		$this->file   = $file;
+
+		if ( isset( $this->params['mapping']['from'], $this->params['mapping']['to'] ) ) {
+			$this->params['mapping'] = array_combine( $this->params['mapping']['from'], $this->params['mapping']['to'] );
+		}
+
+		// Import mappings for CSV data.
+		include_once dirname( __DIR__ ) . '/admin/importers/mappings/mappings.php';
+
+		$this->read_file();
+	}
+
+	/**
+	 * Convert a string from the input encoding to UTF-8.
+	 *
+	 * @param string $value The string to convert.
+	 * @return string The converted string.
+	 */
+	private function adjust_character_encoding( $value ) {
+		$encoding = $this->params['character_encoding'];
+
+		// Skip conversion when the value is already UTF-8 or when mbstring is unavailable.
+		if ( 'UTF-8' === $encoding || ! function_exists( 'mb_convert_encoding' ) ) {
+			return $value;
+		}
+
+		return mb_convert_encoding( $value, 'UTF-8', $encoding );
+	}
+
+	/**
+	 * Read file.
+	 *
+	 * @throws RuntimeException When the file cannot be opened.
+	 */
+	protected function read_file() {
+		if ( ! WC_Product_CSV_Importer_Controller::is_file_valid_csv( $this->file ) ) {
+			wp_die( esc_html__( 'Invalid file type. The importer supports CSV and TXT file formats.', 'woocommerce' ) );
+		}
+
+		$handle = @fopen( $this->file, 'r' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- warning suppressed so a strict error handler cannot preempt the RuntimeException below.
+
+		if ( false === $handle ) {
+			// An exception rather than wp_die(), so callers in any context (admin, AJAX, REST, CLI) can catch and present it appropriately.
+			throw new RuntimeException( esc_html__( 'Unable to open the CSV file, please try again with a new file.', 'woocommerce' ) );
+		}
+
+		$headers = fgetcsv( $handle, 0, $this->params['delimiter'], $this->params['enclosure'], $this->params['escape'] ); // @codingStandardsIgnoreLine
+
+		// fgetcsv() returns false for an empty file; leave the keys empty so the empty-file error can be shown instead of fataling on array_map().
+		$this->raw_keys = is_array( $headers ) ? array_map( 'trim', $headers ) : array();
+
+		if ( ArrayUtil::is_truthy( $this->params, 'character_encoding' ) ) {
+			$this->raw_keys = array_map( array( $this, 'adjust_character_encoding' ), $this->raw_keys );
+		}
+
+		// Remove line breaks in keys, to avoid mismatch mapping of keys.
+		$this->raw_keys = wc_clean( wp_unslash( $this->raw_keys ) );
+
+		// Remove BOM signature from the first item.
+		if ( isset( $this->raw_keys[0] ) ) {
+			$this->raw_keys[0] = $this->remove_utf8_bom( $this->raw_keys[0] );
+		}
+
+		if ( 0 !== $this->params['start_pos'] ) {
+			fseek( $handle, (int) $this->params['start_pos'] );
+		}
+
+		while ( 1 ) {
+			$row = fgetcsv( $handle, 0, $this->params['delimiter'], $this->params['enclosure'], $this->params['escape'] ); // @codingStandardsIgnoreLine
+
+			if ( false !== $row ) {
+				if ( ArrayUtil::is_truthy( $this->params, 'character_encoding' ) ) {
+					$row = array_map( array( $this, 'adjust_character_encoding' ), $row );
+				}
+
+				$this->raw_data[]                                 = $row;
+				$this->file_positions[ count( $this->raw_data ) ] = ftell( $handle );
+
+				if ( ( $this->params['end_pos'] > 0 && ftell( $handle ) >= $this->params['end_pos'] ) || 0 === --$this->params['lines'] ) {
+					break;
+				}
+			} else {
+				break;
+			}
+		}
+
+		$this->file_position = ftell( $handle );
+
+		fclose( $handle ); // @codingStandardsIgnoreLine.
+
+		if ( ! empty( $this->params['mapping'] ) ) {
+			$this->set_mapped_keys();
+		}
+
+		if ( $this->params['parse'] ) {
+			$this->set_parsed_data();
+		}
+	}
+
+	/**
+	 * Remove UTF-8 BOM signature.
+	 *
+	 * @param string $string String to handle.
+	 *
+	 * @return string
+	 */
+	protected function remove_utf8_bom( $string ) {
+		if ( 'efbbbf' === substr( bin2hex( $string ), 0, 6 ) ) {
+			$string = substr( $string, 3 );
+		}
+
+		return $string;
+	}
+
+	/**
+	 * Set file mapped keys.
+	 */
+	protected function set_mapped_keys() {
+		$mapping = $this->params['mapping'];
+
+		foreach ( $this->raw_keys as $key ) {
+			$this->mapped_keys[] = isset( $mapping[ $key ] ) ? $mapping[ $key ] : $key;
+		}
+	}
+
+	/**
+	 * Find a product previously mapped from an original CSV ID.
+	 *
+	 * Only mappings backed by an `_original_id` meta row are cached: successful
+	 * lookups and placeholders created by this instance. Misses are not cached
+	 * because a later row or a hook can still create the mapping. The cache
+	 * assumes placeholders are not deleted while a batch is being parsed.
+	 *
+	 * @param int $original_id Original product ID from the CSV file.
+	 * @return int Mapped product ID, or 0 when no mapping exists.
+	 */
+	private function get_product_id_by_original_id( $original_id ): int {
+		global $wpdb;
+
+		$original_id = absint( $original_id );
+		if ( isset( $this->original_id_map[ $original_id ] ) ) {
+			return $this->original_id_map[ $original_id ];
+		}
+
+		$product_id = absint( $wpdb->get_var( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_original_id' AND meta_value = %s;", $original_id ) ) );
+
+		if ( $product_id ) {
+			$this->original_id_map[ $original_id ] = $product_id;
+		}
+
+		return $product_id;
+	}
+
+	/**
+	 * Remember a placeholder created for an original CSV ID during this import request.
+	 *
+	 * @param int $original_id Original product ID from the CSV file.
+	 * @param int $product_id  Placeholder product ID.
+	 */
+	private function remember_original_id_mapping( $original_id, $product_id ): void {
+		$original_id = absint( $original_id );
+		$product_id  = absint( $product_id );
+
+		if ( $original_id && $product_id ) {
+			$this->original_id_map[ $original_id ] = $product_id;
+		}
+	}
+
+	/**
+	 * Parse relative field and return product ID.
+	 *
+	 * Handles `id:xx` and SKUs.
+	 *
+	 * If mapping to an id: and the product ID does not exist, this link is not
+	 * valid.
+	 *
+	 * If mapping to a SKU and the product ID does not exist, a temporary object
+	 * will be created so it can be updated later.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return int|string
+	 */
+	public function parse_relative_field( $value ) {
+		global $wpdb;
+
+		if ( empty( $value ) ) {
+			return '';
+		}
+
+		// IDs are prefixed with id:.
+		if ( preg_match( '/^id:(\d+)$/', $value, $matches ) ) {
+			$id = intval( $matches[1] );
+
+			// If original_id is found, use that instead of the given ID since a new placeholder must have been created already.
+			$mapped_product_id = $this->get_product_id_by_original_id( $id );
+
+			if ( $mapped_product_id ) {
+				return $mapped_product_id;
+			}
+
+			// See if the given ID maps to a valid product already.
+			$existing_id = $wpdb->get_var( $wpdb->prepare( "SELECT ID FROM {$wpdb->posts} WHERE post_type IN ( 'product', 'product_variation' ) AND ID = %d;", $id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- The importer requires a fresh indexed ID lookup that may include newly created placeholders.
+
+			if ( $existing_id ) {
+				return absint( $existing_id );
+			}
+
+			// If we're not updating existing posts, we may need a placeholder product to map to.
+			if ( ! $this->params['update_existing'] ) {
+				$product = wc_get_product_object( ProductType::SIMPLE );
+				$product->set_name( 'Import placeholder for ' . $id );
+				$product->set_status( 'importing' );
+				$product->add_meta_data( '_original_id', $id, true );
+				$placeholder_id = $product->save();
+				$this->remember_original_id_mapping( $id, $placeholder_id );
+
+				return $placeholder_id;
+			}
+
+			return $id;
+		}
+
+		$id = wc_get_product_id_by_sku( $value );
+
+		if ( $id ) {
+			return $id;
+		}
+
+		try {
+			$product = wc_get_product_object( ProductType::SIMPLE );
+			$product->set_name( 'Import placeholder for ' . $value );
+			$product->set_status( 'importing' );
+			$product->set_sku( $value );
+			$id = $product->save();
+
+			if ( $id && ! is_wp_error( $id ) ) {
+				return $id;
+			}
+		} catch ( Exception $e ) {
+			return '';
+		}
+
+		return '';
+	}
+
+	/**
+	 * Parse the ID field.
+	 *
+	 * If we're not doing an update, create a placeholder product so mapping works
+	 * for rows following this one.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return int
+	 */
+	public function parse_id_field( $value ) {
+		$id = absint( $value );
+
+		if ( ! $id ) {
+			return 0;
+		}
+
+		// See if this maps to an ID placeholder already.
+		$mapped_product_id = $this->get_product_id_by_original_id( $id );
+
+		if ( $mapped_product_id ) {
+			return $mapped_product_id;
+		}
+
+		// Not updating? Make sure we have a new placeholder for this ID.
+		if ( ! $this->params['update_existing'] ) {
+			$mapped_keys      = $this->get_mapped_keys();
+			$sku_column_index = absint( array_search( 'sku', $mapped_keys, true ) );
+			$row_sku          = isset( $this->raw_data[ $this->parsing_raw_data_index ][ $sku_column_index ] ) ? $this->raw_data[ $this->parsing_raw_data_index ][ $sku_column_index ] : '';
+			$id_from_sku      = $row_sku ? wc_get_product_id_by_sku( $row_sku ) : '';
+
+			// If row has a SKU, make sure placeholder was not made already.
+			if ( $id_from_sku ) {
+				return $id_from_sku;
+			}
+
+			$product = wc_get_product_object( ProductType::SIMPLE );
+			$product->set_name( 'Import placeholder for ' . $id );
+			$product->set_status( 'importing' );
+			$product->add_meta_data( '_original_id', $id, true );
+
+			// If row has a SKU, make sure placeholder has it too.
+			if ( $row_sku ) {
+				$product->set_sku( $row_sku );
+			}
+			$placeholder_id = $product->save();
+			$this->remember_original_id_mapping( $id, $placeholder_id );
+
+			return $placeholder_id;
+		}
+
+		return $id;
+	}
+
+	/**
+	 * Parse relative comma-delineated field and return product ID.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return array
+	 */
+	public function parse_relative_comma_field( $value ) {
+		if ( empty( $value ) ) {
+			return array();
+		}
+
+		return array_filter( array_map( array( $this, 'parse_relative_field' ), $this->explode_values( $value ) ) );
+	}
+
+	/**
+	 * Parse a comma-delineated field from a CSV.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return array
+	 */
+	public function parse_comma_field( $value ) {
+		if ( empty( $value ) && '0' !== $value ) {
+			return array();
+		}
+
+		$value = $this->unescape_data( $value );
+		return array_map( 'wc_clean', $this->explode_values( $value ) );
+	}
+
+	/**
+	 * Parse a field that is generally '1' or '0' but can be something else.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return bool|string
+	 */
+	public function parse_bool_field( $value ) {
+		if ( '0' === $value ) {
+			return false;
+		}
+
+		if ( '1' === $value ) {
+			return true;
+		}
+
+		// Don't return explicit true or false for empty fields or values like 'notify'.
+		return wc_clean( $value );
+	}
+
+	/**
+	 * Parse a float value field.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return float|string
+	 */
+	public function parse_float_field( $value ) {
+		if ( '' === $value ) {
+			return $value;
+		}
+
+		// Remove the ' prepended to fields that start with - if needed.
+		$value = $this->unescape_data( $value );
+
+		// Use wc_format_decimal() rather than floatval() so the store's decimal separator
+		// setting is respected (e.g. a comma-separated weight like "1,5"). This mirrors how
+		// price fields are parsed above and how the product setters normalize these values.
+		return (float) wc_format_decimal( $value );
+	}
+
+	/**
+	 * Parse the stock qty field.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return float|string
+	 */
+	public function parse_stock_quantity_field( $value ) {
+		if ( '' === $value ) {
+			return $value;
+		}
+
+		// Remove the ' prepended to fields that start with - if needed.
+		$value = $this->unescape_data( $value );
+
+		return wc_stock_amount( $value );
+	}
+
+	/**
+	 * Parse the tax status field.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return string
+	 */
+	public function parse_tax_status_field( $value ) {
+		if ( '' === $value ) {
+			return $value;
+		}
+
+		// Remove the ' prepended to fields that start with - if needed.
+		$value = $this->unescape_data( $value );
+
+		if ( 'true' === strtolower( $value ) || 'false' === strtolower( $value ) ) {
+			$value = wc_string_to_bool( $value ) ? ProductTaxStatus::TAXABLE : ProductTaxStatus::NONE;
+		}
+
+		return wc_clean( $value );
+	}
+
+	/**
+	 * Parse a category field from a CSV.
+	 * Categories are separated by commas and subcategories are "parent > subcategory".
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return array of arrays with "parent" and "name" keys.
+	 */
+	public function parse_categories_field( $value ) {
+		if ( empty( $value ) ) {
+			return array();
+		}
+
+		$row_terms  = $this->explode_values( $value );
+		$categories = array();
+
+		foreach ( $row_terms as $row_term ) {
+			$parent = null;
+			$_terms = array_map( 'trim', explode( '>', $row_term ) );
+			$total  = count( $_terms );
+
+			foreach ( $_terms as $index => $_term ) {
+				// Don't allow users without capabilities to create new categories.
+				if ( ! current_user_can( 'manage_product_terms' ) ) {
+					break;
+				}
+
+				$term = wp_insert_term( $_term, 'product_cat', array( 'parent' => intval( $parent ) ) );
+
+				if ( is_wp_error( $term ) ) {
+					if ( $term->get_error_code() === 'term_exists' ) {
+						// When term exists, error data should contain existing term id.
+						$term_id = $term->get_error_data();
+					} else {
+						break; // We cannot continue on any other error.
+					}
+				} else {
+					// New term.
+					$term_id = $term['term_id'];
+				}
+
+				// Only requires assign the last category.
+				if ( ( 1 + $index ) === $total ) {
+					$categories[] = $term_id;
+				} else {
+					// Store parent to be able to insert or query categories based in parent ID.
+					$parent = $term_id;
+				}
+			}
+		}
+
+		return $categories;
+	}
+
+	/**
+	 * Parse a tag field from a CSV.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return array
+	 */
+	public function parse_tags_field( $value ) {
+		if ( empty( $value ) ) {
+			return array();
+		}
+
+		$value = $this->unescape_data( $value );
+		$names = $this->explode_values( $value );
+		$tags  = array();
+
+		foreach ( $names as $name ) {
+			$term = get_term_by( 'name', $name, 'product_tag' );
+
+			if ( ! $term || is_wp_error( $term ) ) {
+				$term = (object) wp_insert_term( $name, 'product_tag' );
+			}
+
+			if ( ! is_wp_error( $term ) ) {
+				$tags[] = $term->term_id;
+			}
+		}
+
+		return $tags;
+	}
+
+	/**
+	 * Parse a tag field from a CSV with space separators.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return array
+	 */
+	public function parse_tags_spaces_field( $value ) {
+		if ( empty( $value ) ) {
+			return array();
+		}
+
+		$value = $this->unescape_data( $value );
+		$names = $this->explode_values( $value, ' ' );
+		$tags  = array();
+
+		foreach ( $names as $name ) {
+			$term = get_term_by( 'name', $name, 'product_tag' );
+
+			if ( ! $term || is_wp_error( $term ) ) {
+				$term = (object) wp_insert_term( $name, 'product_tag' );
+			}
+
+			if ( ! is_wp_error( $term ) ) {
+				$tags[] = $term->term_id;
+			}
+		}
+
+		return $tags;
+	}
+
+	/**
+	 * Parse a shipping class field from a CSV.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return int
+	 */
+	public function parse_shipping_class_field( $value ) {
+		if ( empty( $value ) ) {
+			return 0;
+		}
+
+		$term = get_term_by( 'name', $value, 'product_shipping_class' );
+
+		if ( ! $term || is_wp_error( $term ) ) {
+			$term = (object) wp_insert_term( $value, 'product_shipping_class' );
+		}
+
+		if ( is_wp_error( $term ) ) {
+			return 0;
+		}
+
+		return $term->term_id;
+	}
+
+	/**
+	 * Parse images list from a CSV. Images can be filenames or URLs.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return array
+	 */
+	public function parse_images_field( $value ) {
+		if ( empty( $value ) ) {
+			return array();
+		}
+
+		$images    = array();
+		$separator = apply_filters( 'woocommerce_product_import_image_separator', ',' );
+
+		foreach ( $this->explode_values( $value, $separator ) as $image ) {
+			if ( stristr( $image, '://' ) ) {
+				$images[] = esc_url_raw( $image );
+			} else {
+				$images[] = sanitize_file_name( $image );
+			}
+		}
+
+		return $images;
+	}
+
+	/**
+	 * Parse dates from a CSV.
+	 * Dates requires the format YYYY-MM-DD and time is optional.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return string|null
+	 */
+	public function parse_date_field( $value ) {
+		if ( empty( $value ) ) {
+			return null;
+		}
+
+		if ( preg_match( '/^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1])([ 01-9:]*)$/', $value ) ) {
+			// Don't include the time if the field had time in it.
+			return current( explode( ' ', $value ) );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse dates from a CSV.
+	 * Dates can be Unix timestamps or in any format supported by strtotime().
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return string|null
+	 */
+	public function parse_datetime_field( $value ) {
+		try {
+			// If value is a Unix timestamp, convert it to a datetime string.
+			if ( is_numeric( $value ) ) {
+				$datetime = new DateTime( "@{$value}" );
+				// Return datetime string in ISO8601 format (eg. 2018-01-01T00:00:00Z) to preserve UTC timezone since Unix timestamps are always UTC.
+				return $datetime->format( 'Y-m-d\TH:i:s\Z' );
+			}
+			// Check whether the value is a valid date string.
+			if ( false !== strtotime( $value ) ) {
+				// If the value is a valid date string, return as is.
+				return $value;
+			}
+		} catch ( Exception $e ) {
+			// DateTime constructor throws an exception if the value is not a valid Unix timestamp.
+			return null;
+		}
+		// If value is not valid Unix timestamp or date string, return null.
+		return null;
+	}
+
+	/**
+	 * Parse backorders from a CSV.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return string
+	 */
+	public function parse_backorders_field( $value ) {
+		if ( empty( $value ) ) {
+			return 'no';
+		}
+
+		$value = $this->parse_bool_field( $value );
+
+		if ( 'notify' === $value ) {
+			return 'notify';
+		} elseif ( is_bool( $value ) ) {
+			return $value ? 'yes' : 'no';
+		}
+
+		return 'no';
+	}
+
+	/**
+	 * Just skip current field.
+	 *
+	 * By default is applied wc_clean() to all not listed fields
+	 * in self::get_formatting_callback(), use this method to skip any formatting.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return string
+	 */
+	public function parse_skip_field( $value ) {
+		return $value;
+	}
+
+	/**
+	 * Parse download file urls, we should allow shortcodes here.
+	 *
+	 * Allow shortcodes if present, otherwise esc_url the value.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return string
+	 */
+	public function parse_download_file_field( $value ) {
+		// Absolute file paths.
+		if ( 0 === strpos( $value, 'http' ) ) {
+			return esc_url_raw( $value );
+		}
+		// Relative and shortcode paths.
+		return wc_clean( $value );
+	}
+
+	/**
+	 * Parse an int value field
+	 *
+	 * @param int $value field value.
+	 *
+	 * @return int|string
+	 */
+	public function parse_int_field( $value ) {
+		// Similar to WC_Meta_Box_Product_Data::save, do not cast the empty value to int.
+		// An empty value indicates that the field should be cleared.
+		if ( '' === $value ) {
+			return $value;
+		}
+
+		// Remove the ' prepended to fields that start with - if needed.
+		$value = $this->unescape_data( $value );
+
+		return intval( $value );
+	}
+
+	/**
+	 * Parse a description value field
+	 *
+	 * @param string $description field value.
+	 *
+	 * @return string
+	 */
+	public function parse_description_field( $description ) {
+		$parts = explode( "\\\\n", $description );
+		foreach ( $parts as $key => $part ) {
+			$parts[ $key ] = str_replace( '\n', "\n", $part );
+		}
+
+		return implode( '\\\n', $parts );
+	}
+
+	/**
+	 * Parse the published field. 1 is published, 0 is private, -1 is draft, 2 is pending review.
+	 * Alternatively, 'true' can be used for published and 'false' for draft.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return int|float|string
+	 */
+	public function parse_published_field( $value ) {
+		if ( '' === $value ) {
+			return $value;
+		}
+
+		// Remove the ' prepended to fields that start with - if needed.
+		$value = $this->unescape_data( $value );
+
+		if ( 'true' === strtolower( $value ) || 'false' === strtolower( $value ) ) {
+			return wc_string_to_bool( $value ) ? 1 : -1;
+		}
+
+		return floatval( $value );
+	}
+
+	/**
+	 * Parse the Cost of Goods Sold field.
+	 *
+	 * @param string $value Field value.
+	 *
+	 * @return float|null
+	 */
+	public function parse_cogs_field( $value ) {
+		return '' === $value ? null : (float) wc_format_decimal( $value );
+	}
+
+	/**
+	 * Deprecated get formatting callback method.
+	 *
+	 * @deprecated 4.3.0
+	 * @return array
+	 */
+	protected function get_formating_callback() {
+		return $this->get_formatting_callback();
+	}
+
+	/**
+	 * Get formatting callback.
+	 *
+	 * @since 4.3.0
+	 * @return array
+	 */
+	protected function get_formatting_callback() {
+
+		/**
+		 * Columns not mentioned here will get parsed with 'wc_clean'.
+		 * column_name => callback.
+		 */
+		$data_formatting = array(
+			'id'                => array( $this, 'parse_id_field' ),
+			'type'              => array( $this, 'parse_comma_field' ),
+			'published'         => array( $this, 'parse_published_field' ),
+			'featured'          => array( $this, 'parse_bool_field' ),
+			'date_on_sale_from' => array( $this, 'parse_datetime_field' ),
+			'date_on_sale_to'   => array( $this, 'parse_datetime_field' ),
+			'name'              => array( $this, 'parse_skip_field' ),
+			'short_description' => array( $this, 'parse_description_field' ),
+			'description'       => array( $this, 'parse_description_field' ),
+			'manage_stock'      => array( $this, 'parse_bool_field' ),
+			'low_stock_amount'  => array( $this, 'parse_stock_quantity_field' ),
+			'backorders'        => array( $this, 'parse_backorders_field' ),
+			'stock_status'      => array( $this, 'parse_bool_field' ),
+			'sold_individually' => array( $this, 'parse_bool_field' ),
+			'width'             => array( $this, 'parse_float_field' ),
+			'length'            => array( $this, 'parse_float_field' ),
+			'height'            => array( $this, 'parse_float_field' ),
+			'weight'            => array( $this, 'parse_float_field' ),
+			'reviews_allowed'   => array( $this, 'parse_bool_field' ),
+			'purchase_note'     => 'wp_filter_post_kses',
+			'price'             => 'wc_format_decimal',
+			'regular_price'     => 'wc_format_decimal',
+			'stock_quantity'    => array( $this, 'parse_stock_quantity_field' ),
+			'category_ids'      => array( $this, 'parse_categories_field' ),
+			'tag_ids'           => array( $this, 'parse_tags_field' ),
+			'tag_ids_spaces'    => array( $this, 'parse_tags_spaces_field' ),
+			'shipping_class_id' => array( $this, 'parse_shipping_class_field' ),
+			'images'            => array( $this, 'parse_images_field' ),
+			'parent_id'         => array( $this, 'parse_relative_field' ),
+			'grouped_products'  => array( $this, 'parse_relative_comma_field' ),
+			'upsell_ids'        => array( $this, 'parse_relative_comma_field' ),
+			'cross_sell_ids'    => array( $this, 'parse_relative_comma_field' ),
+			'download_limit'    => array( $this, 'parse_int_field' ),
+			'download_expiry'   => array( $this, 'parse_int_field' ),
+			'product_url'       => 'esc_url_raw',
+			'menu_order'        => 'intval',
+			'tax_status'        => array( $this, 'parse_tax_status_field' ),
+			'cogs_value'        => array( $this, 'parse_cogs_field' ),
+		);
+
+		/**
+		 * Match special column names by prefix.
+		 *
+		 * These prefixes must stay in sync with the `starts_with()` checks in `expand_data()`,
+		 * which is what decides how the column is actually consumed. Matching anywhere in the
+		 * column name instead of at the start would apply a formatting callback to columns
+		 * `expand_data()` never treats as special.
+		 */
+		$prefix_match_data_formatting = array(
+			'attributes:value'    => array( $this, 'parse_comma_field' ),
+			'attributes:visible'  => array( $this, 'parse_bool_field' ),
+			'attributes:taxonomy' => array( $this, 'parse_bool_field' ),
+			'downloads:url'       => array( $this, 'parse_download_file_field' ),
+			// Allow some HTML in meta fields.
+			'meta:'               => 'wp_kses_post',
+		);
+
+		$callbacks = array();
+
+		// Figure out the parse function for each column.
+		foreach ( $this->get_mapped_keys() as $index => $heading ) {
+			$callback = 'wc_clean';
+
+			if ( isset( $data_formatting[ $heading ] ) ) {
+				$callback = $data_formatting[ $heading ];
+			} else {
+				foreach ( $prefix_match_data_formatting as $prefix => $prefix_callback ) {
+					if ( $this->starts_with( $heading, $prefix ) ) {
+						$callback = $prefix_callback;
+						break;
+					}
+				}
+			}
+
+			$callbacks[] = $callback;
+		}
+
+		return apply_filters( 'woocommerce_product_importer_formatting_callbacks', $callbacks, $this );
+	}
+
+	/**
+	 * Check if strings starts with determined word.
+	 *
+	 * @param string $haystack Complete sentence.
+	 * @param string $needle   Excerpt.
+	 *
+	 * @return bool
+	 */
+	protected function starts_with( $haystack, $needle ) {
+		return substr( $haystack, 0, strlen( $needle ) ) === $needle;
+	}
+
+	/**
+	 * Expand special and internal data into the correct formats for the product CRUD.
+	 *
+	 * @param array $data Data to import.
+	 *
+	 * @return array
+	 */
+	protected function expand_data( $data ) {
+		$data = apply_filters( 'woocommerce_product_importer_pre_expand_data', $data );
+
+		// Images field maps to image and gallery id fields.
+		if ( isset( $data['images'] ) ) {
+			$images               = $data['images'];
+			$data['raw_image_id'] = array_shift( $images );
+			$gallery              = array_filter(
+				$images,
+				function ( $image ) {
+					return '' !== $image;
+				}
+			);
+
+			// When any image value is provided, treat the remaining values as the full
+			// gallery. Setting the key even when no gallery images remain ensures that
+			// reducing the number of images in the CSV clears previously imported gallery
+			// images instead of leaving them in place, while a fully empty images cell
+			// (including one containing only separators) still leaves existing images
+			// untouched. Gating on the gallery values too keeps them imported when the
+			// featured-image slot is empty (e.g. a cell starting with a separator).
+			// See https://github.com/woocommerce/woocommerce/issues/34839
+			// and https://github.com/woocommerce/woocommerce/issues/66583.
+			if ( ! empty( $data['raw_image_id'] ) || ! empty( $gallery ) ) {
+				$data['raw_gallery_image_ids'] = $gallery;
+			}
+			unset( $data['images'] );
+		}
+
+		// Type, virtual and downloadable are all stored in the same column.
+		if ( isset( $data['type'] ) ) {
+			$data['type']         = array_map( 'strtolower', $data['type'] );
+			$data['virtual']      = in_array( 'virtual', $data['type'], true );
+			$data['downloadable'] = in_array( 'downloadable', $data['type'], true );
+
+			// Convert type to string.
+			$data['type'] = current( array_diff( $data['type'], array( 'virtual', 'downloadable' ) ) );
+
+			if ( ! $data['type'] ) {
+				$data['type'] = ProductType::SIMPLE;
+			}
+		}
+
+		// Status is mapped from a special published field.
+		if ( isset( $data['published'] ) ) {
+			$published = $data['published'];
+			if ( is_float( $published ) ) {
+				$published = (int) $published;
+			}
+
+			$statuses       = array(
+				-1 => ProductStatus::DRAFT,
+				0  => ProductStatus::PRIVATE,
+				1  => ProductStatus::PUBLISH,
+				2  => ProductStatus::PENDING,
+			);
+			$data['status'] = $statuses[ $published ] ?? ProductStatus::DRAFT;
+
+			// Fix draft status of variations.
+			if ( ProductType::VARIATION === ( $data['type'] ?? null ) && -1 === $published ) {
+				$data['status'] = ProductStatus::PUBLISH;
+			}
+
+			unset( $data['published'] );
+		}
+
+		if ( isset( $data['stock_quantity'] ) ) {
+			if ( '' === $data['stock_quantity'] ) {
+				$data['manage_stock'] = false;
+				$data['stock_status'] = isset( $data['stock_status'] ) ? $data['stock_status'] : true;
+			} else {
+				$data['manage_stock'] = true;
+			}
+		}
+
+		// Stock is bool or 'backorder'.
+		if ( isset( $data['stock_status'] ) ) {
+			if ( 'backorder' === $data['stock_status'] ) {
+				$data['stock_status'] = ProductStockStatus::ON_BACKORDER;
+			} else {
+				$data['stock_status'] = $data['stock_status'] ? ProductStockStatus::IN_STOCK : ProductStockStatus::OUT_OF_STOCK;
+			}
+		}
+
+		// Prepare grouped products.
+		if ( isset( $data['grouped_products'] ) ) {
+			$data['children'] = $data['grouped_products'];
+			unset( $data['grouped_products'] );
+		}
+
+		// Tag ids.
+		if ( isset( $data['tag_ids_spaces'] ) ) {
+			$data['tag_ids'] = $data['tag_ids_spaces'];
+			unset( $data['tag_ids_spaces'] );
+		}
+
+		if ( ! $this->cogs_is_enabled ) {
+			unset( $data['cogs_value'] );
+		}
+
+		// Handle special column names which span multiple columns.
+		$attributes = array();
+		$downloads  = array();
+		$meta_data  = array();
+
+		foreach ( $data as $key => $value ) {
+			if ( $this->starts_with( $key, 'attributes:name' ) ) {
+				if ( ! empty( $value ) ) {
+					$attributes[ str_replace( 'attributes:name', '', $key ) ]['name'] = $value;
+				}
+				unset( $data[ $key ] );
+
+			} elseif ( $this->starts_with( $key, 'attributes:value' ) ) {
+				$attributes[ str_replace( 'attributes:value', '', $key ) ]['value'] = $value;
+				unset( $data[ $key ] );
+
+			} elseif ( $this->starts_with( $key, 'attributes:taxonomy' ) ) {
+				$attributes[ str_replace( 'attributes:taxonomy', '', $key ) ]['taxonomy'] = wc_string_to_bool( $value );
+				unset( $data[ $key ] );
+
+			} elseif ( $this->starts_with( $key, 'attributes:visible' ) ) {
+				$attributes[ str_replace( 'attributes:visible', '', $key ) ]['visible'] = wc_string_to_bool( $value );
+				unset( $data[ $key ] );
+
+			} elseif ( $this->starts_with( $key, 'attributes:default' ) ) {
+				if ( ! empty( $value ) ) {
+					$attributes[ str_replace( 'attributes:default', '', $key ) ]['default'] = $value;
+				}
+				unset( $data[ $key ] );
+
+			} elseif ( $this->starts_with( $key, 'downloads:id' ) ) {
+				if ( ! empty( $value ) ) {
+					$downloads[ str_replace( 'downloads:id', '', $key ) ]['id'] = $value;
+				}
+				unset( $data[ $key ] );
+
+			} elseif ( $this->starts_with( $key, 'downloads:name' ) ) {
+				if ( ! empty( $value ) ) {
+					$downloads[ str_replace( 'downloads:name', '', $key ) ]['name'] = $value;
+				}
+				unset( $data[ $key ] );
+
+			} elseif ( $this->starts_with( $key, 'downloads:url' ) ) {
+				if ( ! empty( $value ) ) {
+					$downloads[ str_replace( 'downloads:url', '', $key ) ]['url'] = $value;
+				}
+				unset( $data[ $key ] );
+
+			} elseif ( $this->starts_with( $key, 'meta:' ) ) {
+				$meta_data[] = array(
+					'key'   => str_replace( 'meta:', '', $key ),
+					'value' => $value,
+				);
+				unset( $data[ $key ] );
+			}
+		}
+
+		if ( ! empty( $attributes ) ) {
+			// Remove empty attributes and clear indexes.
+			foreach ( $attributes as $attribute ) {
+				if ( empty( $attribute['name'] ) ) {
+					continue;
+				}
+
+				$data['raw_attributes'][] = $attribute;
+			}
+		}
+
+		if ( ! empty( $downloads ) ) {
+			$data['downloads'] = array();
+
+			foreach ( $downloads as $key => $file ) {
+				if ( empty( $file['url'] ) ) {
+					continue;
+				}
+
+				$data['downloads'][] = array(
+					'download_id' => isset( $file['id'] ) ? $file['id'] : null,
+					'name'        => $file['name'] ? $file['name'] : wc_get_filename_from_url( $file['url'] ),
+					'file'        => $file['url'],
+				);
+			}
+		}
+
+		if ( ! empty( $meta_data ) ) {
+			$data['meta_data'] = $meta_data;
+		}
+
+		return $data;
+	}
+
+	/**
+	 * Map and format raw data to known fields.
+	 */
+	protected function set_parsed_data() {
+		$parse_functions = $this->get_formatting_callback();
+		$mapped_keys     = $this->get_mapped_keys();
+		$use_mb          = function_exists( 'mb_convert_encoding' );
+
+		// Parse the data.
+		foreach ( $this->raw_data as $row_index => $row ) {
+			// Skip empty rows.
+			if ( ! count( array_filter( $row ) ) ) {
+				continue;
+			}
+
+			$this->parsing_raw_data_index = $row_index;
+
+			$data = array();
+
+			do_action( 'woocommerce_product_importer_before_set_parsed_data', $row, $mapped_keys );
+
+			foreach ( $row as $id => $value ) {
+				// Skip ignored columns.
+				if ( empty( $mapped_keys[ $id ] ) ) {
+					continue;
+				}
+
+				// Convert UTF8.
+				if ( $use_mb ) {
+					$encoding = mb_detect_encoding( $value, mb_detect_order(), true );
+					if ( $encoding ) {
+						$value = mb_convert_encoding( $value, 'UTF-8', $encoding );
+					} else {
+						$value = mb_convert_encoding( $value, 'UTF-8', 'UTF-8' );
+					}
+				} else {
+					$value = wp_check_invalid_utf8( $value, true );
+				}
+
+				$data[ $mapped_keys[ $id ] ] = call_user_func( $parse_functions[ $id ], $value );
+			}
+
+			/**
+			 * Filter product importer parsed data.
+			 *
+			 * @param array $parsed_data Parsed data.
+			 * @param WC_Product_Importer $importer Importer instance.
+			 *
+			 * @since
+			 */
+			$this->parsed_data[] = apply_filters( 'woocommerce_product_importer_parsed_data', $this->expand_data( $data ), $this );
+		}
+	}
+
+	/**
+	 * Get a string to identify the row from parsed data.
+	 *
+	 * @param array $parsed_data Parsed data.
+	 *
+	 * @return string
+	 */
+	protected function get_row_id( $parsed_data ) {
+		$id               = isset( $parsed_data['id'] ) ? absint( $parsed_data['id'] ) : 0;
+		$sku              = isset( $parsed_data['sku'] ) ? esc_attr( $parsed_data['sku'] ) : '';
+		$global_unique_id = isset( $parsed_data['global_unique_id'] ) ? esc_attr( $parsed_data['global_unique_id'] ) : '';
+		$name             = isset( $parsed_data['name'] ) ? esc_attr( $parsed_data['name'] ) : '';
+		$row_data         = array();
+
+		if ( $name ) {
+			$row_data[] = $name;
+		}
+		if ( $id ) {
+			/* translators: %d: product ID */
+			$row_data[] = sprintf( __( 'ID %d', 'woocommerce' ), $id );
+		}
+		if ( $sku ) {
+			/* translators: %s: product SKU */
+			$row_data[] = sprintf( __( 'SKU %s', 'woocommerce' ), $sku );
+		}
+		if ( $global_unique_id ) {
+			/* translators: %s: product GTIN, UPC, EAN, or ISBN */
+			$row_data[] = sprintf( __( 'GTIN, UPC, EAN, or ISBN %s', 'woocommerce' ), $global_unique_id );
+		}
+
+		return implode( ', ', $row_data );
+	}
+
+	/**
+	 * Whether a variation row that does not exist yet can be created under its parent product.
+	 *
+	 * @since 11.1.0
+	 *
+	 * @param array $parsed_data Parsed row data.
+	 * @return true|WP_Error True when the variation can be created, a WP_Error describing the refusal otherwise.
+	 */
+	protected function can_create_variation( $parsed_data ) {
+		// A row ID cannot be honored when creating a new variation: reusing an existing
+		// post's ID would corrupt that post, and a nonexistent ID cannot be assigned.
+		if ( ! empty( $parsed_data['id'] ) ) {
+			return new WP_Error(
+				'woocommerce_product_importer_variation_has_id',
+				esc_html__( 'A new variation cannot be created for a row that specifies an ID.', 'woocommerce' )
+			);
+		}
+
+		// A CSV ID cannot be assigned to a new variation, so the row needs a key a later import can
+		// match it on; without one the created variation would be duplicated on every re-import.
+		// The Global Unique ID is compared in its stored form, since a cell that strips to nothing
+		// is saved as blank and would leave the variation unmatchable.
+		if ( empty( $parsed_data['sku'] ) && '' === $this->normalize_global_unique_id( $parsed_data['global_unique_id'] ?? '' ) ) {
+			return new WP_Error(
+				'woocommerce_product_importer_variation_missing_sku',
+				esc_html__( 'A new variation cannot be created without a SKU or a GTIN, UPC, EAN, or ISBN.', 'woocommerce' )
+			);
+		}
+
+		if ( empty( $parsed_data['parent_id'] ) ) {
+			return new WP_Error(
+				'woocommerce_product_importer_variation_missing_parent',
+				esc_html__( 'A new variation cannot be created without a parent product.', 'woocommerce' )
+			);
+		}
+
+		$parent = wc_get_product( $parsed_data['parent_id'] );
+
+		if ( ! $parent || ! $parent->is_type( ProductType::VARIABLE ) ) {
+			return new WP_Error(
+				'woocommerce_product_importer_variation_parent_not_variable',
+				esc_html__( 'A new variation can only be created for a variable parent product.', 'woocommerce' )
+			);
+		}
+
+		// A parent with the 'importing' status is a placeholder, meaning the parent does not exist either.
+		if ( in_array( $parent->get_status(), array( 'importing', ProductStatus::TRASH ), true ) ) {
+			return new WP_Error(
+				'woocommerce_product_importer_variation_parent_missing',
+				esc_html__( 'A new variation cannot be created for a parent product that does not exist.', 'woocommerce' )
+			);
+		}
+
+		return $this->validate_new_variation_attributes( $parsed_data, $parent );
+	}
+
+	/**
+	 * Check that a new variation's attributes are offered by its parent product.
+	 *
+	 * The storefront variation selector only renders values the parent declares, so a variation
+	 * carrying a value the parent does not offer would be created but never selectable. Likewise,
+	 * an attribute the parent does not have at all is dropped on save, silently turning the row
+	 * into an "any" variation that matches every combination.
+	 *
+	 * @since 11.1.0
+	 *
+	 * @param array      $parsed_data    Parsed row data.
+	 * @param WC_Product $parent_product Parent product the variation would be created under.
+	 * @return true|WP_Error True when every attribute is offered by the parent, a WP_Error describing the refusal otherwise.
+	 */
+	protected function validate_new_variation_attributes( $parsed_data, $parent_product ) {
+		if ( empty( $parsed_data['raw_attributes'] ) ) {
+			return true;
+		}
+
+		$parent_attributes = $parent_product->get_attributes();
+
+		foreach ( $parsed_data['raw_attributes'] as $attribute ) {
+			if ( empty( $attribute['name'] ) ) {
+				continue;
+			}
+
+			// Resolve the row's attribute the same way set_variation_data() does, so a row that would
+			// have been stored correctly is never refused here. get_attribute_taxonomy_id() is deliberately
+			// not used: it creates the global attribute when it is missing, which must not happen for a
+			// row that is about to be refused.
+			$attribute_id   = empty( $attribute['taxonomy'] ) ? 0 : $this->get_existing_attribute_taxonomy_id( $attribute['name'] );
+			$attribute_name = $attribute_id ? sanitize_title( wc_attribute_taxonomy_name_by_id( $attribute_id ) ) : sanitize_title( $attribute['name'] );
+
+			// An attribute the parent does not have is dropped on save. An attribute the parent has but
+			// does not use for variations is allowed through: get_variation_parent_attributes() promotes it.
+			if ( ! isset( $parent_attributes[ $attribute_name ] ) ) {
+				return new WP_Error(
+					'woocommerce_product_importer_variation_unknown_attribute',
+					sprintf(
+						/* translators: %s: attribute name */
+						esc_html__( 'A new variation cannot be created because the parent product has no "%s" attribute.', 'woocommerce' ),
+						esc_html( $attribute['name'] )
+					)
+				);
+			}
+
+			$parent_attribute = $parent_attributes[ $attribute_name ];
+			$raw_value        = isset( $attribute['value'] ) ? current( (array) $attribute['value'] ) : '';
+
+			// An empty value is a valid "any" variation.
+			if ( '' === $raw_value || false === $raw_value ) {
+				continue;
+			}
+
+			if ( $parent_attribute->is_taxonomy() ) {
+				$taxonomy = $parent_attribute->get_name();
+				$term     = get_term_by( 'name', $raw_value, $taxonomy );
+				$value    = ( $term && ! is_wp_error( $term ) ) ? $term->slug : sanitize_title( $raw_value );
+
+				// The terms assigned to the parent are the exact set the storefront selector renders.
+				// WC_Product_Attribute::get_terms() is avoided here because it inserts any term that does
+				// not exist yet, which must not happen while deciding whether to refuse a row.
+				$options = wc_get_product_terms( $parent_product->get_id(), $taxonomy, array( 'fields' => 'slugs' ) );
+			} else {
+				$value   = $raw_value;
+				$options = $parent_attribute->get_options();
+			}
+
+			if ( ! in_array( $value, $options, true ) ) {
+				return new WP_Error(
+					'woocommerce_product_importer_variation_unknown_attribute_value',
+					sprintf(
+						/* translators: 1: attribute value, 2: attribute name */
+						esc_html__( 'A new variation cannot be created because "%1$s" is not an option of the parent product\'s "%2$s" attribute.', 'woocommerce' ),
+						esc_html( $raw_value ),
+						esc_html( wc_attribute_label( $parent_attribute->get_name(), $parent_product ) )
+					)
+				);
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Process importer.
+	 *
+	 * Do not import products with IDs or SKUs that already exist if option
+	 * update existing is false, and likewise, if updating products, do not
+	 * process rows which do not exist if an ID, SKU, or non-blank Global Unique ID is provided.
+	 *
+	 * @return array
+	 */
+	public function import() {
+		$this->start_time = time();
+		$index            = 0;
+		$update_existing  = $this->params['update_existing'];
+		$data             = array(
+			'imported'            => array(),
+			'imported_variations' => array(),
+			'failed'              => array(),
+			'updated'             => array(),
+			'skipped'             => array(),
+		);
+
+		foreach ( $this->parsed_data as $parsed_data_key => $parsed_data ) {
+			do_action( 'woocommerce_product_import_before_import', $parsed_data );
+
+			$id  = isset( $parsed_data['id'] ) ? absint( $parsed_data['id'] ) : 0;
+			$sku = isset( $parsed_data['sku'] ) ? $parsed_data['sku'] : '';
+
+			// Compare the stored form throughout: a cell that strips to nothing is saved as a blank
+			// Global Unique ID, so it is no more of a match key than an empty cell is.
+			$global_unique_id = $this->normalize_global_unique_id( $parsed_data['global_unique_id'] ?? '' );
+			$id_exists        = false;
+			$sku_exists       = false;
+
+			if ( $update_existing && ! $id && ! $sku && '' !== $global_unique_id ) {
+				$id = $this->match_product_id_by_global_unique_id( $global_unique_id, $parsed_data['type'] ?? '' );
+
+				if ( is_wp_error( $id ) ) {
+					$id->add_data( array( 'row' => $this->get_row_id( $parsed_data ) ) );
+					$data['failed'][] = $id;
+					continue;
+				}
+
+				if ( $id ) {
+					$parsed_data['id'] = $id;
+				}
+			}
+
+			if ( $id ) {
+				$product   = wc_get_product( $id );
+				$id_exists = $product && 'importing' !== $product->get_status();
+			}
+
+			if ( $sku ) {
+				$id_from_sku = wc_get_product_id_by_sku( $sku );
+				$product     = $id_from_sku ? wc_get_product( $id_from_sku ) : false;
+				$sku_exists  = $product && 'importing' !== $product->get_status();
+			}
+
+			if ( $sku_exists && ! $update_existing ) {
+				$data['skipped'][] = new WP_Error(
+					'woocommerce_product_importer_error',
+					esc_html__( 'A product with this SKU already exists.', 'woocommerce' ),
+					array(
+						'sku' => esc_attr( $sku ),
+						'row' => $this->get_row_id( $parsed_data ),
+					)
+				);
+				continue;
+			}
+
+			if ( $id_exists && ! $update_existing ) {
+				$data['skipped'][] = new WP_Error(
+					'woocommerce_product_importer_error',
+					esc_html__( 'A product with this ID already exists.', 'woocommerce' ),
+					array(
+						'id'  => $id,
+						'row' => $this->get_row_id( $parsed_data ),
+					)
+				);
+				continue;
+			}
+
+			if ( $update_existing && ( isset( $parsed_data['id'] ) || isset( $parsed_data['sku'] ) || '' !== $global_unique_id ) && ! $id_exists && ! $sku_exists ) {
+				$create_variation = false;
+				$refusal          = null;
+
+				if ( ProductType::VARIATION === ( $parsed_data['type'] ?? '' ) ) {
+					$can_create_variation = $this->can_create_variation( $parsed_data );
+
+					// Anything other than an explicit pass refuses, so an override still written against
+					// the previous boolean contract cannot turn a refusal into a creation.
+					if ( true !== $can_create_variation ) {
+						$refusal = is_wp_error( $can_create_variation ) ? $can_create_variation : null;
+					} else {
+						/**
+						 * Filters whether a new variation should be created for an existing variable product when updating existing products.
+						 *
+						 * Only fires for variation rows that passed validation, so it can veto the creation but not force it.
+						 *
+						 * @since 11.1.0
+						 *
+						 * @param bool  $create_variation Whether to create the new variation instead of skipping the row.
+						 * @param array $parsed_data      Parsed row data.
+						 */
+						$create_variation = apply_filters( 'woocommerce_product_import_create_variation_of_existing_product', true, $parsed_data );
+					}
+				}
+
+				if ( ! $create_variation ) {
+					// A refused variation row reports why it was refused; anything else is a row whose
+					// ID or SKU simply matches nothing on the site.
+					$data['skipped'][] = new WP_Error(
+						'woocommerce_product_importer_error',
+						$refusal ? $refusal->get_error_message() : esc_html__( 'No matching product exists to update.', 'woocommerce' ),
+						array(
+							'id'               => $id,
+							'sku'              => esc_attr( $sku ),
+							'global_unique_id' => esc_attr( $global_unique_id ),
+							'row'              => $this->get_row_id( $parsed_data ),
+						)
+					);
+					continue;
+				}
+			}
+
+			$result = $this->process_item( $parsed_data );
+
+			if ( is_wp_error( $result ) ) {
+				$result->add_data( array( 'row' => $this->get_row_id( $parsed_data ) ) );
+				$data['failed'][] = $result;
+			} elseif ( $result['updated'] ) {
+				$data['updated'][] = $result['id'];
+			} elseif ( $result['is_variation'] ) {
+					$data['imported_variations'][] = $result['id'];
+			} else {
+				$data['imported'][] = $result['id'];
+			}
+
+			++$index;
+
+			if ( $this->params['prevent_timeouts'] && ( $this->time_exceeded() || $this->memory_exceeded() ) ) {
+				$this->file_position = $this->file_positions[ $index ];
+				break;
+			}
+		}
+
+		return $data;
+	}
+}

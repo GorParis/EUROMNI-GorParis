@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "*/rust/*/*",
+    "sample-apps/*/extensions/*",
+]
+exclude = [
+    # Excludes do not support globbing -- https://github.com/rust-lang/cargo/issues/11405
+    "sample-apps/delivery-customizations/extensions/delivery-customization-js",
+    "sample-apps/discounts/extensions/product-discount-js",
+    "sample-apps/payment-customizations/extensions/payment-customization-js/",
+    "sample-apps/bundles-cart-transform/extensions/cart-expand-js/",
+    "sample-apps/bundles-price-per-component/extensions/price-per-component-js",
+    "sample-apps/optional-add-ons-cart-transform/extensions/optional-add-ons-js",
+    "sample-apps/update-line-item/extensions/update-line-item-js",
+]

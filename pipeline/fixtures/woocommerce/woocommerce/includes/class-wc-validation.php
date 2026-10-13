@@ -1,0 +1,160 @@
+<?php
+/**
+ * General user data validation methods
+ *
+ * @package WooCommerce\Classes
+ * @version  2.4.0
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+/**
+ * Validation class.
+ */
+class WC_Validation {
+
+	/**
+	 * Validates an email using WordPress native is_email function.
+	 *
+	 * @param  string $email Email address to validate.
+	 * @return bool
+	 */
+	public static function is_email( $email ) {
+		return is_email( $email );
+	}
+
+	/**
+	 * Checks whether a string has the basic shape of a phone number, i.e. it contains
+	 * only digits and characters commonly used in phone numbers (whitespace and the
+	 * "# _ - + / ( ) ." characters).
+	 *
+	 * Unlike `is_phone`, this method doesn't apply the `woocommerce_validate_phone` filter,
+	 * so its result always reflects the default validation rules regardless of any
+	 * merchant-defined validation policy. It's intended for contexts that need a
+	 * country-agnostic sanity check, such as phone number formatting.
+	 *
+	 * @since 11.0.0
+	 *
+	 * @param  string $phone Phone number to check.
+	 * @return bool
+	 */
+	public static function is_phone_format( $phone ): bool {
+		return '' === trim( preg_replace( '/[\s\#0-9_\-\+\/\(\)\.]/', '', (string) $phone ) );
+	}
+
+	/**
+	 * Validates a phone number using a regular expression.
+	 *
+	 * @param  string      $phone   Phone number to validate.
+	 * @param  string|null $country The country code the phone is being validated for, or null if unknown.
+	 * @return bool
+	 */
+	public static function is_phone( $phone, $country = null ) {
+		$valid = self::is_phone_format( $phone );
+
+		/**
+		 * Filters whether a phone number is considered valid.
+		 *
+		 * @since 11.0.0
+		 *
+		 * @param bool        $valid   Whether the phone number passed the default validation.
+		 * @param string      $phone   The phone number being validated.
+		 * @param string|null $country The country code the phone is being validated for, or null if unknown.
+		 */
+		return (bool) apply_filters( 'woocommerce_validate_phone', $valid, $phone, $country );
+	}
+
+	/**
+	 * Checks for a valid postcode.
+	 *
+	 * @param  string $postcode Postcode to validate.
+	 * @param  string $country Country to validate the postcode for.
+	 * @return bool
+	 */
+	public static function is_postcode( $postcode, $country ) {
+		if ( strlen( trim( preg_replace( '/[\s\-A-Za-z0-9]/', '', $postcode ) ) ) > 0 ) {
+			return false;
+		}
+
+		$valid = Automattic\WooCommerce\Internal\Utilities\PostcodeValidation::validate( (string) $postcode, (string) $country );
+		$valid = null === $valid ? true : $valid;
+
+		return apply_filters( 'woocommerce_validate_postcode', $valid, $postcode, $country );
+	}
+
+	/**
+	 * Check if is a GB postcode.
+	 *
+	 * @param  string $to_check A postcode.
+	 * @return bool
+	 */
+	public static function is_gb_postcode( $to_check ) {
+
+		// Permitted letters depend upon their position in the postcode.
+		// https://en.wikipedia.org/wiki/Postcodes_in_the_United_Kingdom#Validation.
+		$alpha1 = '[abcdefghijklmnoprstuwyz]'; // Character 1.
+		$alpha2 = '[abcdefghklmnopqrstuvwxy]'; // Character 2.
+		$alpha3 = '[abcdefghjkpstuw]';         // Character 3 == ABCDEFGHJKPSTUW.
+		$alpha4 = '[abehmnprvwxy]';            // Character 4 == ABEHMNPRVWXY.
+		$alpha5 = '[abdefghjlnpqrstuwxyz]';    // Character 5 != CIKMOV.
+
+		$pcexp = array();
+
+		// Expression for postcodes: AN NAA, ANN NAA, AAN NAA, and AANN NAA.
+		$pcexp[0] = '/^(' . $alpha1 . '{1}' . $alpha2 . '{0,1}[0-9]{1,2})([0-9]{1}' . $alpha5 . '{2})$/';
+
+		// Expression for postcodes: ANA NAA.
+		$pcexp[1] = '/^(' . $alpha1 . '{1}[0-9]{1}' . $alpha3 . '{1})([0-9]{1}' . $alpha5 . '{2})$/';
+
+		// Expression for postcodes: AANA NAA.
+		$pcexp[2] = '/^(' . $alpha1 . '{1}' . $alpha2 . '[0-9]{1}' . $alpha4 . ')([0-9]{1}' . $alpha5 . '{2})$/';
+
+		// Exception for the special postcode GIR 0AA.
+		$pcexp[3] = '/^(gir)(0aa)$/';
+
+		// Standard BFPO numbers.
+		$pcexp[4] = '/^(bfpo)([0-9]{1,4})$/';
+
+		// c/o BFPO numbers.
+		$pcexp[5] = '/^(bfpo)(c\/o[0-9]{1,3})$/';
+
+		// Load up the string to check, converting into lowercase and removing spaces.
+		$postcode = strtolower( $to_check );
+		$postcode = str_replace( ' ', '', $postcode );
+
+		// Assume we are not going to find a valid postcode.
+		$valid = false;
+
+		// Check the string against the six types of postcodes.
+		foreach ( $pcexp as $regexp ) {
+			if ( preg_match( $regexp, $postcode, $matches ) ) {
+				// Remember that we have found that the code is valid and break from loop.
+				$valid = true;
+				break;
+			}
+		}
+
+		return $valid;
+	}
+
+	/**
+	 * Format the postcode according to the country and length of the postcode.
+	 *
+	 * @param  string $postcode Postcode to format.
+	 * @param  string $country Country to format the postcode for.
+	 * @return string  Formatted postcode.
+	 */
+	public static function format_postcode( $postcode, $country ) {
+		return wc_format_postcode( $postcode, $country );
+	}
+
+	/**
+	 * Format a given phone number.
+	 *
+	 * @param  mixed $tel Phone number to format.
+	 * @return string
+	 */
+	public static function format_phone( $tel ) {
+		return wc_format_phone_number( $tel );
+	}
+}

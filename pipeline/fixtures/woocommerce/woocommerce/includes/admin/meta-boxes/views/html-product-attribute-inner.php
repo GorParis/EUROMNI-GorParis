@@ -1,0 +1,152 @@
+<?php
+/**
+ * Product attribute table for reuse.
+ *
+ * @package WooCommerce\Admin
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+use Automattic\WooCommerce\Internal\ProductAttributes\VisualAttributeTermMeta;
+?>
+
+<table cellpadding="0" cellspacing="0">
+	<tbody>
+	<tr>
+		<td class="attribute_name">
+			<label><?php esc_html_e( 'Name', 'woocommerce' ); ?>:</label>
+
+			<?php if ( $attribute->is_taxonomy() ) : ?>
+				<strong><?php echo esc_html( wc_attribute_label( $attribute->get_name() ) ); ?></strong>
+				<input type="hidden" name="attribute_names[<?php echo esc_attr( $i ); ?>]" value="<?php echo esc_attr( $attribute->get_name() ); ?>" />
+			<?php else : ?>
+				<input type="text" class="attribute_name" name="attribute_names[<?php echo esc_attr( $i ); ?>]" value="<?php echo esc_attr( $attribute->get_name() ); ?>" placeholder="<?php esc_attr_e( 'e.g. length or weight', 'woocommerce' ); ?>" />
+			<?php endif; ?>
+			<input type="hidden" name="attribute_position[<?php echo esc_attr( $i ); ?>]" class="attribute_position" value="<?php echo esc_attr( $attribute->get_position() ); ?>" />
+		</td>
+		<td rowspan="3">
+			<label><?php esc_html_e( 'Value(s)', 'woocommerce' ); ?>:</label>
+			<?php
+			if ( $attribute->is_taxonomy() && $attribute->get_taxonomy_object() ) {
+				$attribute_taxonomy = $attribute->get_taxonomy_object();
+				$attribute_types    = wc_get_attribute_types();
+
+				if ( ! array_key_exists( $attribute_taxonomy->attribute_type, $attribute_types ) ) {
+					$attribute_taxonomy->attribute_type = 'select';
+				}
+
+				if (
+					'select' === $attribute_taxonomy->attribute_type ||
+					'wc-visual' === $attribute_taxonomy->attribute_type
+				) {
+					$is_visual_attribute = 'wc-visual' === $attribute_taxonomy->attribute_type;
+					$attribute_orderby   = ! empty( $attribute_taxonomy->attribute_orderby ) ? $attribute_taxonomy->attribute_orderby : 'name';
+					/**
+					* Filter the length (number of terms) rendered in the list.
+					*
+					* @since 8.8.0
+					* @param int $term_limit The maximum number of terms to display in the list.
+					*/
+					$term_limit = absint( apply_filters( 'woocommerce_admin_terms_metabox_datalimit', 50 ) );
+					?>
+					<select multiple="multiple"
+							data-minimum_input_length="0"
+							data-limit="<?php echo esc_attr( $term_limit ); ?>" data-return_id="id"
+							data-placeholder="<?php esc_attr_e( 'Select values', 'woocommerce' ); ?>"
+							data-orderby="<?php echo esc_attr( $attribute_orderby ); ?>"
+							class="multiselect attribute_values wc-taxonomy-term-search"
+							name="attribute_values[<?php echo esc_attr( $i ); ?>][]"
+							data-taxonomy="<?php echo esc_attr( $attribute->get_taxonomy() ); ?>"
+							data-is-visual-attribute="<?php echo esc_attr( wc_bool_to_string( $is_visual_attribute ) ); ?>">
+						<?php
+						$selected_terms = $attribute->get_terms();
+						$term_visuals   = array();
+
+						if ( $selected_terms && $is_visual_attribute ) {
+							$term_visuals = VisualAttributeTermMeta::get_term_visuals( wp_list_pluck( $selected_terms, 'term_id' ) );
+						}
+
+						if ( $selected_terms ) {
+							foreach ( $selected_terms as $selected_term ) {
+								$option_attributes = array(
+									'value'    => $selected_term->term_id,
+									'selected' => 'selected',
+								);
+
+								if ( $is_visual_attribute ) {
+									$option_attributes['data-visual'] = wp_json_encode(
+										$term_visuals[ $selected_term->term_id ] ?? VisualAttributeTermMeta::get_empty_visual()
+									);
+								}
+
+								$option_attribute_string = '';
+
+								foreach ( $option_attributes as $attribute_name => $attribute_value ) {
+									$option_attribute_string .= sprintf(
+										' %1$s="%2$s"',
+										esc_attr( $attribute_name ),
+										esc_attr( $attribute_value )
+									);
+								}
+
+								/**
+								 * Filter the selected attribute term name.
+								 *
+								 * @since 3.4.0
+								 * @param string  $name Name of selected term.
+								 * @param array   $term The selected term object.
+								 */
+								echo '<option' . $option_attribute_string . '>' . esc_html( apply_filters( 'woocommerce_product_attribute_term_name', $selected_term->name, $selected_term ) ) . '</option>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+							}
+						}
+						?>
+					</select>
+					<button class="button plus select_all_attributes"><?php esc_html_e( 'Select all', 'woocommerce' ); ?></button>
+					<button class="button minus select_no_attributes"><?php esc_html_e( 'Select none', 'woocommerce' ); ?></button>
+					<button class="button fr plus add_new_attribute" data-is-visual-attribute="<?php echo esc_attr( wc_bool_to_string( 'wc-visual' === $attribute_taxonomy->attribute_type ) ); ?>"><?php esc_html_e( 'Create value', 'woocommerce' ); ?></button>
+					<?php
+				}
+
+				/**
+				 * Hook to display custom attribute terms.
+				 *
+				 * @since 3.4.0
+				 * @param array|null $attribute_taxonomy Attribute taxonomy object.
+				 * @param int $i Attribute index.
+				 * @param WC_Product_Attribute $attribute Attribute object.
+				 */
+				do_action( 'woocommerce_product_option_terms', $attribute_taxonomy, $i, $attribute );
+			} else {
+				?>
+				<textarea name="attribute_values[<?php echo esc_attr( $i ); ?>]" cols="5" rows="5"><?php echo esc_textarea( wc_implode_text_attributes( $attribute->get_options() ) ); ?></textarea>
+				<?php
+			}
+			?>
+		</td>
+	</tr>
+	<tr>
+		<td>
+			<label><input type="checkbox" class="woocommerce_attribute_visible_on_product_page checkbox" <?php checked( $attribute->get_visible(), true ); ?> name="attribute_visibility[<?php echo esc_attr( $i ); ?>]" value="1" /> <?php esc_html_e( 'Visible on the product page', 'woocommerce' ); ?></label>
+		</td>
+	</tr>
+	<tr>
+		<td>
+			<div class="enable_variation show_if_variable">
+				<label><input type="checkbox" class="woocommerce_attribute_used_for_variations checkbox" <?php checked( $attribute->get_variation(), true ); ?> name="attribute_variation[<?php echo esc_attr( $i ); ?>]" value="1" /> <?php esc_html_e( 'Used for variations', 'woocommerce' ); ?></label>
+			</div>
+		</td>
+	</tr>
+	<?php
+	/**
+	 * Hook to display custom attribute terms.
+	 *
+	 * @since 3.4.0
+	 * @param WC_Product_Attribute $attribute Attribute object.
+	 * @param int $i Attribute index.
+	 */
+	do_action( 'woocommerce_after_product_attribute_settings', $attribute, $i );
+	?>
+	</tbody>
+</table>

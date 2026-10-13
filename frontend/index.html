@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atelier Demo — EUROMNI</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background: #f4f1ea;
+        color: #1c1917;
+      }
+      header {
+        padding: clamp(2rem, 6vw, 4.5rem) max(1.25rem, calc((100vw - 74rem) / 2)) 1.5rem;
+        background: #e9e2d4;
+      }
+      h1 {
+        font-size: clamp(2rem, 5vw, 3.25rem);
+        font-weight: 600;
+        margin: 0;
+        letter-spacing: -0.035em;
+      }
+      p {
+        margin: 0.4rem 0 0;
+        color: #57534e;
+        font: 1rem/1.6 system-ui, sans-serif;
+      }
+      main {
+        max-width: 74rem;
+        margin: 0 auto;
+        padding: 2rem 1.25rem 4rem;
+      }
+      .eyebrow {
+        margin: 0 0 0.75rem;
+        color: #71685c;
+        font: 600 0.75rem/1.4 system-ui, sans-serif;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      h2 {
+        margin: 0;
+        font-size: 1.3rem;
+        font-weight: 600;
+      }
+    </style>
+    <script type="module" src="./euromni-catalog.js"></script>
+  </head>
+  <body>
+    <header>
+      <p class="eyebrow">EUROMNI · Boutique indépendante</p>
+      <h1>Atelier Demo</h1>
+      <p>Des pièces choisies avec soin, fabriquées pour durer.</p>
+      <p>Catalogue servi par l’API EUROMNI, isolé en Shadow DOM.</p>
+    </header>
+    <main>
+      <euromni-catalog locale="fr-FR" src="/v1/products"></euromni-catalog>
+    </main>
+  </body>
+</html>

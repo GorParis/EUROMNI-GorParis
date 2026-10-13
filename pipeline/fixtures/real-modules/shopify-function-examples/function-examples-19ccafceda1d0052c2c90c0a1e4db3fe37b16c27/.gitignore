@@ -1,0 +1,34 @@
+node_modules
+**/target/
+*.wasm
+.env
+.DS_Store
+.yalc
+yarn.lock
+
+# These files are generated from Shopify CLI templating and should not be committed to this repo
+
+## Extensions
+**/input.graphql
+*/rust/**/Cargo.lock
+*/rust/**/Cargo.toml
+**/shopify.extension.toml
+*/javascript/**/package.json
+*/javascript/**/src/*
+*/typescript/**/package.json
+*/typescript/**/src/*
+*/rust/**/src/*.graphql
+*/wasm/**/*.graphql
+!*/wasm/**/schema.graphql
+**/locales/*.json
+!*/javascript/**/src/*.liquid
+
+## Sample Apps
+sample-apps/*/web/frontend/metafields.js
+!sample-apps/discounts/web/frontend/metafields.js
+sample-apps/*/build/*
+sample-apps/*/public/build/*
+!sample-apps/**/input.graphql
+!sample-apps/**/shopify.extension.toml
+!sample-apps/**/locales/*.json
+dev.sqlite

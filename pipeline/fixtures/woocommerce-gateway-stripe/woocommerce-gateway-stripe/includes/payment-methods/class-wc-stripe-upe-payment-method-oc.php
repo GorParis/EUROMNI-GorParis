@@ -1,0 +1,191 @@
+<?php
+
+use Automattic\WooCommerce\Enums\PaymentGatewayFeature;
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Class WC_Stripe_UPE_Payment_Method_OC
+ *
+ * Internal pseudo–payment method that backs the Optimized Checkout (OC) flow. It is not a real
+ * Stripe payment method: it wraps all enabled methods behind a single Payment Element entry and
+ * exists so the UPE framework — which keys titles, testing instructions and token retrieval off
+ * {@see WC_Stripe_UPE_Payment_Method} instances — has a method object to delegate to.
+ *
+ * It is kept alongside {@see WC_Stripe_OCS_Payment_Gateway} on purpose, with a deliberate split of
+ * responsibilities: the gateway owns request/render/strategy behavior, while this class supplies the
+ * method-level pieces the gateway composes (the OC title, the aggregated per-method testing
+ * instructions, the retrievable card type). It is owned and instantiated by the OCS gateway and must
+ * not be registered as a standalone selectable method or used outside that gateway.
+ */
+class WC_Stripe_UPE_Payment_Method_OC extends WC_Stripe_UPE_Payment_Method {
+	use WC_Stripe_Subscriptions_Trait;
+
+	public const STRIPE_ID = WC_Stripe_Payment_Methods::OC;
+
+	private const DEFAULT_TITLE = 'Stripe';
+
+	/**
+	 * Constructor for the Optimized Checkout payment method (which renders all methods).
+	 */
+	public function __construct() {
+		parent::__construct();
+		$main_settings     = WC_Stripe_Helper::get_stripe_settings();
+		$is_stripe_enabled = ! empty( $main_settings['enabled'] ) && 'yes' === $main_settings['enabled'];
+
+		$this->enabled = $is_stripe_enabled && $this->oc_enabled ? 'yes' : 'no';
+		$this->id      = WC_Stripe_UPE_Payment_Gateway::ID; // Force the ID to be the same as the main payment gateway.
+		// OC is a checkout-element wrapper around the underlying payment methods, not a Stripe payment method itself.
+		// Gating happens via $this->oc_enabled (a feature flag), so $supported_account_countries and $supported_billing_countries stay empty (no restriction).
+		$this->stripe_id   = self::STRIPE_ID;
+		$this->title       = self::DEFAULT_TITLE;
+		$this->is_reusable = true;
+		$this->supports[]  = PaymentGatewayFeature::TOKENIZATION;
+
+		// Check if subscriptions are enabled and add support for them.
+		$this->maybe_init_subscriptions();
+	}
+
+	/**
+	 * Returns payment method title
+	 *
+	 * @param stdClass|array|bool $payment_details Optional payment details from charge object.
+	 *
+	 * @return string
+	 */
+	public function get_title( $payment_details = false ) {
+		// Wallet type
+		$wallet_type = $payment_details->card->wallet->type ?? null;
+		if ( $wallet_type ) {
+			return $this->get_card_wallet_type_title( $wallet_type );
+		}
+
+		if ( $payment_details ) { // Setting title for the order details page / thank you page.
+			$payment_method = WC_Stripe_UPE_Payment_Gateway::get_payment_method_instance( $payment_details->type );
+
+			// Avoid potential recursion by checking instance type. This fixes the title on pay for order confirmation page.
+			return $payment_method instanceof self ? parent::get_title() : $payment_method->get_title();
+		}
+
+		return self::get_alternative_title();
+	}
+
+	/**
+	 * Returns the alternative title for the Optimized Checkout payment method.
+	 *
+	 * @return string
+	 */
+	public static function get_alternative_title(): string {
+		// Block checkout and pay for order (checkout) page.
+		if ( ( has_block( 'woocommerce/checkout' ) || ! empty( $_GET['pay_for_order'] ) ) && ! is_wc_endpoint_url( 'order-received' ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+			$title = __( 'Payment methods', 'woocommerce-gateway-stripe' );
+
+			/**
+			 * Filters the Optimized Checkout payment method title.
+			 *
+			 * Allows merchants to override the generic title shown when Optimized Checkout
+			 * is enabled. The $context argument distinguishes the surface that requested
+			 * the title ('blocks' for the Blocks/pay-for-order checkout, 'classic' for
+			 * the classic shortcode checkout label after the gateway is selected).
+			 *
+			 * @since 10.7.0
+			 *
+			 * @param string $title   Default title.
+			 * @param string $context One of 'blocks' or 'classic'.
+			 */
+			return (string) apply_filters( 'wc_stripe_optimized_checkout_title', $title, 'blocks' );
+		}
+
+		return self::DEFAULT_TITLE;
+	}
+
+	/**
+	 * Returns the title shown in classic shortcode checkout when
+	 * Optimized Checkout is enabled.
+	 *
+	 * @return string
+	 */
+	public static function get_classic_title(): string {
+		$title = __( 'Payment options', 'woocommerce-gateway-stripe' );
+
+		/** This filter is documented in includes/payment-methods/class-wc-stripe-upe-payment-method-oc.php */
+		return (string) apply_filters( 'wc_stripe_optimized_checkout_title', $title, 'classic' );
+	}
+
+	/**
+	 * Returns true if the UPE method is available.
+	 *
+	 * @inheritDoc
+	 */
+	public function is_available() {
+		if ( ! parent::is_available() ) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Returns string representing payment method type
+	 * to query to retrieve saved payment methods from Stripe.
+	 *
+	 * @inheritDoc
+	 */
+	public function get_retrievable_type() {
+		return WC_Stripe_UPE_Payment_Method_CC::STRIPE_ID;
+	}
+
+	/**
+	 * Returns boolean dependent on whether capability
+	 * for site account is enabled for payment method.
+	 *
+	 * @inheritDoc
+	 */
+	public function is_capability_active() {
+		return true;
+	}
+
+	/**
+	 * The Optimized Checkout method allows automatic capture.
+	 *
+	 * @inheritDoc
+	 */
+	public function requires_automatic_capture() {
+		return false;
+	}
+
+	/**
+	 * Returns testing credentials to be printed at checkout in test mode.
+	 *
+	 * @param bool $show_optimized_checkout_instruction Deprecated. Whether to show optimized checkout instructions.
+	 * @param bool $include_test_mode_label Whether to include the "Test mode:" label prefix. Pass false for
+	 *                                      Blocks checkout, which already displays a Test Mode badge.
+	 * @return string
+	 */
+	public function get_testing_instructions( bool $show_optimized_checkout_instruction = false, bool $include_test_mode_label = true ) {
+		if ( false !== $show_optimized_checkout_instruction ) {
+			_deprecated_argument(
+				__FUNCTION__,
+				'9.9.0'
+			);
+		}
+
+		$instructions          = '';
+		$base_instruction_html = '<div id="wc-stripe-payment-method-instructions-%s" class="wc-stripe-payment-method-instruction" style="display: none;">%s</div>';
+		foreach ( $this->get_upe_enabled_payment_method_ids() as $payment_method_id ) {
+			$payment_method = WC_Stripe_UPE_Payment_Gateway::get_payment_method_instance( $payment_method_id );
+			if ( ! $payment_method ) {
+				continue;
+			}
+
+			$payment_method_instructions = $payment_method->get_testing_instructions( false, $include_test_mode_label );
+			if ( $payment_method_instructions ) {
+				$instructions .= sprintf( $base_instruction_html, $payment_method::STRIPE_ID, $payment_method_instructions );
+			}
+		}
+
+		return $instructions;
+	}
+}

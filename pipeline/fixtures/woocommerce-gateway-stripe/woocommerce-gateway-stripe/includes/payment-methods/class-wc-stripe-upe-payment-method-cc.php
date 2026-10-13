@@ -1,0 +1,159 @@
+<?php
+
+use Automattic\WooCommerce\Enums\PaymentGatewayFeature;
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Class WC_Stripe_UPE_Payment_Method_CC
+ */
+
+/**
+ * Credit card Payment Method class extending UPE base class
+ */
+class WC_Stripe_UPE_Payment_Method_CC extends WC_Stripe_UPE_Payment_Method {
+	use WC_Stripe_Subscriptions_Trait;
+
+	public const STRIPE_ID = WC_Stripe_Payment_Methods::CARD;
+
+	/**
+	 * Constructor for card payment method
+	 */
+	public function __construct() {
+		parent::__construct();
+		$this->stripe_id   = self::STRIPE_ID;
+		$this->title       = __( 'Credit / Debit Card', 'woocommerce-gateway-stripe' );
+		$this->is_reusable = true;
+		$this->label       = __( 'Credit / Debit Card', 'woocommerce-gateway-stripe' );
+		$this->supports[]  = PaymentGatewayFeature::TOKENIZATION;
+		$this->description = __(
+			'Let your customers pay with major credit and debit cards without leaving your store.',
+			'woocommerce-gateway-stripe'
+		);
+
+		// Check if subscriptions are enabled and add support for them.
+		$this->maybe_init_subscriptions();
+	}
+
+	/**
+	 * Whether the save-to-account checkbox should be shown on classic checkout.
+	 *
+	 * When Link is enabled, Link handles save consent via the Payment Element,
+	 * so the store-level checkbox is hidden for card.
+	 *
+	 * @return bool
+	 */
+	public function should_show_save_option() {
+		if ( WC_Stripe_UPE_Payment_Method_Link::is_link_enabled( woocommerce_gateway_stripe()->get_main_stripe_gateway() ) ) {
+			return false;
+		}
+
+		return parent::should_show_save_option();
+	}
+
+	/**
+	 * Returns payment method title
+	 *
+	 * @param stdClass|array|bool $payment_details Optional payment details from charge object.
+	 *
+	 * @return string
+	 */
+	public function get_title( $payment_details = false ) {
+		// Wallet type
+		$wallet_type = $payment_details->card->wallet->type ?? null;
+		if ( $wallet_type ) {
+			return $this->get_card_wallet_type_title( $wallet_type );
+		}
+
+		// Default
+		return parent::get_title();
+	}
+
+	/**
+	 * Create and return WC payment token for user.
+	 *
+	 * This will be used from the WC_Stripe_Payment_Tokens service
+	 * as opposed to WC_Stripe_UPE_Payment_Gateway.
+	 *
+	 * @param string $user_id        WP_User ID
+	 * @param object $payment_method Stripe payment method object
+	 *
+	 * @return WC_Stripe_Payment_Token_CC
+	 */
+	public function create_payment_token_for_user( $user_id, $payment_method ) {
+		$token = new WC_Stripe_Payment_Token_CC();
+		$token->set_expiry_month( $payment_method->card->exp_month );
+		$token->set_expiry_year( $payment_method->card->exp_year );
+		$token->set_card_type( strtolower( $payment_method->card->display_brand ?? $payment_method->card->networks->preferred ?? $payment_method->card->brand ) );
+		$token->set_last4( $payment_method->card->last4 );
+		$token->set_gateway_id( WC_Stripe_UPE_Payment_Gateway::ID );
+		$token->set_token( $payment_method->id );
+		$token->set_user_id( $user_id );
+		if ( isset( $payment_method->card->fingerprint ) ) {
+			$token->set_fingerprint( $payment_method->card->fingerprint );
+		}
+		$token->set_wallet_type( (string) ( $payment_method->card->wallet->type ?? '' ) );
+		$token->save();
+		return $token;
+	}
+
+	/**
+	 * Returns boolean dependent on whether capability
+	 * for site account is enabled for payment method.
+	 *
+	 * @return bool
+	 */
+	public function is_capability_active() {
+		return true;
+	}
+
+	/**
+	 * The Credit Card method allows automatic capture.
+	 *
+	 * @inheritDoc
+	 */
+	public function requires_automatic_capture() {
+		return false;
+	}
+
+	/**
+	 * Returns testing credentials to be printed at checkout in test mode.
+	 *
+	 * @param bool $show_optimized_checkout_instruction Deprecated. Whether to show optimized checkout instructions.
+	 * @param bool $include_test_mode_label Whether to include the "Test mode:" label prefix. Pass false for
+	 *                                      Blocks checkout, which already displays a Test Mode badge.
+	 * @return string
+	 */
+	public function get_testing_instructions( bool $show_optimized_checkout_instruction = false, bool $include_test_mode_label = true ) {
+		if ( false !== $show_optimized_checkout_instruction ) {
+			_deprecated_argument(
+				__FUNCTION__,
+				'9.9.0'
+			);
+		}
+
+		if ( $include_test_mode_label ) {
+			return sprintf(
+				/* translators: 1) HTML strong open tag 2) HTML strong closing tag 3) number open tag 4) number closing tag 5) HTML anchor open tag 6) HTML anchor closing tag */
+				esc_html__( '%1$sTest mode:%2$s use card %3$s4242 4242 4242 4242%4$s with any expiry and CVC. %5$sMore test cards%6$s.', 'woocommerce-gateway-stripe' ),
+				'<strong>',
+				'</strong>',
+				'<number>',
+				'</number>',
+				'<a href="https://docs.stripe.com/testing" target="_blank">',
+				'</a>'
+			);
+		}
+
+		return sprintf(
+			/* translators: 1) number open tag 2) number closing tag 3) HTML anchor open tag 4) HTML anchor closing tag */
+			esc_html__( 'Use card %1$s4242 4242 4242 4242%2$s with any expiry and CVC. %3$sMore test cards%4$s.', 'woocommerce-gateway-stripe' ),
+			'<number>',
+			'</number>',
+			'<a href="https://docs.stripe.com/testing" target="_blank">',
+			'</a>'
+		);
+	}
+}

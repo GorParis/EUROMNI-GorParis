@@ -1,0 +1,58 @@
+{
+	"name": "woocommerce/product-filter-price-slider",
+	"title": "Price Slider",
+	"description": "Let shoppers choose a price range with a slider.",
+	"category": "woocommerce",
+	"keywords": [ "WooCommerce" ],
+	"supports": {
+		"html": false,
+		"color": {
+			"enableContrastChecker": false,
+			"background": false,
+			"text": false
+		},
+		"interactivity": true
+	},
+	"attributes": {
+		"showInputFields": {
+			"type": "boolean",
+			"default": true
+		},
+		"inlineInput": {
+			"type": "boolean",
+			"default": false
+		},
+
+		"sliderHandle": {
+			"type": "string",
+			"default": ""
+		},
+		"customSliderHandle": {
+			"type": "string",
+			"default": ""
+		},
+		"sliderHandleBorder": {
+			"type": "string",
+			"default": ""
+		},
+		"customSliderHandleBorder": {
+			"type": "string",
+			"default": ""
+		},
+		"slider": {
+			"type": "string",
+			"default": ""
+		},
+		"customSlider": {
+			"type": "string",
+			"default": ""
+		}
+	},
+	"ancestor": [ "woocommerce/product-filter-price" ],
+	"usesContext": [ "woocommerce/rangeInput" ],
+	"textdomain": "woocommerce",
+	"apiVersion": 3,
+	"$schema": "https://schemas.wp.org/trunk/block.json",
+	"viewScriptModule": "woocommerce/product-filter-price-slider",
+	"style": "file:../woocommerce/product-filter-price-slider-style.css"
+}

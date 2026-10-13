@@ -1,0 +1,506 @@
+<?php
+/**
+ * WooCommerce Admin Helper - React admin interface
+ *
+ * @package WooCommerce\Admin\Helper
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * WC_Helper_Subscriptions_API
+ *
+ * The main entry-point for all things related to the Marketplace Subscriptions API.
+ * The Subscriptions API manages WooCommerce.com Subscriptions.
+ */
+class WC_Helper_Subscriptions_API {
+
+	/**
+	 * Loads the class, runs on init
+	 *
+	 * @return void
+	 */
+	public static function load() {
+		add_filter( 'rest_api_init', array( __CLASS__, 'register_rest_routes' ) );
+	}
+
+	/**
+	 * Registers the REST routes for the Marketplace Subscriptions API.
+	 * These endpoints are used by the Marketplace Subscriptions React UI.
+	 */
+	public static function register_rest_routes() {
+		register_rest_route(
+			'wc/v3',
+			'/marketplace/refresh',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( __CLASS__, 'refresh' ),
+				'permission_callback' => array( __CLASS__, 'get_permission' ),
+			)
+		);
+		register_rest_route(
+			'wc/v3',
+			'/marketplace/subscriptions',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( __CLASS__, 'get_subscriptions' ),
+				'permission_callback' => array( __CLASS__, 'get_permission' ),
+			)
+		);
+		register_rest_route(
+			'wc/v3',
+			'/marketplace/subscriptions/connect',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( __CLASS__, 'connect' ),
+				'permission_callback' => array( __CLASS__, 'get_permission' ),
+				'args'                => array(
+					'product_key' => array(
+						'required' => true,
+						'type'     => 'string',
+					),
+				),
+			)
+		);
+		register_rest_route(
+			'wc/v3',
+			'/marketplace/subscriptions/activate-plugin',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( __CLASS__, 'activate_plugin' ),
+				'permission_callback' => array( __CLASS__, 'get_permission' ),
+				'args'                => array(
+					'product_key' => array(
+						'required' => true,
+						'type'     => 'string',
+					),
+				),
+			)
+		);
+		register_rest_route(
+			'wc/v3',
+			'/marketplace/subscriptions/disconnect',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( __CLASS__, 'disconnect' ),
+				'permission_callback' => array( __CLASS__, 'get_permission' ),
+				'args'                => array(
+					'product_key' => array(
+						'required' => true,
+						'type'     => 'string',
+					),
+				),
+			)
+		);
+		register_rest_route(
+			'wc/v3',
+			'/marketplace/subscriptions/activate',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( __CLASS__, 'activate' ),
+				'permission_callback' => array( __CLASS__, 'get_permission' ),
+				'args'                => array(
+					'product_key' => array(
+						'required' => true,
+						'type'     => 'string',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'wc/v3',
+			'/marketplace/subscriptions/auto-update',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( __CLASS__, 'set_auto_update' ),
+				'permission_callback' => array( __CLASS__, 'get_permission' ),
+				'args'                => array(
+					'product_key' => array(
+						'required' => true,
+						'type'     => 'string',
+					),
+					'enabled'     => array(
+						'required' => true,
+						'type'     => 'boolean',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'wc/v3',
+			'/marketplace/subscriptions/install-url',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( __CLASS__, 'install_url' ),
+				'permission_callback' => array( __CLASS__, 'get_permission' ),
+				'args'                => array(
+					'product_key' => array(
+						'required' => true,
+						'type'     => 'string',
+					),
+				),
+			)
+		);
+	}
+
+	/**
+	 * The Extensions page can only be accessed by users with the manage_woocommerce
+	 * capability. So the API mimics that behavior.
+	 */
+	public static function get_permission() {
+		return current_user_can( 'manage_woocommerce' );
+	}
+
+	/**
+	 * Fetch subscriptions from WooCommerce.com and serve them
+	 * as JSON.
+	 */
+	public static function get_subscriptions() {
+		// If the site is connected, mark the time when the my subscriptions tab is first loaded.
+		if ( WC_Helper::is_site_connected() === true && empty( WC_Helper_Options::get( 'my_subscriptions_tab_loaded' ) ) ) {
+			WC_Helper_Options::update( 'my_subscriptions_tab_loaded', date( 'Y-m-d H:i:s' ) );
+		}
+
+		$subscriptions = WC_Helper::get_subscription_list_data();
+		wp_send_json(
+			array_values(
+				$subscriptions
+			)
+		);
+	}
+
+	/**
+	 * Refresh account and subscriptions from WooCommerce.com and serve subscriptions
+	 * as JSON.
+	 */
+	public static function refresh() {
+		try {
+			WC_Helper::refresh_helper_subscriptions();
+			WC_Helper::get_subscriptions();
+			WC_Helper::get_product_usage_notice_rules();
+			WC_Helper::fetch_helper_connection_info();
+
+			// get_subscriptions() swallows Helper API failures and returns an empty
+			// array, so a refresh that could not reach WooCommerce.com would
+			// otherwise report success over an empty list. Surface the recorded
+			// failure instead. Checked before serving, since serving exits.
+			$api_error = WC_Helper::get_api_error();
+
+			if ( null !== $api_error ) {
+				wp_send_json_error(
+					array(
+						'message' => $api_error['message'],
+						// The upstream WooCommerce.com status, carried in the body
+						// rather than used as the response status. The failure is
+						// between this store and WooCommerce.com, so relaying it
+						// would have this endpoint claim the caller was rate
+						// limited or unauthorized when neither is true.
+						'code'    => $api_error['code'],
+					),
+					400
+				);
+			}
+
+			self::get_subscriptions();
+		} catch ( Exception $e ) {
+			wp_send_json_error(
+				array(
+					'message' => $e->getMessage(),
+				),
+				400
+			);
+		}
+	}
+
+	/**
+	 * Connect a WooCommerce.com subscription.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 */
+	public static function connect( $request ) {
+		$product_key = $request->get_param( 'product_key' );
+		try {
+			$success = WC_Helper::activate_helper_subscription( $product_key );
+		} catch ( Exception $e ) {
+			$error_data = array(
+				'message' => $e->getMessage(),
+			);
+
+			if ( $e instanceof WC_Data_Exception ) {
+				$error_data['code'] = $e->getErrorCode();
+				// Include extra data from the exception so the client can render contextual UI (e.g. maxed out sites list).
+				$error_data['data'] = $e->getErrorData();
+				$status_code        = (int) $e->getCode();
+				if ( 100 > $status_code || 599 < $status_code ) {
+					$status_code = 400;
+				}
+			} else {
+				$status_code = 400;
+			}
+
+			wp_send_json_error( $error_data, $status_code );
+		}
+		if ( $success ) {
+			wp_send_json_success(
+				array(
+					'message' => __( 'Your subscription has been connected.', 'woocommerce' ),
+				)
+			);
+		} else {
+			wp_send_json_error(
+				array(
+					'message' => __( 'There was an error connecting your subscription. Please try again.', 'woocommerce' ),
+				),
+				400
+			);
+		}
+	}
+
+	/**
+	 * Activate a plugin for a WooCommerce.com subscription.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 */
+	public static function activate_plugin( $request ) {
+		$product_key = $request->get_param( 'product_key' );
+		try {
+			$success = WC_Helper::activate_plugin( $product_key );
+		} catch ( Exception $e ) {
+			wp_send_json_error(
+				array(
+					'message' => $e->getMessage(),
+				),
+				400
+			);
+		}
+		if ( $success ) {
+			wp_send_json_success(
+				array(
+					'message' => __( 'The plugin for your subscription has been activated.', 'woocommerce' ),
+				)
+			);
+		} else {
+			wp_send_json_error(
+				array(
+					'message' => __( 'The plugin for your subscription couldn\'t be activated.', 'woocommerce' ),
+				),
+				400
+			);
+		}
+	}
+
+	/**
+	 * Turn auto-updates on or off for a subscription's installed plugin or theme.
+	 *
+	 * @param WP_REST_Request<array<string, mixed>> $request Request object.
+	 *
+	 * @return void
+	 */
+	public static function set_auto_update( $request ): void {
+		if ( ! current_user_can( 'update_plugins' ) && ! current_user_can( 'update_themes' ) ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'Sorry, you are not allowed to modify plugins or themes.', 'woocommerce' ),
+				),
+				403
+			);
+		}
+
+		try {
+			WC_Helper::set_subscription_auto_update( $request->get_param( 'product_key' ), (bool) $request->get_param( 'enabled' ) );
+		} catch ( Exception $e ) {
+			wp_send_json_error(
+				array(
+					'message' => $e->getMessage(),
+				),
+				400
+			);
+		}
+
+		wp_send_json_success(
+			array(
+				'message' => $request->get_param( 'enabled' )
+					? __( 'Auto-updates are now on for this product.', 'woocommerce' )
+					: __( 'Auto-updates are now off for this product.', 'woocommerce' ),
+			)
+		);
+	}
+
+	/**
+	 * Disconnect a WooCommerce.com subscription.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 */
+	public static function disconnect( $request ) {
+		$product_key = $request->get_param( 'product_key' );
+		try {
+			$success = WC_Helper::deactivate_helper_subscription( $product_key );
+		} catch ( Exception $e ) {
+			wp_send_json_error(
+				array(
+					'message' => $e->getMessage(),
+				),
+				400
+			);
+		}
+		if ( $success ) {
+			wp_send_json_success(
+				array(
+					'message' => __( 'Your subscription has been disconnected.', 'woocommerce' ),
+				)
+			);
+		} else {
+			wp_send_json_error(
+				array(
+					'message' => __( 'There was an error disconnecting your subscription. Please try again.', 'woocommerce' ),
+				),
+				400
+			);
+		}
+	}
+
+	/**
+	 * Activate a WooCommerce.com product.
+	 * This activates the plugin/theme on the site.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 */
+	public static function activate( $request ) {
+		$product_key  = $request->get_param( 'product_key' );
+		$subscription = WC_Helper::get_subscription( $product_key );
+
+		if ( ! is_array( $subscription ) ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'We couldn\'t find a subscription for this product.', 'woocommerce' ),
+				),
+				400
+			);
+		}
+
+		if ( true !== $subscription['local']['installed'] || ! isset( $subscription['local']['active'] ) ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'This product is not installed.', 'woocommerce' ),
+				),
+				400
+			);
+		}
+
+		if ( true === $subscription['local']['active'] ) {
+			wp_send_json_success(
+				array(
+					'message' => __( 'This product is already active.', 'woocommerce' ),
+				),
+			);
+		}
+
+		if ( ! in_array( $subscription['product_type'] ?? null, array( 'plugin', 'theme' ), true ) ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'This product type is not supported.', 'woocommerce' ),
+				),
+				400
+			);
+		}
+
+		if ( 'plugin' === $subscription['product_type'] ) {
+			// manage_woocommerce (checked by get_permission() above) doesn't imply activate_plugins.
+			if ( ! current_user_can( 'activate_plugins' ) ) {
+				wp_send_json_error(
+					array(
+						'message' => __( 'You do not have permission to activate plugins.', 'woocommerce' ),
+					),
+					403
+				);
+			}
+			$success = activate_plugin( $subscription['local']['path'] );
+			if ( is_wp_error( $success ) ) {
+				wp_send_json_error(
+					array(
+						'message' => __( 'There was an error activating this plugin.', 'woocommerce' ),
+					),
+					400
+				);
+			}
+		} elseif ( 'theme' === $subscription['product_type'] ) {
+			if ( ! current_user_can( 'switch_themes' ) ) {
+				wp_send_json_error(
+					array(
+						'message' => __( 'You do not have permission to switch themes.', 'woocommerce' ),
+					),
+					403
+				);
+			}
+			switch_theme( $subscription['local']['slug'] );
+			$theme = wp_get_theme();
+			if ( $subscription['local']['slug'] !== $theme->get_stylesheet() ) {
+				wp_send_json_error(
+					array(
+						'message' => __( 'There was an error activating this theme.', 'woocommerce' ),
+					),
+					400
+				);
+			}
+		}
+
+		wp_send_json_success(
+			array(
+				'message' => __( 'This product has been activated.', 'woocommerce' ),
+			),
+		);
+	}
+
+	/**
+	 * Get the install URL for a WooCommerce.com product.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 */
+	public static function install_url( $request ) {
+		$product_key  = $request->get_param( 'product_key' );
+		$subscription = WC_Helper::get_subscription( $product_key );
+
+		if ( ! $subscription ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'We couldn\'t find a subscription for this product.', 'woocommerce' ),
+				),
+				400
+			);
+		}
+
+		if ( true === $subscription['local']['installed'] ) {
+			wp_send_json_success(
+				array(
+					'message' => __( 'This product is already installed.', 'woocommerce' ),
+				),
+			);
+		}
+
+		$install_url = WC_Helper::get_subscription_install_url(
+			$subscription['product_key'],
+			$subscription['product_slug']
+		);
+
+		if ( ! $install_url ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'There was an error getting the install URL for this product.', 'woocommerce' ),
+				),
+				400
+			);
+		}
+
+		wp_send_json_success(
+			array(
+				'url' => $install_url,
+			),
+		);
+	}
+}
+
+WC_Helper_Subscriptions_API::load();

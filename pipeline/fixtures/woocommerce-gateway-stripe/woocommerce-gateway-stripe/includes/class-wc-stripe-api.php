@@ -1,0 +1,833 @@
+<?php
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * WC_Stripe_API class.
+ *
+ * Communicates with Stripe API.
+ */
+class WC_Stripe_API {
+
+	/**
+	 * Stripe API Endpoint
+	 */
+	public const ENDPOINT                     = 'https://api.stripe.com/v1/';
+	public const STRIPE_API_VERSION           = '2026-03-25.dahlia';
+	public const AGENTIC_COMMERCE_API_VERSION = '2025-12-15.preview';
+
+	/**
+	 * The invalid API key error count cache key.
+	 *
+	 * @var string
+	 */
+	public const INVALID_API_KEY_ERROR_COUNT_CACHE_KEY = 'invalid_api_key_error_count';
+
+	/**
+	 * The invalid API key error count cache timeout.
+	 * This is the delay in seconds enforced for Stripe API calls after the consecutive error count threshold is reached.
+	 *
+	 * @var int
+	 */
+	protected const INVALID_API_KEY_ERROR_COUNT_CACHE_TIMEOUT = 2 * HOUR_IN_SECONDS;
+
+	/**
+	 * The invalid API key error count threshold.
+	 *
+	 * @var int
+	 */
+	protected const INVALID_API_KEY_ERROR_COUNT_THRESHOLD = 5;
+
+	/**
+	 * Secret API Key.
+	 *
+	 * @var string
+	 */
+	private static $secret_key = '';
+
+	/**
+	 * Instance of WC_Stripe_API.
+	 *
+	 * @var WC_Stripe_API
+	 */
+	private static $instance;
+
+	/**
+	 * Get instance of WC_Stripe_API.
+	 *
+	 * @return WC_Stripe_API
+	 */
+	public static function get_instance() {
+		if ( ! isset( self::$instance ) ) {
+			self::$instance = new self();
+		}
+		return self::$instance;
+	}
+
+	/**
+	 * Set instance of WC_Stripe_API.
+	 *
+	 * @param WC_Stripe_API $instance
+	 */
+	public static function set_instance( $instance ) {
+		self::$instance = $instance;
+	}
+
+	/**
+	 * Set secret API Key.
+	 *
+	 * @param string $key
+	 */
+	public static function set_secret_key( $secret_key ) {
+		self::$secret_key = $secret_key;
+	}
+
+	/**
+	 * Get secret key.
+	 *
+	 * @return string
+	 */
+	public static function get_secret_key() {
+		if ( ! self::$secret_key ) {
+			self::set_secret_key_for_mode();
+		}
+		return self::$secret_key;
+	}
+
+	/**
+	 * Set secret key based on mode.
+	 *
+	 * @param string|null $mode Optional. The mode to set the secret key for. 'live' or 'test'. Default will set the secret for the currently active mode.
+	 */
+	public static function set_secret_key_for_mode( $mode = null ) {
+		$options         = WC_Stripe_Helper::get_stripe_settings();
+		$secret_key      = $options['secret_key'] ?? '';
+		$test_secret_key = $options['test_secret_key'] ?? '';
+
+		if ( ! in_array( $mode, [ 'test', 'live' ], true ) ) {
+			$mode = WC_Stripe_Mode::is_test() ? 'test' : 'live';
+		}
+
+		self::set_secret_key( 'test' === $mode ? $test_secret_key : $secret_key );
+	}
+
+	/**
+	 * Maps request rate-limit state to the mode of the active secret key.
+	 *
+	 * @return string|null The matching mode, or null when the key is not configured for either mode.
+	 */
+	private static function get_mode_for_active_secret_key(): ?string {
+		$options      = WC_Stripe_Helper::get_stripe_settings();
+		$secret_key   = self::get_secret_key();
+		$current_mode = WC_Stripe_Mode::is_test() ? 'test' : 'live';
+		$current_key  = 'test' === $current_mode ? ( $options['test_secret_key'] ?? '' ) : ( $options['secret_key'] ?? '' );
+
+		if ( $secret_key === $current_key ) {
+			return $current_mode;
+		}
+
+		$other_mode = 'test' === $current_mode ? 'live' : 'test';
+		$other_key  = 'test' === $other_mode ? ( $options['test_secret_key'] ?? '' ) : ( $options['secret_key'] ?? '' );
+
+		return $secret_key === $other_key ? $other_mode : null;
+	}
+
+	/**
+	 * Generates the user agent we use to pass to API request so
+	 * Stripe can identify our application.
+	 *
+	 * @since 4.0.0
+	 * @version 4.0.0
+	 */
+	public static function get_user_agent() {
+		$app_info = [
+			'name'       => 'WooCommerce Stripe Gateway',
+			'version'    => WC_STRIPE_VERSION,
+			'url'        => 'https://woocommerce.com/products/stripe/',
+			'partner_id' => 'pp_partner_EYuSt9peR0WTMg',
+		];
+
+		return [
+			'lang'         => 'php',
+			'lang_version' => phpversion(),
+			'publisher'    => 'woocommerce',
+			'uname'        => function_exists( 'php_uname' ) ? php_uname() : PHP_OS,
+			'application'  => $app_info,
+		];
+	}
+
+	/**
+	 * Generates the headers to pass to API request.
+	 *
+	 * @since 4.0.0
+	 * @version 4.0.0
+	 */
+	public static function get_headers() {
+		$user_agent = self::get_user_agent();
+		$app_info   = $user_agent['application'];
+
+		$headers = [
+			'Authorization'  => 'Basic ' . base64_encode( self::get_secret_key() . ':' ),
+			'Stripe-Version' => self::STRIPE_API_VERSION,
+		];
+
+		/**
+		 * Filters the request headers sent to the Stripe API. Deprecated in favor of wc_stripe_request_headers.
+		 *
+		 * @deprecated 9.7.0
+		 *
+		 * @param array $headers The headers to send to the Stripe API.
+		 */
+		$headers = apply_filters_deprecated(
+			'woocommerce_stripe_request_headers',
+			[ $headers ],
+			'9.7.0',
+			'wc_stripe_request_headers',
+			'The woocommerce_stripe_request_headers filter is deprecated since WooCommerce Stripe Gateway 9.7.0, and will be removed in a future version. Use wc_stripe_request_headers instead.'
+		);
+
+		/**
+		 * Filters the request headers sent to the Stripe API.
+		 *
+		 * @since 9.7.0
+		 *
+		 * @param array $headers The default headers we send to the Stripe API.
+		 * @param array $user_agent The user agent.
+		 */
+		$headers = apply_filters( 'wc_stripe_request_headers', $headers );
+
+		// These headers should not be overridden for this gateway.
+		$headers['User-Agent']                 = $app_info['name'] . '/' . $app_info['version'] . ' (' . $app_info['url'] . ')';
+		$headers['X-Stripe-Client-User-Agent'] = wp_json_encode( $user_agent );
+
+		return $headers;
+	}
+
+	/**
+	 * Generates the idempotency key for the request.
+	 *
+	 * @param string $api The API endpoint.
+	 * @param string $method The HTTP method.
+	 * @param array  $request The request parameters.
+	 * @return string|null The idempotency key.
+	 */
+	public static function get_idempotency_key( $api, $method, $request ) {
+		if ( 'charges' === $api && 'POST' === $method ) {
+			$customer = ! empty( $request['customer'] ) ? $request['customer'] : '';
+			$source   = ! empty( $request['source'] ) ? $request['source'] : $customer;
+			return $request['metadata']['order_id'] . '-' . $source;
+		} elseif ( 'payment_intents' === $api && 'POST' === $method ) {
+			// https://docs.stripe.com/api/idempotent_requests suggests using
+			// v4 uuids for idempotency keys.
+			return wp_generate_uuid4();
+		}
+
+		return null;
+	}
+
+	/**
+	 * Send the request to Stripe's API
+	 *
+	 * @since 3.1.0
+	 * @version 4.0.6
+	 * @param array  $request
+	 * @param string $api
+	 * @param string $method
+	 * @param bool   $with_headers To get the response with headers.
+	 * @return stdClass|array
+	 * @throws WC_Stripe_Exception
+	 */
+	public static function request( $request, $api = 'charges', $method = 'POST', $with_headers = false ) {
+		$headers = self::get_headers();
+
+		/**
+		 * Filters the idempotency key sent with a Stripe API request.
+		 *
+		 * @param string|null $idempotency_key Generated idempotency key.
+		 * @param array       $request         Stripe API request body.
+		 */
+		$idempotency_key = apply_filters( 'wc_stripe_idempotency_key', self::get_idempotency_key( $api, $method, $request ), $request );
+		if ( $idempotency_key ) {
+			$headers['Idempotency-Key'] = $idempotency_key;
+		}
+
+		/**
+		 * Filters the request body sent to the Stripe API. Deprecated in favor of wc_stripe_request_body.
+		 *
+		 * @deprecated 9.7.0
+		 *
+		 * @param array $request The request body to send to the Stripe API.
+		 * @param string $api The Stripe API endpoint.
+		 */
+		$request = apply_filters_deprecated(
+			'woocommerce_stripe_request_body',
+			[ $request, $api ],
+			'9.7.0',
+			'wc_stripe_request_body',
+			'The woocommerce_stripe_request_body filter is deprecated since WooCommerce Stripe Gateway 9.7.0, and will be removed in a future version. Use wc_stripe_request_body instead.'
+		);
+
+		/**
+		 * Filters the request body sent to the Stripe API.
+		 *
+		 * @since 9.7.0
+		 *
+		 * @param array $request The default request body we will send to the Stripe API.
+		 * @param string $api The Stripe API endpoint.
+		 */
+		$request = apply_filters( 'wc_stripe_request_body', $request, $api );
+
+		$masked_secret_key = self::get_masked_secret_key();
+
+		// Log the request after the filters have been applied.
+		WC_Stripe_Logger::debug(
+			"Stripe API request: {$method} {$api}",
+			[
+				'stripe_api_key' => $masked_secret_key,
+				'request'        => $request,
+			]
+		);
+
+		// Use wp_remote_post() instead of wp_safe_remote_post() as we have a hard-coded URL
+		// and the safe version fails when there are DNS resolution issues.
+		// See https://github.com/woocommerce/woocommerce-gateway-stripe/issues/4801
+		$response = wp_remote_post(
+			self::ENDPOINT . $api,
+			[
+				'method'  => $method,
+				'headers' => $headers,
+				'body'    => $request,
+				'timeout' => 70,
+			]
+		);
+
+		$response_headers = wp_remote_retrieve_headers( $response );
+
+		if ( WC_Stripe_API_Outage_Status::is_outage_response( $response ) ) {
+			WC_Stripe_API_Outage_Status::record_outage();
+
+			$error_data = [
+				'stripe_api_key'  => $masked_secret_key,
+				'request'         => $request,
+				'idempotency_key' => $idempotency_key,
+			];
+			self::log_error_response( $response, $api, $method, $error_data );
+
+			throw new WC_Stripe_Exception(
+				print_r( $response, true ),
+				__( 'The Stripe API is temporarily unavailable. Please try again in a few minutes.', 'woocommerce-gateway-stripe' )
+			);
+		}
+
+		WC_Stripe_API_Outage_Status::record_success();
+
+		$response_body_raw = wp_remote_retrieve_body( $response );
+		if ( empty( $response_body_raw ) ) {
+			$error_data = [
+				'stripe_api_key'  => $masked_secret_key,
+				'request'         => $request,
+				'idempotency_key' => $idempotency_key,
+			];
+			self::log_error_response( $response, $api, $method, $error_data );
+
+			throw new WC_Stripe_Exception( print_r( $response, true ), __( 'There was a problem sending a request to the Stripe API endpoint.', 'woocommerce-gateway-stripe' ) );
+		}
+
+		$response_body = json_decode( $response_body_raw );
+
+		WC_Stripe_Logger::debug(
+			"Stripe API response: {$method} {$api}",
+			[
+				'stripe_api_key'    => $masked_secret_key,
+				'stripe_request_id' => self::get_stripe_request_id( $response ),
+				'response'          => $response_body,
+			]
+		);
+
+		if ( $with_headers ) {
+			return [
+				'headers' => $response_headers,
+				'body'    => $response_body,
+			];
+		}
+
+		return $response_body;
+	}
+
+	/**
+	 * Retrieve API endpoint.
+	 *
+	 * @since 4.0.0
+	 * @version 4.0.0
+	 * @param string $api
+	 */
+	public static function retrieve( $api ) {
+		// If keep count of consecutive 401 errors, and it exceeds INVALID_API_KEY_ERROR_COUNT_THRESHOLD,
+		// we return null until the cache expires (INVALID_API_KEY_ERROR_COUNT_CACHE_TIMEOUT) or the keys are updated.
+		$mode                        = self::get_mode_for_active_secret_key();
+		$invalid_api_key_error_count = WC_Stripe_Database_Cache::get_with_mode( self::INVALID_API_KEY_ERROR_COUNT_CACHE_KEY, $mode );
+		if ( ! empty( $invalid_api_key_error_count ) && self::INVALID_API_KEY_ERROR_COUNT_THRESHOLD <= $invalid_api_key_error_count ) {
+			// We skip logging the error here because when there is no Account cache,
+			// the instantiation of the UPE gateway triggers a call to this method for
+			// every available payment method. This would result in excessive log entries
+			// which is not useful.
+			// We only log the error when the count exceeds the threshold for the first time.
+
+			// The UI expects a null response (and not an error) in case of invalid API keys.
+			return null;
+		}
+
+		$masked_secret_key = self::get_masked_secret_key();
+
+		WC_Stripe_Logger::debug(
+			"Stripe API request: GET {$api}",
+			[
+				'stripe_api_key' => $masked_secret_key,
+			]
+		);
+
+		// Use wp_remote_get() instead of wp_safe_remote_get() as we have a hard-coded URL
+		// and the safe version fails when there are DNS resolution issues.
+		// See https://github.com/woocommerce/woocommerce-gateway-stripe/issues/4801
+		$response = wp_remote_get(
+			self::ENDPOINT . $api,
+			[
+				'method'  => 'GET',
+				'headers' => self::get_headers(),
+				'timeout' => 70,
+			]
+		);
+
+		if ( WC_Stripe_API_Outage_Status::is_outage_response( $response ) ) {
+			WC_Stripe_API_Outage_Status::record_outage();
+
+			self::log_error_response( $response, $api, 'GET' );
+
+			return new WP_Error(
+				'stripe_api_outage',
+				__( 'The Stripe API is temporarily unavailable. Please try again in a few minutes.', 'woocommerce-gateway-stripe' )
+			);
+		}
+
+		WC_Stripe_API_Outage_Status::record_success();
+
+		// If we get a 401 error, we know the secret key is not valid.
+		if ( is_array( $response ) && isset( $response['response'] ) && is_array( $response['response'] ) && isset( $response['response']['code'] ) && 401 === $response['response']['code'] ) {
+			// Stripe redacts API keys in the response.
+			WC_Stripe_Logger::error(
+				"Stripe API error: GET {$api} returned a 401",
+				[
+					'stripe_api_key'    => $masked_secret_key,
+					'stripe_request_id' => self::get_stripe_request_id( $response ),
+					'response'          => json_decode( $response['body'] ),
+				]
+			);
+
+			++$invalid_api_key_error_count;
+			WC_Stripe_Database_Cache::set_with_mode( self::INVALID_API_KEY_ERROR_COUNT_CACHE_KEY, $invalid_api_key_error_count, self::INVALID_API_KEY_ERROR_COUNT_CACHE_TIMEOUT, $mode );
+
+			if ( $invalid_api_key_error_count >= self::INVALID_API_KEY_ERROR_COUNT_THRESHOLD ) {
+				WC_Stripe_Logger::error(
+					'Invalid API keys request rate limit exceeded',
+					[
+						'stripe_api_key' => $masked_secret_key,
+						'count'          => $invalid_api_key_error_count,
+						'next_retry'     => date_i18n( 'Y-m-d H:i:sP', time() + self::INVALID_API_KEY_ERROR_COUNT_CACHE_TIMEOUT ),
+					]
+				);
+
+				// We need to invalidate the Account Data cache here, so that the UI shows the "Connect to Stripe" button.
+				WC_Stripe_Database_Cache::delete_with_mode( WC_Stripe_Account::ACCOUNT_CACHE_KEY, $mode );
+			}
+
+			return null; // The UI expects this empty response in case of invalid API keys.
+
+		}
+
+		// We got a valid, non-401 response, so clear the invalid API key count if it is present.
+		if ( null !== $invalid_api_key_error_count ) {
+			WC_Stripe_Database_Cache::delete_with_mode( self::INVALID_API_KEY_ERROR_COUNT_CACHE_KEY, $mode );
+		}
+
+		$response_body_raw = wp_remote_retrieve_body( $response );
+		if ( empty( $response_body_raw ) ) {
+			$error_data = [
+				'stripe_api_key' => $masked_secret_key,
+			];
+			self::log_error_response( $response, $api, 'GET', $error_data );
+
+			return new WP_Error( 'stripe_error', __( 'There was a problem retrieving data from the Stripe API endpoint.', 'woocommerce-gateway-stripe' ) );
+		}
+
+		$response_body = json_decode( $response_body_raw );
+
+		WC_Stripe_Logger::debug(
+			"Stripe API response: GET {$api}",
+			[
+				'stripe_api_key'    => $masked_secret_key,
+				'stripe_request_id' => self::get_stripe_request_id( $response ),
+				'response'          => $response_body,
+			]
+		);
+
+		return $response_body;
+	}
+
+	/**
+	 * Send the request to Stripe's API with level 3 data generated
+	 * from the order. If the request fails due to an error related
+	 * to level3 data, make the request again without it to allow
+	 * the payment to go through.
+	 *
+	 * @since 4.3.2
+	 * @version 5.1.0
+	 *
+	 * @param array    $request     Array with request parameters.
+	 * @param string   $api         The API path for the request.
+	 * @param array    $level3_data The level 3 data for this request.
+	 * @param WC_Order $order       The order associated with the payment.
+	 *
+	 * @return stdClass|array The response
+	 */
+	public static function request_with_level3_data( $request, $api, $level3_data, $order ) {
+		// 1. Do not add level3 data if the array is empty.
+		// 2. Do not add level3 data if there's a transient indicating that level3 was
+		// not accepted by Stripe in the past for this account.
+		// 3. Do not try to add level3 data if merchant is not based in the US.
+		// https://docs.stripe.com/level3#level-iii-usage-requirements
+		// (Needs to be authenticated with a level3 gated account to see above docs).
+		// 4. Do not add level3 data for non-card payment methods (e.g. Affirm,
+		// Klarna, Afterpay/Clearpay, Amazon Pay). Level 3 is card-network only, and
+		// Stripe rejects the request when it's attached to those methods.
+		if (
+			empty( $level3_data ) ||
+			get_transient( 'wc_stripe_level3_not_allowed' ) ||
+			'US' !== WC()->countries->get_base_country() ||
+			! WC_Stripe_Helper::order_supports_level3_data( $order )
+		) {
+			return self::request(
+				$request,
+				$api
+			);
+		}
+
+		// Add level 3 data to the request.
+		$request['level3'] = $level3_data;
+
+		$result = self::request(
+			$request,
+			$api
+		);
+
+		// Check for amount_too_small error - if found, return immediately without retrying
+		if (
+			isset( $result->error ) &&
+			isset( $result->error->code ) &&
+			'amount_too_small' === $result->error->code
+		) {
+			return $result;
+		}
+
+		$is_level3_param_not_allowed = (
+			isset( $result->error )
+			&& isset( $result->error->code )
+			&& 'parameter_unknown' === $result->error->code
+			&& isset( $result->error->param )
+			&& 'level3' === $result->error->param
+		);
+
+		$is_level_3data_incorrect = (
+			isset( $result->error )
+			&& isset( $result->error->type )
+			&& 'invalid_request_error' === $result->error->type
+		);
+
+		if ( $is_level3_param_not_allowed ) {
+			// Set a transient so that future requests do not add level 3 data.
+			// Transient is set to expire in 3 months, can be manually removed if needed.
+			set_transient( 'wc_stripe_level3_not_allowed', true, 3 * MONTH_IN_SECONDS );
+		} elseif ( $is_level_3data_incorrect ) {
+			// Log the issue so we could debug it.
+			WC_Stripe_Logger::error(
+				'Level3 data sum incorrect',
+				[
+					'error'                 => $result->error,
+					'order_line_items'      => $order->get_items(),
+					'order_shipping_amount' => $order->get_shipping_total(),
+					'order_currency'        => $order->get_currency(),
+				]
+			);
+		}
+
+		// Make the request again without level 3 data.
+		if ( $is_level3_param_not_allowed || $is_level_3data_incorrect ) {
+			unset( $request['level3'] );
+			return self::request(
+				$request,
+				$api
+			);
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Returns a payment method object from Stripe given an ID. Accepts both 'src_xxx' and 'pm_xxx'
+	 * style IDs for backwards compatibility.
+	 *
+	 * @param string $payment_method_id The ID of the payment method to retrieve.
+	 *
+	 * @return stdClass  The payment method object.
+	 */
+	public static function get_payment_method( string $payment_method_id ) {
+		// Encode as a single path segment so a crafted ID can't smuggle path syntax (no-op for valid IDs).
+		$payment_method_id = rawurlencode( $payment_method_id );
+
+		// Sources have a separate API.
+		if ( 0 === strpos( $payment_method_id, 'src_' ) ) {
+			return self::retrieve( 'sources/' . $payment_method_id );
+		}
+
+		// If it's not a source it's a PaymentMethod.
+		return self::retrieve( 'payment_methods/' . $payment_method_id );
+	}
+
+	/**
+	 * Update payment method data.
+	 *
+	 * @param string $payment_method_id   Payment method ID.
+	 * @param array  $payment_method_data Payment method updated data.
+	 *
+	 * @return array Payment method details.
+	 *
+	 * @throws WC_Stripe_Exception If payment method update fails.
+	 */
+	public static function update_payment_method( $payment_method_id, $payment_method_data = [] ) {
+		return self::request(
+			$payment_method_data,
+			'payment_methods/' . rawurlencode( $payment_method_id )
+		);
+	}
+
+	/**
+	 * Attaches a payment method to the given customer.
+	 *
+	 * @param string $customer_id        The ID of the customer the payment method should be attached to.
+	 * @param string $payment_method_id  The payment method that should be attached to the customer.
+	 *
+	 * @return stdClass|array  The response from the API request.
+	 * @throws WC_Stripe_Exception
+	 */
+	public static function attach_payment_method_to_customer( string $customer_id, string $payment_method_id ) {
+		// Sources and Payment Methods need different API calls.
+		if ( 0 === strpos( $payment_method_id, 'src_' ) ) {
+			return self::request(
+				[ 'source' => $payment_method_id ],
+				'customers/' . $customer_id . '/sources'
+			);
+		}
+
+		// Encode as a single path segment so a crafted ID can't smuggle path syntax (no-op for valid IDs).
+		return self::request(
+			[ 'customer' => $customer_id ],
+			'payment_methods/' . rawurlencode( $payment_method_id ) . '/attach'
+		);
+	}
+
+	/**
+	 * Detaches a payment method from the given customer.
+	 *
+	 * @param string $customer_id        The ID of the customer that contains the payment method that should be detached.
+	 * @param string $payment_method_id  The ID of the payment method that should be detached.
+	 *
+	 * @return  stdClass|array  The response from the API request
+	 * @throws WC_Stripe_Exception
+	 */
+	public static function detach_payment_method_from_customer( string $customer_id, string $payment_method_id ) {
+		if ( ! self::should_detach_payment_method_from_customer() ) {
+			return [];
+		}
+
+		$payment_method_id = sanitize_text_field( $payment_method_id );
+
+		// Encode as a single path segment so a crafted ID can't smuggle path syntax (no-op for valid IDs).
+		$encoded_payment_method_id = rawurlencode( $payment_method_id );
+
+		// Sources and Payment Methods need different API calls.
+		if ( 0 === strpos( $payment_method_id, 'src_' ) ) {
+			return self::request(
+				[],
+				'customers/' . $customer_id . '/sources/' . $encoded_payment_method_id,
+				'DELETE'
+			);
+		}
+
+		return self::request(
+			[],
+			'payment_methods/' . $encoded_payment_method_id . '/detach'
+		);
+	}
+
+	/**
+	 * Checks if a payment method should be detached from a customer.
+	 *
+	 * If the site is a staging/local/development site in live mode, we should not detach the payment method
+	 * from the customer to avoid detaching it from the production site.
+	 *
+	 * @return bool True if the payment should be detached, false otherwise.
+	 */
+	public static function should_detach_payment_method_from_customer() {
+		// If we are in test mode, we can always detach the payment method.
+		if ( WC_Stripe_Mode::is_test() ) {
+			return true;
+		}
+
+		// Requests coming from the customer account page i.e delete payment method, should always be allowed, and should return true.
+		// We thus treat the following requests as admin requests:
+		// - Requests where is_admin() is true
+		// - Actions via WP CLI
+		// - WP Cron requests
+		$is_admin_request = is_admin() ||
+			( defined( 'WP_CLI' ) && WP_CLI ) ||
+			wp_doing_cron();
+
+		if ( ! $is_admin_request ) {
+			return true;
+		}
+
+		// If we are not in a production site, we should not detach the payment method,
+		// as we don't want to detach the payment method from the live production site.
+		$is_staging_site = self::is_woocommerce_subscriptions_staging_mode() || 'production' !== wp_get_environment_type();
+		if ( $is_staging_site ) {
+			return false;
+		}
+
+		// Otherwise, we are in a production site, and we should detach the payment method.
+		return true;
+	}
+
+	/**
+	 * Checks if the site has WooCommerce Subscriptions staging mode enabled.
+	 *
+	 * @return bool True if the site has WooCommerce Subscriptions active and staging mode enabled, false otherwise.
+	 */
+	private static function is_woocommerce_subscriptions_staging_mode() {
+		if ( ! class_exists( 'WC_Subscriptions' ) ) {
+			return false;
+		}
+
+		// Check if WooCommerce Subscriptions >= 4.0.0 is active (uses WCS_Staging class)
+		if ( class_exists( 'WCS_Staging' ) && method_exists( 'WCS_Staging', 'is_duplicate_site' ) ) {
+			return WCS_Staging::is_duplicate_site();
+		}
+
+		// Check if WooCommerce Subscriptions < 4.0.0 is active
+		// and if it is, check if the site is in staging mode via is_duplicate_site().
+		if ( version_compare( WC_Subscriptions::$version, '4.0.0', '<' )
+			&& method_exists( 'WC_Subscriptions', 'is_duplicate_site' )
+		) {
+			return WC_Subscriptions::is_duplicate_site();
+		}
+
+		return false;
+	}
+
+	/**
+	 * Get the payment method configuration.
+	 *
+	 * @return array The response from the API request.
+	 */
+	public function get_payment_method_configurations() {
+		// The default limit is 10, so we set it to 100 to get all configurations in a single request.
+		// @see https://stripe.com/docs/api/payment_method_configurations/list#list_payment_method_configurations-limit
+		return self::retrieve( 'payment_method_configurations?limit=100' );
+	}
+
+	/**
+	 * Update the payment method configuration.
+	 *
+	 * @param array $payment_method_configurations The payment method configurations to update.
+	 */
+	public function update_payment_method_configurations( $id, $payment_method_configurations ) {
+		$response = self::request(
+			$payment_method_configurations,
+			'payment_method_configurations/' . $id
+		);
+		return $response;
+	}
+
+	/**
+	 * Log an error response from the Stripe API.
+	 *
+	 * @param array|WP_Error $response HTTP response or error.
+	 * @param string         $api      The API endpoint.
+	 * @param string         $method   The HTTP method used for the request.
+	 * @param array          $data     Additional data to add to the log.
+	 * @return void
+	 */
+	private static function log_error_response( $response, string $api, string $method, array $data = [] ): void {
+		$error_message = "Stripe API error: {$method} {$api}";
+		$error_data    = array_merge(
+			$data,
+			[
+				'stripe_request_id' => self::get_stripe_request_id( $response ),
+				'response'          => $response,
+			]
+		);
+
+		// Add logging for URL validation errors.
+		if (
+			is_wp_error( $response ) &&
+			'http_request_failed' === $response->get_error_code() &&
+			// phpcs:ignore WordPress.WP.I18n.MissingArgDomain
+			__( 'A valid URL was not provided.' ) === $response->get_error_message()
+		) {
+			$stripe_api_host     = 'api.stripe.com';
+			$resolved_ip_address = gethostbyname( $stripe_api_host );
+
+			$error_data['resolved_ip_address'] = $resolved_ip_address;
+
+			if ( $resolved_ip_address === $stripe_api_host ) {
+				$error_data['validation_details'] = "$stripe_api_host could not be resolved to an IP address";
+			} else {
+				$error_message                   .= "; Possible DNS resolution problem for $stripe_api_host";
+				$error_data['validation_details'] = "$stripe_api_host resolved to $resolved_ip_address";
+			}
+		}
+
+		WC_Stripe_Logger::error( $error_message, $error_data );
+	}
+
+	/**
+	 * Returns the Stripe's request_id associated with the response.
+	 *
+	 * @param array|WP_Error $response HTTP response.
+	 *
+	 * @return string The Stripe's request_id associated with the response or null if not present.
+	 */
+	private static function get_stripe_request_id( $response ) {
+		$headers = wp_remote_retrieve_headers( $response );
+		if ( is_array( $headers ) ) {
+			return $headers['request-id'] ?? '';
+		}
+		if ( is_object( $headers ) && $headers instanceof \WpOrg\Requests\Utility\CaseInsensitiveDictionary ) {
+			return $headers->getAll()['request-id'] ?? '';
+		}
+		return '';
+	}
+
+	/**
+	 * Get the masked secret key.
+	 * It uses the same pattern as the Stripe dashboard: sk_live_...JLWaeq.
+	 *
+	 * @return string The masked secret key.
+	 */
+	public static function get_masked_secret_key(): string {
+		$key = self::get_secret_key();
+		if ( empty( $key ) ) {
+			return 'secret_key_not_configured';
+		}
+		return substr( $key, 0, 8 ) . '...' . substr( $key, -6 );
+	}
+}
