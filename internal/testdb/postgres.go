@@ -39,9 +39,6 @@ func Start(t testing.TB) *sql.DB {
 	if err != nil {
 		t.Fatalf("create local PostgreSQL instance directory: %v", err)
 	}
-	t.Setenv("TMPDIR", instanceDir)
-	t.Setenv("TMP", instanceDir)
-	t.Setenv("TEMP", instanceDir)
 	port, err := availablePort()
 	if err != nil {
 		_ = os.RemoveAll(instanceDir)
@@ -57,7 +54,7 @@ func Start(t testing.TB) *sql.DB {
 		Locale("C").
 		Encoding("UTF8").
 		StartTimeout(2 * time.Minute).
-		CachePath(filepath.Join(instanceDir, "cache")).
+		CachePath(filepath.Join(scratchDir, "cache")).
 		BinariesPath(filepath.Join(instanceDir, "binaries")).
 		RuntimePath(filepath.Join(instanceDir, "runtime")).
 		DataPath(filepath.Join(instanceDir, "data")).

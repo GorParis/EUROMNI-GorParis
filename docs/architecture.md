@@ -7,9 +7,9 @@ Pour garantir la sécurité, la vitesse et l’indépendance, l’architecture a
            │  (ex: Plugin WooCommerce PHP, Module PrestaShop)
            ▼
 ┌────────────────────────────────────────────────────────┐
-│ 1. PIPELINE DE TRANSPILATION IA (DeepSeek / LLM)       │
-│    ├── Analyse syntaxique et extraction de la logique  │
-│    └── Transpilation vers Go / WebAssembly (Wasm)      │
+│ 1. PIPELINE D'ANALYSE ET DE COMPILATION               │
+│    ├── Analyse statique des sources et IR validee     │
+│    └── Generation WAT puis compilation en Wasm        │
 └────────────────────────────────────────────────────────┘
            │
            ▼ (Code isolé et compilé)
@@ -35,10 +35,11 @@ Pour garantir la sécurité, la vitesse et l’indépendance, l’architecture a
 
 - **Entrée** : plugins / modules PHP du marché (WooCommerce, PrestaShop, Magento, etc.).
 - **Analyse** : syntaxe, appels API, hooks, accès données, effets de bord.
-- **Sortie** : module Wasm (et éventuellement bindings Go) exécutable dans le runtime isolé.
+- **Sortie actuelle** : module Wasm généré depuis un sous-ensemble d'IR ; la
+  traduction générale du code source et les bindings Go ne sont pas disponibles.
 - **Modèle** : LLM (ex. DeepSeek) pour extraire la logique métier ; compilation déterministe ensuite.
 
-Le code transpilé **n’a jamais** d’accès direct au processus hôte ni au PHP historique. Le contrat détaillé d’ingestion, d’analyse, de traduction, de validation et de publication est décrit dans [`pipeline/README.md`](../pipeline/README.md). Le pipeline source PHP n’est pas encore implémenté ; seul le stockage local d’artefacts et le runtime Wasmtime/ABI sont disponibles. La compatibilité entre le compilateur Go/Wasm prévu et l’import custom `euromni.call` doit être démontrée avant le traducteur.
+Le code invité **n’a jamais** d’accès direct au processus hôte ni au PHP historique. Le dépôt contient des validateurs d’archives, des analyseurs statiques ciblés, une IR versionnée et une génération Wasm limitée à partir de cette IR ; il ne contient pas encore de traduction générique de code PHP ni d’ingestion HTTP authentifiée. La compilation Go `wasip1` testée importe des appels WASI en plus de `euromni.call` et ne convient pas au linker strict. La [matrice de portabilité](portability.md) sépare ce problème de toolchain de celui des hôtes Go/CGo du runtime.
 
 ## 2. Cœur CMS (Go)
 
@@ -97,3 +98,4 @@ Pas deux modèles de données : un domaine Go, deux adaptateurs HTTP.
 - Périmètre v1 du pipeline (un plugin pilote vs extracteur générique).
 - Périmètre produit v1 (moteur seul, boutique, ou bout-en-bout).
 - Où tourne Postgres (cloud / dédié) — le schéma ne dépend pas de ça. L’instance actuelle est chez IONOS.
+- OS/architectures du runtime hôte et toolchain des guests ; les cibles ne sont pas déclarées supportées avant validation. Voir la [matrice de portabilité](portability.md).

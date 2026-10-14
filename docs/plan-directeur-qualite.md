@@ -3,9 +3,9 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 1.2 |
+| Version | 1.4 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
-| Date de révision | 2026-10-12 |
+| Date de révision | 2026-10-14 |
 | Responsable du document | Responsable produit/technique, à désigner |
 | Périmètre | Architecture, pipeline PHP→Wasm, ABI, artefacts et validation du cœur EUROMNI |
 | Exigence de portabilité | Artefacts Wasm indépendants de l’hôte de build ; plateformes runtime déclarées et testées |
@@ -20,6 +20,7 @@ produit.
 ## Références et exigences
 
 - Architecture cible : [`architecture.md`](architecture.md).
+- Matrice runtime/toolchain : [`portability.md`](portability.md).
 - Contrat ABI : [`abi.md`](abi.md).
 - Chaîne PHP→Wasm et frontières de confiance : [`../pipeline/README.md`](../pipeline/README.md).
 - Exécution Wasmtime : imports limités à `euromni.call`, capabilities médiées,
@@ -41,19 +42,22 @@ produit.
 
 ## État de référence
 
-Au 2026-10-12, le runtime Wasmtime, l’ABI hôte, le registre de modules installés
+Au 2026-10-13, le runtime Wasmtime, l’ABI hôte, le registre de modules installés
 et le stockage local d’artefacts par SHA-256 existent. Le stockage est streamé,
-borné à 64 Mio et vérifie l’intégrité à la lecture. La chaîne d’analyse PHP, les
-adaptateurs, l’IR, le traducteur, l’endpoint d’upload et la publication
-orchestrée ne sont pas implémentés. Le choix de toolchain Go/Wasm compatible
-avec l’import custom `euromni.call` reste un point bloquant à lever avant de
-générer des modules réels. Cette vérification doit porter sur les propriétés
-de l’artefact et la matrice d’exécution cible, pas sur les compilateurs présents
-sur le poste de développement.
+borné à 64 Mio et vérifie l’intégrité à la lecture. Le dépôt contient aussi une
+validation d’archives PHP, des analyses statiques ciblées, une IR v2, une
+génération WAT/Wasm limitée et un helper de publication de builds. Il ne contient
+pas de traduction générique de PHP ni d’endpoint d’ingestion HTTP authentifié.
+Le test Go 1.26.8 `wasip1` consigné dans le pipeline observe des imports WASI
+supplémentaires ; cette configuration ne respecte pas le linker strict. Les
+cibles OS/architecture du runtime hôte n’ont pas encore de matrice de tests
+approuvée. Voir [`portability.md`](portability.md) ; ni QP-01 ni QP-10 ne sont
+clos par la seule documentation.
 
-Les changements de registre/runtime et d’artefacts sont en cours sur `main` et
-doivent être validés puis commités séparément ; se fier à `git status` avant de
-reprendre. Le commit de base de cette tranche est `8e9f18e`.
+Avant toute reprise de code, vérifier l’état réel de l’arbre de travail et
+l’historique Git. Les notes de version précédentes ne permettent pas de déduire
+si ces changements ont été commités ni si d’autres modifications locales sont
+présentes.
 
 ## Registre d’actions
 
@@ -72,7 +76,7 @@ la documentation du projet.
 | QP-07 | P1 | Valider Wasm avant publication et enregistrer l’artefact. | Imports, export mémoire/entrée, ABI, hash, taille, mémoire et fuel conformes ; publication atomique ; artefact corrompu ou non conforme rejeté. | Tests d’imports interdits, hash, limites, rollback et rechargement. | À faire |
 | QP-08 | P2 | Exécuter deux pilotes autorisés, un WooCommerce et un PrestaShop, sur une fonction catalogue ou hook simple. | Les deux passent par la même ABI sans SQL/réseau/filesystem côté guest et leurs sorties correspondent à un oracle documenté. | Licence/source autorisée, fixtures, résultats de tests et écarts consignés. | À faire |
 | QP-09 | P2 | Définir rétention, sauvegarde, restauration et suppression des sources/artefacts. | Règles par type d’artefact, stockage hors machine, restauration vérifiée, purge traçable. | Procédure et exercice de restauration/purge. | À faire |
-| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | Matrice versionnée et CI/tests de déploiement reproductibles. | À faire |
+| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) consigne les validations unitaires Windows/amd64 (CGo, Wasmtime et DACL du FileStore) ; test d’intégration et choix de production restent à faire. | En cours |
 
 Ordre de reprise recommandé : traiter **QP-01 et QP-10 ensemble**. Le poste de
 développement n’est pas la cible d’architecture ; un worker de build épinglé
@@ -80,6 +84,10 @@ est acceptable s’il produit un artefact portable et reproductible, sans rendre
 Docker nécessaire en production. Continuer ensuite QP-02/03, QP-04/05,
 QP-06/07, puis QP-08/09. Ne pas commencer la traduction générique avant d’avoir
 validé l’IR avec les deux plateformes pilotes.
+
+La matrice de portabilité sépare les guests Wasm, le binaire Go/CGo du runtime,
+le worker de build et le FileStore. Elle ne declare aucune plateforme supportee :
+les cibles de production et leurs preuves d'execution restent a approuver.
 
 ## Contrôles de passage
 
@@ -116,3 +124,5 @@ Pour chaque action :
 | 1.0 | 2026-10-12 | Création du plan directeur initial pour le pipeline PHP→Wasm et la maîtrise des artefacts. | En attente du responsable produit/qualité |
 | 1.1 | 2026-10-12 | Résultat du spike Go WASI consigné ; QP-01 bloqué en attente d’un invité sans imports WASI. | En attente du responsable produit/qualité |
 | 1.2 | 2026-10-12 | Clarification de l’exigence de portabilité et ajout d’une matrice d’hôtes runtime distincte du poste de build. | En attente du responsable produit/qualité |
+| 1.3 | 2026-10-13 | Ajout d’une matrice initiale séparant runtime CGo, guests Wasm et worker de build ; aucune cible n’est déclarée supportée sans validation. | En attente du responsable produit/qualité |
+| 1.4 | 2026-10-14 | Suite Windows/amd64 validee ; correction du FileStore avec DACL NTFS protege et documentation du test. QP-10 reste ouvert en attente de l'integration et des cibles de production. | En attente du responsable produit/qualité |

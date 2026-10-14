@@ -46,15 +46,8 @@ func NewFileStore(root string) (*FileStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve artifact root: %w", err)
 	}
-	if err := os.MkdirAll(absoluteRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("create artifact root: %w", err)
-	}
-	info, err := os.Stat(absoluteRoot)
-	if err != nil {
-		return nil, fmt.Errorf("inspect artifact root: %w", err)
-	}
-	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("artifact root must be a private directory")
+	if err := ensurePrivateDirectory(absoluteRoot); err != nil {
+		return nil, err
 	}
 	return &FileStore{root: absoluteRoot}, nil
 }

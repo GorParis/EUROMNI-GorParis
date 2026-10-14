@@ -4,26 +4,26 @@ CMS souverain **headless** et **sandboxed** : le cœur d’exécution est en Go,
 
 ## Architecture (3 couches)
 
-1. **Pipeline de transpilation IA** — analyse des plugins PHP existants, extraction de la logique, compilation vers Go / Wasm.
+1. **Pipeline de modules** — analyse statique ciblée et génération Wasm depuis une IR limitée ; la traduction générique assistée par IA reste à construire.
 2. **Cœur CMS (Go)** — runtime Wasm (Wasmtime), API GraphQL **et** REST, PostgreSQL.
 3. **Front boutique** — Web Components universels, isolation Shadow DOM.
 
-Docs : [`docs/architecture.md`](docs/architecture.md), [`docs/api.md`](docs/api.md), [`docs/database.md`](docs/database.md), [`docs/abi.md`](docs/abi.md) (mapping Wasm → SQL), [`docs/local-postgresql.md`](docs/local-postgresql.md) (persistance locale), [`docs/testing-postgresql.md`](docs/testing-postgresql.md) (intégration réelle).
+Docs : [`docs/architecture.md`](docs/architecture.md), [`docs/api.md`](docs/api.md), [`docs/database.md`](docs/database.md), [`docs/abi.md`](docs/abi.md) (mapping Wasm → SQL), [`docs/portability.md`](docs/portability.md) (runtime CGo et guests Wasm), [`docs/local-postgresql.md`](docs/local-postgresql.md) (persistance locale), [`docs/testing-postgresql.md`](docs/testing-postgresql.md) (intégration réelle).
 
 ## Structure
 
 ```
 cmd/cms/          # point d’entrée du moteur
 internal/api/     # couche GraphQL / REST
-internal/wasm/    # runtime Wasmtime (squelette)
+internal/wasm/    # runtime Wasmtime et ABI hôte
 internal/store/   # accès PostgreSQL
 migrations/       # schéma SQL + seed exemple
-pipeline/         # transpilation IA (à venir)
-frontend/         # composants boutique (à venir)
-docs/             # architecture + modèle de données
+pipeline/         # analyse de modules, IR et compilation Wasm limitée
+frontend/         # composants de démonstration de la boutique
+docs/             # architecture, portabilité et modèle de données
 ```
 
-## Lancer le squelette
+## Lancer le CMS localement
 
 ```bash
 go test ./...

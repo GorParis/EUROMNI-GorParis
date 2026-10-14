@@ -10,10 +10,7 @@ import (
 )
 
 func main() {
-	api.SetProductReader(store.ProductReaderFromEnv())
-
-	mux := http.NewServeMux()
-	api.Register(mux)
+	mux := newHandler()
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -24,4 +21,12 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func newHandler() http.Handler {
+	api.SetProductReader(store.ProductReaderFromEnv())
+
+	mux := http.NewServeMux()
+	api.Register(mux)
+	return mux
 }

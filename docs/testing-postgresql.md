@@ -1,6 +1,6 @@
 # Tests PostgreSQL réels
 
-Les tests d’intégration lancent PostgreSQL 16 depuis Go ; aucun service natif ni port fixe n’est requis. Les tests du store et de l’API démarrent chacun une instance, appliquent les six migrations, puis la suppriment à la fin. Le binaire PostgreSQL est téléchargé et vérifié par SHA-256 à la première exécution, puis supprimé avec les données de test.
+Les tests d’intégration lancent PostgreSQL 16 depuis Go ; aucun service natif ni port fixe n’est requis. Chaque test démarre sa propre instance, son port et ses données isolés, applique les migrations puis supprime l’instance à la fin. Seule l’archive des binaires PostgreSQL, vérifiée par SHA-256, est partagée sous `.tmp/embedded-postgres/cache` et réutilisée par les exécutions suivantes.
 
 Depuis la racine du dépôt :
 
@@ -8,7 +8,7 @@ Depuis la racine du dépôt :
 go test -tags=integration -count=1 ./...
 ```
 
-Les binaires, runtime et données résident dans `.tmp/embedded-postgres`, sous le dépôt ; `.tmp` est ignoré par Git.
+L’archive partagée et les binaires extraits, runtime et données propres à chaque instance résident dans `.tmp/embedded-postgres`, sous le dépôt ; `.tmp` est ignoré par Git.
 
 Pour exécuter les tests dans un runner Linux conteneurisé, Docker reste une option :
 
