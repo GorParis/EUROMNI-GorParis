@@ -3,10 +3,16 @@ package sqlitestore
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"euromni/internal/seed"
 	"euromni/internal/store"
@@ -14,7 +20,12 @@ import (
 
 func openSeededStore(t *testing.T, stock int) *Store {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "sqlite", "shop.sqlite"))
+	return openSeededStoreAt(t, filepath.Join(t.TempDir(), "sqlite", "shop.sqlite"), stock)
+}
+
+func openSeededStoreAt(t *testing.T, path string, stock int) *Store {
+	t.Helper()
+	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("open SQLite store: %v", err)
 	}
@@ -170,6 +181,143 @@ func TestSQLiteCheckoutSerializesStockConsumption(t *testing.T) {
 	if remainingStock != 0 || orders != 1 {
 		t.Fatalf("remaining stock=%d orders=%d, want 0 and 1", remainingStock, orders)
 	}
+}
+
+func TestSQLiteCheckoutSerializesAcrossProcesses(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "sqlite", "shop.sqlite")
+	db := openSeededStoreAt(t, dbPath, 1)
+	tokenHashes := [][32]byte{
+		sha256.Sum256([]byte("first sqlite process cart")),
+		sha256.Sum256([]byte("second sqlite process cart")),
+	}
+	for _, tokenHash := range tokenHashes {
+		if err := db.CreateCart(context.Background(), seed.ShopID, tokenHash[:]); err != nil {
+			t.Fatalf("create SQLite cart: %v", err)
+		}
+		if _, err := db.AddCartLine(context.Background(), seed.ShopID, tokenHash[:], seed.VariantID, 1); err != nil {
+			t.Fatalf("add SQLite cart line: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close parent SQLite store: %v", err)
+	}
+
+	startFile := filepath.Join(t.TempDir(), "start")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("find test executable: %v", err)
+	}
+	type childProcess struct {
+		command *exec.Cmd
+		output  *strings.Builder
+	}
+	children := make([]childProcess, 0, len(tokenHashes))
+	for _, tokenHash := range tokenHashes {
+		output := &strings.Builder{}
+		command := exec.Command(executable, "-test.v", "-test.run=^TestSQLiteCheckoutProcessHelper$")
+		command.Stdout = output
+		command.Stderr = output
+		command.Env = append(os.Environ(),
+			"EUROMNI_SQLITESTORE_PROCESS_DB="+dbPath,
+			"EUROMNI_SQLITESTORE_PROCESS_TOKEN="+fmt.Sprintf("%x", tokenHash),
+			"EUROMNI_SQLITESTORE_PROCESS_START="+startFile,
+		)
+		if err := command.Start(); err != nil {
+			t.Fatalf("start checkout process: %v", err)
+		}
+		children = append(children, childProcess{command: command, output: output})
+	}
+	if err := os.WriteFile(startFile, []byte("go"), 0o600); err != nil {
+		t.Fatalf("release checkout processes: %v", err)
+	}
+
+	var succeeded, rejected int
+	for _, child := range children {
+		if err := child.command.Wait(); err != nil {
+			t.Fatalf("checkout subprocess failed: %v\n%s", err, child.output.String())
+		}
+		switch {
+		case strings.Contains(child.output.String(), "PROCESS_CHECKOUT_SUCCESS"):
+			succeeded++
+		case strings.Contains(child.output.String(), "PROCESS_CHECKOUT_OUT_OF_STOCK"):
+			rejected++
+		default:
+			t.Fatalf("checkout subprocess returned no result:\n%s", child.output.String())
+		}
+	}
+	if succeeded != 1 || rejected != 1 {
+		t.Fatalf("concurrent process checkouts: succeeded=%d rejected=%d, want one of each", succeeded, rejected)
+	}
+
+	db, err = Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen SQLite store: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close SQLite store: %v", err)
+		}
+	}()
+	var remainingStock, orders int
+	if err := db.db.QueryRow(`SELECT quantity FROM inventory_items WHERE variant_id = ?`, seed.VariantID).Scan(&remainingStock); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.db.QueryRow(`SELECT count(*) FROM orders`).Scan(&orders); err != nil {
+		t.Fatal(err)
+	}
+	if remainingStock != 0 || orders != 1 {
+		t.Fatalf("remaining stock=%d orders=%d, want 0 and 1", remainingStock, orders)
+	}
+}
+
+func TestSQLiteCheckoutProcessHelper(t *testing.T) {
+	dbPath := os.Getenv("EUROMNI_SQLITESTORE_PROCESS_DB")
+	if dbPath == "" {
+		return
+	}
+	startFile := os.Getenv("EUROMNI_SQLITESTORE_PROCESS_START")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, err := os.Stat(startFile)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("wait for checkout release: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for checkout release")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	tokenHash, err := hex.DecodeString(os.Getenv("EUROMNI_SQLITESTORE_PROCESS_TOKEN"))
+	if err != nil || len(tokenHash) != sha256.Size {
+		t.Fatalf("decode cart token hash: invalid test input")
+	}
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open SQLite store in subprocess: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close SQLite store in subprocess: %v", err)
+		}
+	}()
+	_, err = db.CheckoutCart(context.Background(), seed.ShopID, tokenHash, store.CheckoutDetails{
+		Email: "buyer@example.com",
+		ShippingAddress: store.ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	})
+	if errors.Is(err, store.ErrOutOfStock) {
+		t.Log("PROCESS_CHECKOUT_OUT_OF_STOCK")
+		return
+	}
+	if err != nil {
+		t.Fatalf("checkout in subprocess: %v", err)
+	}
+	t.Log("PROCESS_CHECKOUT_SUCCESS")
 }
 
 func TestSQLiteStoreRejectsCrossShopAccess(t *testing.T) {

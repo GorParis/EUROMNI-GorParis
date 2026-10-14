@@ -26,8 +26,11 @@ connecté à `cmd/cms`.
 - SQLite ne couvre pas encore les paiements, taxes, livraisons, comptes clients,
   administration, migrations versionnées ni le cycle de vie des commandes.
 - Le backend limite son pool à une connexion et sérialise certaines écritures
-  dans un seul processus. Les garanties d’exploitation multi-processus et les
-  comportements sous forte concurrence ne sont pas encore qualifiés.
+  par processus. Les transactions prennent le verrou d’écriture dès leur début
+  et SQLite attend jusqu’à cinq secondes en cas de verrou occupé. Un test de
+  checkout concurrent entre deux processus Windows confirme qu’un seul peut
+  consommer le dernier article; les autres systèmes et systèmes de fichiers
+  n’ont pas encore été qualifiés.
 - Le backend exige un répertoire dédié et privé pour la base : permissions
   propriétaire seul sur Unix, ACL NTFS protégée pour l’utilisateur courant,
   SYSTEM et Administrateurs sur Windows. Les nouveaux fichiers SQLite et

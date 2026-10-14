@@ -52,7 +52,8 @@ func Open(path string) (*Store, error) {
 		path = absolutePath
 	}
 
-	db, err := sql.Open("sqlite", path)
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)&_txlock=immediate"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
 	}
@@ -61,14 +62,6 @@ func Open(path string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect to SQLite database: %w", err)
-	}
-	if _, err := db.Exec(`
-		PRAGMA foreign_keys = ON;
-		PRAGMA journal_mode = WAL;
-		PRAGMA busy_timeout = 5000;
-	`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("configure SQLite database: %w", err)
 	}
 	s := &Store{db: db}
 	if err := s.migrate(context.Background()); err != nil {
