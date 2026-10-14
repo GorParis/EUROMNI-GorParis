@@ -134,9 +134,17 @@ func TestSQLiteCatalogAdministration(t *testing.T) {
 	product, err := db.CreateProduct(ctx, seed.ShopID, store.ProductInput{
 		Slug: "article-brouillon", Status: "draft",
 		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Article brouillon", Description: "Texte"}},
+		Variants: []store.VariantInput{{
+			SKU: "ARTICLE-BROUILLON", Options: map[string]any{"taille": "unique"},
+			Prices:    []store.PriceView{{Currency: "EUR", Amount: "12.5000"}},
+			Inventory: store.InventoryView{Quantity: 8, Track: true},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("create SQLite product: %v", err)
+	}
+	if len(product.Variants) != 1 || product.Variants[0].Prices[0].Amount != "12.5000" || product.Variants[0].Inventory.Quantity != 8 {
+		t.Fatalf("created SQLite variant, price, and inventory = %+v", product.Variants)
 	}
 	products, err := db.ListAdminProducts(ctx, seed.ShopID)
 	if err != nil {
@@ -148,19 +156,20 @@ func TestSQLiteCatalogAdministration(t *testing.T) {
 	updated, err := db.UpdateProduct(ctx, seed.ShopID, product.ID, store.ProductInput{
 		Slug: "article-brouillon", Status: "active",
 		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Article publié", Description: "Mis à jour"}},
+		Variants: []store.VariantInput{{
+			SKU: "ARTICLE-BROUILLON", Options: map[string]any{"taille": "unique"},
+			Prices:    []store.PriceView{{Currency: "EUR", Amount: "15.0000"}},
+			Inventory: store.InventoryView{Quantity: 6, Track: true},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("update SQLite product: %v", err)
 	}
 	publicProduct, err := db.GetProduct(ctx, seed.ShopID, product.ID)
-	if err != nil || updated.Status != "active" || publicProduct.Translations[0].Name != "Article publié" {
+	if err != nil || updated.Status != "active" || publicProduct.Translations[0].Name != "Article publié" ||
+		len(publicProduct.Variants) != 1 || publicProduct.Variants[0].Prices[0].Amount != "15.0000" ||
+		publicProduct.Variants[0].Inventory.Quantity != 6 {
 		t.Fatalf("updated/public product = %+v/%+v, error = %v", updated, publicProduct, err)
-	}
-	if err := db.ArchiveProduct(ctx, seed.ShopID, product.ID); err != nil {
-		t.Fatalf("archive SQLite product: %v", err)
-	}
-	if _, err := db.GetProduct(ctx, seed.ShopID, product.ID); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("archived SQLite product error = %v, want %v", err, store.ErrNotFound)
 	}
 
 	category, err := db.CreateCategory(ctx, seed.ShopID, store.CategoryInput{
@@ -180,11 +189,46 @@ func TestSQLiteCatalogAdministration(t *testing.T) {
 	if err != nil || updatedCategory.Slug != "accessoires-mode" {
 		t.Fatalf("updated SQLite category = %+v, error = %v", updatedCategory, err)
 	}
+	updated, err = db.UpdateProduct(ctx, seed.ShopID, product.ID, store.ProductInput{
+		Slug: "article-brouillon", Status: "active",
+		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Article publié"}},
+		CategoryIDs:  []string{category.ID},
+		Variants: []store.VariantInput{{
+			SKU: "ARTICLE-BROUILLON", Options: map[string]any{"taille": "unique"},
+			Prices:    []store.PriceView{{Currency: "EUR", Amount: "15.0000"}},
+			Inventory: store.InventoryView{Quantity: 6, Track: true},
+		}},
+	})
+	if err != nil || len(updated.CategoryIDs) != 1 || updated.CategoryIDs[0] != category.ID {
+		t.Fatalf("SQLite category association = %+v, error = %v", updated, err)
+	}
+	cartToken := sha256.Sum256([]byte("sqlite admin variant reference cart"))
+	if err := db.CreateCart(ctx, seed.ShopID, cartToken[:]); err != nil {
+		t.Fatalf("create SQLite variant reference cart: %v", err)
+	}
+	defer func() {
+		_, _ = db.db.ExecContext(context.Background(), "DELETE FROM carts WHERE access_token_hash = ?", cartToken[:])
+	}()
+	if _, err := db.AddCartLine(ctx, seed.ShopID, cartToken[:], updated.Variants[0].ID, 1); err != nil {
+		t.Fatalf("add SQLite admin variant to cart: %v", err)
+	}
+	if _, err := db.UpdateProduct(ctx, seed.ShopID, product.ID, store.ProductInput{
+		Slug: "article-brouillon", Status: "active",
+		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Article publié"}},
+	}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("removing cart-referenced SQLite variant error = %v, want %v", err, store.ErrConflict)
+	}
 	if err := db.DeleteCategory(ctx, seed.ShopID, category.ID); err != nil {
 		t.Fatalf("delete SQLite category: %v", err)
 	}
 	if _, err := db.GetCategory(ctx, seed.ShopID, category.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("deleted SQLite category error = %v, want %v", err, store.ErrNotFound)
+	}
+	if err := db.ArchiveProduct(ctx, seed.ShopID, product.ID); err != nil {
+		t.Fatalf("archive SQLite product: %v", err)
+	}
+	if _, err := db.GetProduct(ctx, seed.ShopID, product.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("archived SQLite product error = %v, want %v", err, store.ErrNotFound)
 	}
 }
 

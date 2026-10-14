@@ -45,6 +45,15 @@ func (a *testStaffAuthenticator) ValidateStaffSession(_ context.Context, token s
 	return session, nil
 }
 
+func (a *testStaffAuthenticator) RevokeStaffSession(_ context.Context, token string) error {
+	hash := sha256.Sum256([]byte(token))
+	if _, ok := a.sessions[string(hash[:])]; !ok {
+		return store.ErrInvalidCredentials
+	}
+	delete(a.sessions, string(hash[:]))
+	return nil
+}
+
 func TestAdminLoginAndProtectedRoutes(t *testing.T) {
 	auth := &testStaffAuthenticator{sessions: map[string]*store.StaffSession{}}
 	SetStaffAuthenticator(auth)
@@ -79,6 +88,14 @@ func TestAdminLoginAndProtectedRoutes(t *testing.T) {
 	mux.ServeHTTP(protectedRes, protectedReq)
 	if protectedRes.Code != http.StatusOK {
 		t.Fatalf("protected products status = %d, want %d; body=%s", protectedRes.Code, http.StatusOK, protectedRes.Body.String())
+	}
+	logoutRes := performAdminRequest(mux, http.MethodPost, "/v1/admin/logout", loginResponse.Data.Token, "")
+	if logoutRes.Code != http.StatusNoContent {
+		t.Fatalf("logout status = %d, want %d; body=%s", logoutRes.Code, http.StatusNoContent, logoutRes.Body.String())
+	}
+	protectedAfterLogout := performAdminRequest(mux, http.MethodGet, "/v1/admin/products", loginResponse.Data.Token, "")
+	if protectedAfterLogout.Code != http.StatusUnauthorized {
+		t.Fatalf("after-logout status = %d, want %d", protectedAfterLogout.Code, http.StatusUnauthorized)
 	}
 
 	unauthorizedReq := httptest.NewRequest(http.MethodGet, "/v1/admin/products", nil)
@@ -120,6 +137,24 @@ func TestAdminLoginRejectsBadCredentials(t *testing.T) {
 	mux.ServeHTTP(res, req)
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("invalid credential status = %d, want %d; body=%s", res.Code, http.StatusUnauthorized, res.Body.String())
+	}
+}
+
+func TestAdminUIAssetsAreServed(t *testing.T) {
+	mux := http.NewServeMux()
+	Register(mux)
+
+	for _, test := range []struct {
+		path, want string
+	}{
+		{path: "/admin/", want: "EUROMNI"},
+		{path: "/admin/admin.js", want: "euromni.staff.token"},
+	} {
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), test.want) {
+			t.Errorf("GET %s status/body = %d/%q; want 200 and %q", test.path, response.Code, response.Body.String(), test.want)
+		}
 	}
 }
 
@@ -166,12 +201,7 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	if updatedCategory.Code != http.StatusOK {
 		t.Fatalf("update category status = %d, want %d; body=%s", updatedCategory.Code, http.StatusOK, updatedCategory.Body.String())
 	}
-	deletedCategory := performAdminRequest(mux, http.MethodDelete, "/v1/admin/categories/"+createdCategory.Data.ID, auth.token, "")
-	if deletedCategory.Code != http.StatusNoContent {
-		t.Fatalf("delete category status = %d, want %d; body=%s", deletedCategory.Code, http.StatusNoContent, deletedCategory.Body.String())
-	}
-
-	productBody := `{"slug":"porte-cle-demo","status":"draft","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Prototype"}]}`
+	productBody := `{"slug":"porte-cle-demo","status":"draft","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Prototype"}],"category_ids":["` + createdCategory.Data.ID + `"],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"bleu"},"prices":[{"currency":"EUR","amount":"10.0000"}],"inventory":{"quantity":4,"track":true}}]}`
 	productCreated := performAdminRequest(mux, http.MethodPost, "/v1/admin/products", auth.token, productBody)
 	if productCreated.Code != http.StatusCreated {
 		t.Fatalf("create product status = %d, want %d; body=%s", productCreated.Code, http.StatusCreated, productCreated.Body.String())
@@ -182,7 +212,7 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	if err := json.Unmarshal(productCreated.Body.Bytes(), &createdProduct); err != nil {
 		t.Fatalf("decode created product: %v", err)
 	}
-	if createdProduct.Data.ID == "" || createdProduct.Data.Status != "draft" {
+	if createdProduct.Data.ID == "" || createdProduct.Data.Status != "draft" || len(createdProduct.Data.Variants) != 1 || createdProduct.Data.Variants[0].Inventory.Quantity != 4 || len(createdProduct.Data.CategoryIDs) != 1 || createdProduct.Data.CategoryIDs[0] != createdCategory.Data.ID {
 		t.Fatalf("created product = %+v", createdProduct.Data)
 	}
 	adminList := performAdminRequest(mux, http.MethodGet, "/v1/admin/products", auth.token, "")
@@ -191,9 +221,12 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	}
 
 	updatedProduct := performAdminRequest(mux, http.MethodPut, "/v1/admin/products/"+createdProduct.Data.ID, auth.token,
-		`{"slug":"porte-cle-demo","status":"active","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Mis à jour"}]}`)
+		`{"slug":"porte-cle-demo","status":"active","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Mis à jour"}],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"rouge"},"prices":[{"currency":"EUR","amount":"12.5000"}],"inventory":{"quantity":7,"track":true}}],"category_ids":["`+createdCategory.Data.ID+`"]}`)
 	if updatedProduct.Code != http.StatusOK {
 		t.Fatalf("update product status = %d, want %d; body=%s", updatedProduct.Code, http.StatusOK, updatedProduct.Body.String())
+	}
+	if !strings.Contains(updatedProduct.Body.String(), `"amount":"12.5000"`) || !strings.Contains(updatedProduct.Body.String(), `"quantity":7`) {
+		t.Fatalf("updated product did not return the saved variant details: %s", updatedProduct.Body.String())
 	}
 	publicProduct := performAdminRequest(mux, http.MethodGet, "/v1/products/"+createdProduct.Data.ID, "", "")
 	if publicProduct.Code != http.StatusOK {
@@ -206,6 +239,10 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	publicAfterArchive := performAdminRequest(mux, http.MethodGet, "/v1/products/"+createdProduct.Data.ID, "", "")
 	if publicAfterArchive.Code != http.StatusNotFound {
 		t.Fatalf("archived product public status = %d, want %d", publicAfterArchive.Code, http.StatusNotFound)
+	}
+	deletedCategory := performAdminRequest(mux, http.MethodDelete, "/v1/admin/categories/"+createdCategory.Data.ID, auth.token, "")
+	if deletedCategory.Code != http.StatusNoContent {
+		t.Fatalf("delete category status = %d, want %d; body=%s", deletedCategory.Code, http.StatusNoContent, deletedCategory.Body.String())
 	}
 }
 
@@ -228,6 +265,7 @@ func TestAdminCatalogValidationAndRoleAuthorization(t *testing.T) {
 		{name: "invalid slug", body: `{"slug":"Invalid Slug","status":"draft","translations":[{"locale":"fr-FR","name":"Nom"}]}`, status: http.StatusBadRequest},
 		{name: "duplicate locale", body: `{"slug":"valid-slug","status":"draft","translations":[{"locale":"fr-FR","name":"Nom"},{"locale":"fr-FR","name":"Name"}]}`, status: http.StatusBadRequest},
 		{name: "unknown field", body: `{"slug":"valid-slug","status":"draft","extra":true,"translations":[{"locale":"fr-FR","name":"Nom"}]}`, status: http.StatusBadRequest},
+		{name: "invalid price", body: `{"slug":"valid-slug","status":"active","translations":[{"locale":"fr-FR","name":"Nom"}],"variants":[{"sku":"SKU-1","options":{},"prices":[{"currency":"EUR","amount":"-10"}],"inventory":{"quantity":1,"track":true}}]}`, status: http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := performAdminRequest(mux, http.MethodPost, "/v1/admin/products", auth.token, test.body)

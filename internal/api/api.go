@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"strings"
 
@@ -36,6 +37,7 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/cart/add", cartAdd)
 	mux.HandleFunc("POST /v1/checkout", checkout)
 	mux.HandleFunc("POST /v1/admin/login", adminLogin)
+	mux.HandleFunc("POST /v1/admin/logout", withStaffAuth(adminLogout))
 	mux.HandleFunc("GET /v1/admin/me", withStaffAuth(adminMe))
 	mux.HandleFunc("GET /v1/admin/products", withStaffAuth(adminProducts))
 	mux.HandleFunc("POST /v1/admin/products", withCatalogWriteAuth(adminCreateProduct))
@@ -48,6 +50,11 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /graphql", graphql)
 	mux.HandleFunc("GET /graphql", graphql)
 	mux.Handle("GET /storefront/", http.StripPrefix("/storefront/", http.FileServer(http.FS(frontend.Assets))))
+	adminFS, err := fs.Sub(frontend.AdminAssets, "admin")
+	if err != nil {
+		panic(err)
+	}
+	mux.Handle("GET /admin/", http.StripPrefix("/admin/", http.FileServer(http.FS(adminFS))))
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {

@@ -14,6 +14,15 @@ type ProductInput struct {
 	Slug         string            `json:"slug"`
 	Status       string            `json:"status"`
 	Translations []TranslationView `json:"translations"`
+	CategoryIDs  []string          `json:"category_ids"`
+	Variants     []VariantInput    `json:"variants"`
+}
+
+type VariantInput struct {
+	SKU       string         `json:"sku"`
+	Options   map[string]any `json:"options"`
+	Prices    []PriceView    `json:"prices"`
+	Inventory InventoryView  `json:"inventory"`
 }
 
 type CategoryInput struct {

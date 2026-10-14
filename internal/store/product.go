@@ -13,6 +13,7 @@ type ProductView struct {
 	Slug         string            `json:"slug"`
 	Status       string            `json:"status"`
 	Translations []TranslationView `json:"translations"`
+	CategoryIDs  []string          `json:"category_ids"`
 	Media        []MediaView       `json:"media"`
 	Variants     []VariantView     `json:"variants"`
 }
@@ -188,6 +189,31 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 		return nil, err
 	}
 
+	categoryRows, err := s.SQL.QueryContext(ctx, `
+		SELECT category_id::text
+		FROM product_categories
+		WHERE product_id = $1
+		ORDER BY category_id
+	`, productID)
+	if err != nil {
+		return nil, err
+	}
+	for categoryRows.Next() {
+		var categoryID string
+		if err := categoryRows.Scan(&categoryID); err != nil {
+			_ = categoryRows.Close()
+			return nil, err
+		}
+		p.CategoryIDs = append(p.CategoryIDs, categoryID)
+	}
+	if err := categoryRows.Err(); err != nil {
+		_ = categoryRows.Close()
+		return nil, err
+	}
+	if err := categoryRows.Close(); err != nil {
+		return nil, err
+	}
+
 	mediaRows, err := s.SQL.QueryContext(ctx, `
 		SELECT m.uri, m.mime_type, m.alt
 		FROM product_media pm
@@ -251,6 +277,9 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	p.Variants = variants
 	if p.Translations == nil {
 		p.Translations = []TranslationView{}
+	}
+	if p.CategoryIDs == nil {
+		p.CategoryIDs = []string{}
 	}
 	if p.Media == nil {
 		p.Media = []MediaView{}

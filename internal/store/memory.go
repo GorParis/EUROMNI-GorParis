@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"sort"
 	"strings"
@@ -182,7 +183,7 @@ func (m *Memory) GetProduct(_ context.Context, shopID, productID string) (*Produ
 	if !ok || p.Status != "active" {
 		return nil, ErrNotFound
 	}
-	return cloneProduct(p)
+	return m.cloneProductWithCategories(shopID, p)
 }
 
 func (m *Memory) ListProducts(ctx context.Context, shopID string) ([]ProductView, error) {
@@ -197,7 +198,7 @@ func (m *Memory) ListProducts(ctx context.Context, shopID string) ([]ProductView
 		if !strings.HasPrefix(key, prefix) || product.Status != "active" {
 			continue
 		}
-		clone, err := cloneProduct(product)
+		clone, err := m.cloneProductWithCategories(shopID, product)
 		if err != nil {
 			return nil, err
 		}
@@ -226,7 +227,7 @@ func (m *Memory) ListProductsByCategory(ctx context.Context, shopID, categoryID 
 		if !ok || product.Status != "active" {
 			continue
 		}
-		clone, err := cloneProduct(product)
+		clone, err := m.cloneProductWithCategories(shopID, product)
 		if err != nil {
 			return nil, err
 		}
@@ -291,7 +292,7 @@ func (m *Memory) ListAdminProducts(ctx context.Context, shopID string) ([]Produc
 		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
-		clone, err := cloneProduct(product)
+		clone, err := m.cloneProductWithCategories(shopID, product)
 		if err != nil {
 			return nil, err
 		}
@@ -314,14 +315,19 @@ func (m *Memory) CreateProduct(ctx context.Context, shopID string, input Product
 	if err != nil {
 		return nil, err
 	}
+	variants, err := newMemoryVariants(input.Variants)
+	if err != nil {
+		return nil, err
+	}
 	key := shopID + "/" + id
 	product := &ProductView{
 		ID:           id,
 		Slug:         input.Slug,
 		Status:       input.Status,
 		Translations: append([]TranslationView(nil), input.Translations...),
+		CategoryIDs:  append([]string(nil), input.CategoryIDs...),
 		Media:        []MediaView{},
-		Variants:     []VariantView{},
+		Variants:     variants,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -330,8 +336,12 @@ func (m *Memory) CreateProduct(ctx context.Context, shopID string, input Product
 			return nil, ErrConflict
 		}
 	}
+	if err := m.validateMemoryCategories(shopID, input.CategoryIDs); err != nil {
+		return nil, err
+	}
 	m.products[key] = product
-	clone, err := cloneProduct(product)
+	m.setMemoryProductCategories(shopID, id, input.CategoryIDs)
+	clone, err := m.cloneProductWithCategories(shopID, product)
 	if err != nil {
 		return nil, err
 	}
@@ -354,9 +364,19 @@ func (m *Memory) UpdateProduct(ctx context.Context, shopID, productID string, in
 			return nil, ErrConflict
 		}
 	}
+	variants, err := m.updatedMemoryVariants(product, input.Variants)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.validateMemoryCategories(shopID, input.CategoryIDs); err != nil {
+		return nil, err
+	}
 	product.Slug = input.Slug
 	product.Status = input.Status
 	product.Translations = append([]TranslationView(nil), input.Translations...)
+	product.CategoryIDs = append([]string(nil), input.CategoryIDs...)
+	product.Variants = variants
+	m.setMemoryProductCategories(shopID, productID, input.CategoryIDs)
 	return cloneProduct(product)
 }
 
@@ -429,7 +449,146 @@ func (m *Memory) DeleteCategory(ctx context.Context, shopID, categoryID string) 
 	}
 	delete(m.categories, key)
 	delete(m.productCategories, key)
+	for productKey, product := range m.products {
+		if !strings.HasPrefix(productKey, shopID+"/") {
+			continue
+		}
+		filtered := product.CategoryIDs[:0]
+		for _, id := range product.CategoryIDs {
+			if id != categoryID {
+				filtered = append(filtered, id)
+			}
+		}
+		product.CategoryIDs = filtered
+	}
 	return nil
+}
+
+func (m *Memory) cloneProductWithCategories(shopID string, product *ProductView) (*ProductView, error) {
+	copy, err := cloneProduct(product)
+	if err != nil {
+		return nil, err
+	}
+	copy.CategoryIDs = make([]string, 0)
+	for key, productIDs := range m.productCategories {
+		if !strings.HasPrefix(key, shopID+"/") {
+			continue
+		}
+		for _, productID := range productIDs {
+			if productID == product.ID {
+				copy.CategoryIDs = append(copy.CategoryIDs, strings.TrimPrefix(key, shopID+"/"))
+			}
+		}
+	}
+	sort.Strings(copy.CategoryIDs)
+	return copy, nil
+}
+
+func (m *Memory) validateMemoryCategories(shopID string, categoryIDs []string) error {
+	for _, categoryID := range categoryIDs {
+		if _, exists := m.categories[shopID+"/"+categoryID]; !exists {
+			return ErrNotFound
+		}
+	}
+	return nil
+}
+
+func (m *Memory) setMemoryProductCategories(shopID, productID string, categoryIDs []string) {
+	for key, productIDs := range m.productCategories {
+		if !strings.HasPrefix(key, shopID+"/") {
+			continue
+		}
+		kept := productIDs[:0]
+		for _, existingID := range productIDs {
+			if existingID != productID {
+				kept = append(kept, existingID)
+			}
+		}
+		m.productCategories[key] = kept
+	}
+	for _, categoryID := range categoryIDs {
+		key := shopID + "/" + categoryID
+		m.productCategories[key] = append(m.productCategories[key], productID)
+	}
+}
+
+func newMemoryVariants(inputs []VariantInput) ([]VariantView, error) {
+	variants := make([]VariantView, 0, len(inputs))
+	for _, input := range inputs {
+		id, err := NewCatalogID()
+		if err != nil {
+			return nil, err
+		}
+		variants = append(variants, VariantView{
+			ID:        id,
+			SKU:       input.SKU,
+			Options:   cloneObject(input.Options),
+			Prices:    clonePrices(input.Prices),
+			Inventory: input.Inventory,
+		})
+	}
+	return variants, nil
+}
+
+func (m *Memory) updatedMemoryVariants(product *ProductView, inputs []VariantInput) ([]VariantView, error) {
+	existing := make(map[string]VariantView, len(product.Variants))
+	for _, variant := range product.Variants {
+		existing[variant.SKU] = variant
+	}
+	inputSKUs := make(map[string]struct{}, len(inputs))
+	for _, input := range inputs {
+		inputSKUs[input.SKU] = struct{}{}
+	}
+	for _, variant := range product.Variants {
+		if _, keep := inputSKUs[variant.SKU]; keep {
+			continue
+		}
+		for _, cart := range m.carts {
+			if cart.lines[variant.ID] > 0 {
+				return nil, fmt.Errorf("%w: variant %s is referenced by a cart", ErrConflict, variant.SKU)
+			}
+		}
+	}
+	variants := make([]VariantView, 0, len(inputs))
+	for _, input := range inputs {
+		variant, exists := existing[input.SKU]
+		if !exists {
+			id, err := NewCatalogID()
+			if err != nil {
+				return nil, err
+			}
+			variant.ID = id
+		}
+		variant.SKU = input.SKU
+		variant.Options = cloneObject(input.Options)
+		variant.Prices = clonePrices(input.Prices)
+		variant.Inventory = input.Inventory
+		variants = append(variants, variant)
+	}
+	return variants, nil
+}
+
+func cloneObject(value map[string]any) map[string]any {
+	if value == nil {
+		return map[string]any{}
+	}
+	copy := make(map[string]any, len(value))
+	for key, item := range value {
+		copy[key] = item
+	}
+	return copy
+}
+
+func clonePrices(prices []PriceView) []PriceView {
+	copy := make([]PriceView, len(prices))
+	for i, price := range prices {
+		copy[i] = price
+		if price.CompareAt != nil {
+			value := *price.CompareAt
+			copy[i].CompareAt = &value
+		}
+	}
+	return copy
 }
 
 func (m *Memory) CreateCart(ctx context.Context, shopID string, tokenHash []byte) error {

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Administration — EUROMNI</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, sans-serif;
+        color: #292524;
+        background: #f4f1ea;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      header {
+        padding: 1.25rem max(1rem, calc((100vw - 72rem) / 2));
+        background: #292524;
+        color: #fffefa;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+      header a { color: inherit; }
+      main { width: min(72rem, calc(100% - 2rem)); margin: 2rem auto 5rem; }
+      h1, h2, h3 { margin-top: 0; }
+      .panel, .card {
+        background: #fffefa;
+        border: 1px solid #e7e2d8;
+        border-radius: 0.7rem;
+        padding: 1.25rem;
+        margin-bottom: 1.25rem;
+      }
+      .login-panel { max-width: 28rem; margin: 4rem auto; }
+      form, .form-grid { display: grid; gap: 0.8rem; }
+      .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      label { display: grid; gap: 0.3rem; font-size: 0.9rem; font-weight: 600; }
+      input, select, textarea {
+        width: 100%;
+        min-height: 2.6rem;
+        border: 1px solid #cfc6b8;
+        border-radius: 0.35rem;
+        padding: 0.55rem 0.7rem;
+        background: white;
+        color: inherit;
+        font: inherit;
+      }
+      textarea { min-height: 10rem; resize: vertical; font: 0.85rem/1.5 ui-monospace, monospace; }
+      button {
+        min-height: 2.5rem;
+        padding: 0.55rem 0.85rem;
+        border: 0;
+        border-radius: 0.35rem;
+        background: #292524;
+        color: white;
+        font: 600 0.9rem/1.3 system-ui, sans-serif;
+        cursor: pointer;
+      }
+      button.secondary { background: #e7e2d8; color: #292524; }
+      button.danger { background: #9f1239; }
+      button:disabled { opacity: 0.6; cursor: wait; }
+      .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      .product-list, .category-list { display: grid; gap: 0.75rem; }
+      .card { margin: 0; }
+      .card h3 { margin-bottom: 0.3rem; }
+      .muted { color: #57534e; font-size: 0.9rem; }
+      .status { min-height: 1.5rem; margin: 0.8rem 0; color: #57534e; }
+      .status[data-kind="error"] { color: #9f1239; }
+      .category-options { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+      .category-option { display: flex; align-items: center; gap: 0.4rem; font-weight: 400; }
+      .category-option input { width: 1rem; min-height: 1rem; }
+      .wide { grid-column: 1 / -1; }
+      [hidden] { display: none !important; }
+      @media (max-width: 38rem) {
+        .form-grid { grid-template-columns: 1fr; }
+        .wide { grid-column: auto; }
+        header { align-items: flex-start; flex-direction: column; }
+      }
+    </style>
+    <script defer src="./admin.js"></script>
+  </head>
+  <body>
+    <header>
+      <div><strong>EUROMNI · Administration</strong> <span class="muted">Catalogue de démonstration</span></div>
+      <div class="actions">
+        <a href="/storefront/">Voir la boutique</a>
+        <button id="logout" class="secondary" type="button" hidden>Se déconnecter</button>
+      </div>
+    </header>
+    <main>
+      <section id="login-panel" class="panel login-panel">
+        <h1>Connexion staff</h1>
+        <p class="muted">Connectez-vous avec un compte membre de cette boutique.</p>
+        <form id="login-form">
+          <label>E-mail<input name="email" type="email" autocomplete="username" required /></label>
+          <label>Mot de passe<input name="password" type="password" autocomplete="current-password" required /></label>
+          <button type="submit">Se connecter</button>
+        </form>
+      </section>
+      <section id="dashboard" hidden>
+        <p id="identity" class="muted"></p>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+        <section class="panel">
+          <h1>Produits</h1>
+          <p class="muted">Les variantes, prix, options et stocks sont remplacés par les valeurs enregistrées dans le formulaire.</p>
+          <div id="products" class="product-list"></div>
+        </section>
+        <section class="panel">
+          <h2 id="product-form-title">Créer un produit</h2>
+          <form id="product-form">
+            <input name="id" type="hidden" />
+            <div class="form-grid">
+              <label>Slug<input name="slug" maxlength="128" pattern="[a-z0-9]+(-[a-z0-9]+)*" required /></label>
+              <label>Statut<select name="status"><option value="draft">Brouillon</option><option value="active">Actif</option><option value="archived">Archivé</option></select></label>
+              <label class="wide">Traductions — JSON
+                <textarea name="translations" spellcheck="false">[
+  { "locale": "fr-FR", "name": "Nom du produit", "description": "" }
+]</textarea>
+              </label>
+              <fieldset class="wide">
+                <legend>Catégories</legend>
+                <div id="category-options" class="category-options"></div>
+              </fieldset>
+              <label class="wide">Variantes — JSON
+                <textarea name="variants" spellcheck="false">[
+  {
+    "sku": "ARTICLE-001",
+    "options": {},
+    "prices": [{ "currency": "EUR", "amount": "12.0000" }],
+    "inventory": { "quantity": 10, "track": true }
+  }
+]</textarea>
+              </label>
+            </div>
+            <div class="actions">
+              <button type="submit">Enregistrer le produit</button>
+              <button id="cancel-product-edit" class="secondary" type="button" hidden>Annuler</button>
+            </div>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>Catégories</h2>
+          <div id="categories" class="category-list"></div>
+        </section>
+        <section class="panel">
+          <h3 id="category-form-title">Créer une catégorie</h3>
+          <form id="category-form">
+            <input name="id" type="hidden" />
+            <div class="form-grid">
+              <label>Slug<input name="slug" maxlength="128" pattern="[a-z0-9]+(-[a-z0-9]+)*" required /></label>
+              <label class="wide">Traductions — JSON
+                <textarea name="translations" spellcheck="false">[
+  { "locale": "fr-FR", "name": "Nom de la catégorie", "description": "" }
+]</textarea>
+              </label>
+            </div>
+            <div class="actions">
+              <button type="submit">Enregistrer la catégorie</button>
+              <button id="cancel-category-edit" class="secondary" type="button" hidden>Annuler</button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

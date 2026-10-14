@@ -51,12 +51,45 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if len(category.Translations) != 2 {
 		t.Fatalf("category translations = %d, want 2", len(category.Translations))
 	}
+	if _, err := db.AuthenticateStaff(ctx, seed.ShopID, "owner@atelier-demo.example", "integration-password"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("authenticate unconfigured seeded owner error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if err := db.BootstrapStaff(ctx, seed.ShopID, "owner@atelier-demo.example", "Demo Owner", "integration-password"); err != nil {
+		t.Fatalf("bootstrap seeded owner: %v", err)
+	}
+	if err := db.BootstrapStaff(ctx, seed.ShopID, "owner@atelier-demo.example", "Demo Owner", "another-password"); !errors.Is(err, ErrStaffAlreadyBootstrapped) {
+		t.Fatalf("second staff bootstrap error = %v, want %v", err, ErrStaffAlreadyBootstrapped)
+	}
+	staffSession, err := db.AuthenticateStaff(ctx, seed.ShopID, "owner@atelier-demo.example", "integration-password")
+	if err != nil {
+		t.Fatalf("authenticate bootstrapped owner: %v", err)
+	}
+	if _, err := db.ValidateStaffSession(ctx, staffSession.Token); err != nil {
+		t.Fatalf("validate staff session: %v", err)
+	}
+	if err := db.RevokeStaffSession(ctx, staffSession.Token); err != nil {
+		t.Fatalf("revoke staff session: %v", err)
+	}
+	if _, err := db.ValidateStaffSession(ctx, staffSession.Token); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("revoked staff session error = %v, want %v", err, ErrInvalidCredentials)
+	}
+
 	adminProduct, err := db.CreateProduct(ctx, seed.ShopID, ProductInput{
-		Slug: "admin-crud-test", Status: "draft",
+		Slug: "admin-crud-test", Status: "draft", CategoryIDs: []string{seed.CategoryID},
 		Translations: []TranslationView{{Locale: "fr-FR", Name: "Article admin", Description: "Brouillon"}},
+		Variants: []VariantInput{{
+			SKU: "ADMIN-CRUD-TEST", Options: map[string]any{"taille": "unique"},
+			Prices:    []PriceView{{Currency: "EUR", Amount: "12.5000"}},
+			Inventory: InventoryView{Quantity: 8, Track: true},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("create admin product: %v", err)
+	}
+	if len(adminProduct.CategoryIDs) != 1 || adminProduct.CategoryIDs[0] != seed.CategoryID || len(adminProduct.Variants) != 1 ||
+		adminProduct.Variants[0].SKU != "ADMIN-CRUD-TEST" || adminProduct.Variants[0].Prices[0].Amount != "12.5000" ||
+		adminProduct.Variants[0].Inventory.Quantity != 8 {
+		t.Fatalf("created admin product associations and inventory = %+v", adminProduct)
 	}
 	if _, err := db.CreateProduct(ctx, seed.ShopID, ProductInput{
 		Slug: "cabas-lin", Status: "draft",
@@ -69,11 +102,36 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		t.Fatalf("admin products = %d, error = %v; want 6 including draft", len(adminProducts), err)
 	}
 	updatedProduct, err := db.UpdateProduct(ctx, seed.ShopID, adminProduct.ID, ProductInput{
-		Slug: "admin-crud-test", Status: "active",
+		Slug: "admin-crud-test", Status: "active", CategoryIDs: []string{seed.CategoryID},
 		Translations: []TranslationView{{Locale: "fr-FR", Name: "Article publié", Description: "Mis à jour"}},
+		Variants: []VariantInput{{
+			SKU: "ADMIN-CRUD-TEST", Options: map[string]any{"taille": "unique"},
+			Prices:    []PriceView{{Currency: "EUR", Amount: "15.0000"}},
+			Inventory: InventoryView{Quantity: 6, Track: true},
+		}},
 	})
 	if err != nil || updatedProduct.Status != "active" || updatedProduct.Translations[0].Name != "Article publié" {
 		t.Fatalf("updated product = %+v, error = %v", updatedProduct, err)
+	}
+	if len(updatedProduct.CategoryIDs) != 1 || len(updatedProduct.Variants) != 1 ||
+		updatedProduct.Variants[0].Prices[0].Amount != "15.0000" || updatedProduct.Variants[0].Inventory.Quantity != 6 {
+		t.Fatalf("updated admin product associations and inventory = %+v", updatedProduct)
+	}
+	adminCartToken := sha256.Sum256([]byte("admin variant reference cart"))
+	if err := db.CreateCart(ctx, seed.ShopID, adminCartToken[:]); err != nil {
+		t.Fatalf("create admin variant reference cart: %v", err)
+	}
+	defer func() {
+		_, _ = db.SQL.ExecContext(context.Background(), "DELETE FROM carts WHERE access_token_hash = $1", adminCartToken[:])
+	}()
+	if _, err := db.AddCartLine(ctx, seed.ShopID, adminCartToken[:], updatedProduct.Variants[0].ID, 1); err != nil {
+		t.Fatalf("add admin variant to cart: %v", err)
+	}
+	if _, err := db.UpdateProduct(ctx, seed.ShopID, adminProduct.ID, ProductInput{
+		Slug: "admin-crud-test", Status: "active",
+		Translations: []TranslationView{{Locale: "fr-FR", Name: "Article publié"}},
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("removing cart-referenced variant error = %v, want %v", err, ErrConflict)
 	}
 	if err := db.ArchiveProduct(ctx, seed.ShopID, adminProduct.ID); err != nil {
 		t.Fatalf("archive admin product: %v", err)

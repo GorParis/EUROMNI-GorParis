@@ -2,6 +2,8 @@ package sqlitestore
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -70,17 +72,16 @@ func (s *Store) CreateProduct(ctx context.Context, shopID string, input store.Pr
 			return nil, catalogSQLiteError(err)
 		}
 	}
+	if err := replaceProductCategories(ctx, tx, shopID, id, input.CategoryIDs); err != nil {
+		return nil, err
+	}
+	if err := replaceProductVariants(ctx, tx, id, input.Variants); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, catalogSQLiteError(err)
 	}
-	return &store.ProductView{
-		ID:           id,
-		Slug:         input.Slug,
-		Status:       input.Status,
-		Translations: append([]store.TranslationView(nil), input.Translations...),
-		Media:        []store.MediaView{},
-		Variants:     []store.VariantView{},
-	}, nil
+	return s.readAdminProduct(ctx, shopID, id)
 }
 
 func (s *Store) UpdateProduct(ctx context.Context, shopID, productID string, input store.ProductInput) (*store.ProductView, error) {
@@ -112,6 +113,12 @@ func (s *Store) UpdateProduct(ctx context.Context, shopID, productID string, inp
 		`, productID, translation.Locale, translation.Name, translation.Description); err != nil {
 			return nil, catalogSQLiteError(err)
 		}
+	}
+	if err := replaceProductCategories(ctx, tx, shopID, productID, input.CategoryIDs); err != nil {
+		return nil, err
+	}
+	if err := replaceProductVariants(ctx, tx, productID, input.Variants); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, catalogSQLiteError(err)
@@ -214,6 +221,115 @@ func (s *Store) DeleteCategory(ctx context.Context, shopID, categoryID string) e
 
 func (s *Store) readAdminProduct(ctx context.Context, shopID, productID string) (*store.ProductView, error) {
 	return s.getProduct(ctx, shopID, productID, false)
+}
+
+func replaceProductCategories(ctx context.Context, tx *sql.Tx, shopID, productID string, categoryIDs []string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM product_categories WHERE product_id = ?`, productID); err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(categoryIDs))
+	for _, categoryID := range categoryIDs {
+		if _, exists := seen[categoryID]; exists {
+			continue
+		}
+		seen[categoryID] = struct{}{}
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO product_categories (product_id, category_id)
+			SELECT ?, id FROM categories WHERE id = ? AND shop_id = ?
+		`, productID, categoryID, shopID)
+		if err != nil {
+			return catalogSQLiteError(err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return store.ErrNotFound
+		}
+	}
+	return nil
+}
+
+func replaceProductVariants(ctx context.Context, tx *sql.Tx, productID string, inputs []store.VariantInput) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, sku FROM variants WHERE product_id = ?`, productID)
+	if err != nil {
+		return err
+	}
+	existing := make(map[string]string)
+	for rows.Next() {
+		var id, sku string
+		if err := rows.Scan(&id, &sku); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		existing[sku] = id
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	kept := make(map[string]struct{}, len(inputs))
+	for _, input := range inputs {
+		kept[input.SKU] = struct{}{}
+		variantID, found := existing[input.SKU]
+		options, err := json.Marshal(input.Options)
+		if err != nil {
+			return fmt.Errorf("encode variant options: %w", err)
+		}
+		if !found {
+			variantID, err = store.NewCatalogID()
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO variants (id, product_id, sku, options) VALUES (?, ?, ?, ?)
+			`, variantID, productID, input.SKU, string(options)); err != nil {
+				return catalogSQLiteError(err)
+			}
+		} else if _, err := tx.ExecContext(ctx, `UPDATE variants SET options = ? WHERE id = ?`, string(options), variantID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO inventory_items (variant_id, quantity, track) VALUES (?, ?, ?)
+			ON CONFLICT (variant_id) DO UPDATE SET quantity = excluded.quantity, track = excluded.track
+		`, variantID, input.Inventory.Quantity, input.Inventory.Track); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM prices WHERE variant_id = ?`, variantID); err != nil {
+			return err
+		}
+		for _, price := range input.Prices {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO prices (variant_id, currency, amount, compare_at) VALUES (?, ?, ?, ?)
+			`, variantID, price.Currency, price.Amount, price.CompareAt); err != nil {
+				return catalogSQLiteError(err)
+			}
+		}
+	}
+	for sku, variantID := range existing {
+		if _, ok := kept[sku]; ok {
+			continue
+		}
+		var references int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT (SELECT count(*) FROM cart_lines WHERE variant_id = ?) +
+			       (SELECT count(*) FROM order_lines WHERE variant_id = ?)
+		`, variantID, variantID).Scan(&references); err != nil {
+			return err
+		}
+		if references > 0 {
+			return fmt.Errorf("%w: variant %s is referenced by an order or cart", store.ErrConflict, sku)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM variants WHERE id = ?`, variantID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func catalogSQLiteError(err error) error {

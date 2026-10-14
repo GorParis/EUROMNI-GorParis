@@ -32,6 +32,18 @@ go run ./cmd/cms
 
 Prérequis : Go 1.23+, PostgreSQL 16+ (hébergeur libre ; actuellement IONOS). L’ABI Wasm n’est pas exposée en HTTP.
 
+## Administration du catalogue
+
+L’interface CMS minimale est servie sous `/admin/` et utilise l’API REST staff. La connexion requiert un compte PostgreSQL associé à la boutique. Aucun mot de passe de démonstration n’est fourni.
+
+Initialisez le premier propriétaire en transmettant son mot de passe sur l’entrée standard (12 à 72 octets), jamais dans les arguments de la commande :
+
+```sh
+go run ./cmd/staff-bootstrap --shop '<shop-id>' --email '<owner-email>' --name '<owner-name>' --password-stdin
+```
+
+Pour la boutique seedée, le compte owner `owner@atelier-demo.example` doit être configuré avec cette même adresse e-mail. Le bootstrap ne remplace pas un compte existant. La déconnexion CMS révoque la session staff courante.
+
 ## Ordonnanceur d’artefacts Wasm
 
 Un processus Go indépendant réconcilie périodiquement les Wasm référencés par

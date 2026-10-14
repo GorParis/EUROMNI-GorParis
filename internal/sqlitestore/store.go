@@ -427,6 +427,32 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	}
 
 	rows, err = s.db.QueryContext(ctx, `
+		SELECT category_id
+		FROM product_categories
+		WHERE product_id = ?
+		ORDER BY category_id
+	`, productID)
+	if err != nil {
+		return nil, err
+	}
+	product.CategoryIDs = make([]string, 0)
+	for rows.Next() {
+		var categoryID string
+		if err := rows.Scan(&categoryID); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		product.CategoryIDs = append(product.CategoryIDs, categoryID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	rows, err = s.db.QueryContext(ctx, `
 		SELECT m.uri, m.mime_type, m.alt
 		FROM product_media pm JOIN media m ON m.id = pm.media_id
 		WHERE pm.product_id = ? AND m.shop_id = ?

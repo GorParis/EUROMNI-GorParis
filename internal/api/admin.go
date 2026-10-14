@@ -16,6 +16,7 @@ import (
 type StaffAuthenticator interface {
 	AuthenticateStaff(ctx context.Context, shopID, email, password string) (*store.StaffSession, error)
 	ValidateStaffSession(ctx context.Context, token string) (*store.StaffSession, error)
+	RevokeStaffSession(ctx context.Context, token string) error
 }
 
 type contextKey string
@@ -77,6 +78,14 @@ func (a *defaultStaffAuthenticator) ValidateStaffSession(ctx context.Context, to
 	return db.ValidateStaffSession(ctx, token)
 }
 
+func (a *defaultStaffAuthenticator) RevokeStaffSession(ctx context.Context, token string) error {
+	db, ok := currentProductReader().(*store.Store)
+	if !ok || db.SQL == nil {
+		return store.ErrAuthUnavailable
+	}
+	return db.RevokeStaffSession(ctx, token)
+}
+
 func adminLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writePrivateJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -123,7 +132,7 @@ func adminLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func adminMe(w http.ResponseWriter, r *http.Request) {
-	session, ok := staffSessionFromRequest(r)
+	session, ok := adminSessionFromContext(r.Context())
 	if !ok {
 		writePrivateJSON(w, http.StatusUnauthorized, map[string]any{"error": "staff session required"})
 		return
@@ -135,6 +144,27 @@ func adminMe(w http.ResponseWriter, r *http.Request) {
 		"name":    session.Name,
 		"role":    session.Role,
 	}})
+}
+
+func adminLogout(w http.ResponseWriter, r *http.Request) {
+	token := staffTokenFromRequest(r)
+	if token == "" {
+		writePrivateJSON(w, http.StatusUnauthorized, map[string]any{"error": "staff session required"})
+		return
+	}
+	if err := currentStaffAuthenticator().RevokeStaffSession(r.Context(), token); err != nil {
+		if errors.Is(err, store.ErrAuthUnavailable) {
+			writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "staff authentication is unavailable"})
+			return
+		}
+		if errors.Is(err, store.ErrInvalidCredentials) {
+			writePrivateJSON(w, http.StatusUnauthorized, map[string]any{"error": "staff session required"})
+			return
+		}
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func adminProducts(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +233,9 @@ func withCatalogWriteAuth(next http.HandlerFunc) http.HandlerFunc {
 
 var catalogSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 var catalogLocalePattern = regexp.MustCompile(`^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$`)
+var catalogSKU = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+var catalogCurrency = regexp.MustCompile(`^[A-Z]{3}$`)
+var catalogAmount = regexp.MustCompile(`^(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{1,4})?$`)
 
 func adminCreateProduct(w http.ResponseWriter, r *http.Request) {
 	var input store.ProductInput
@@ -383,10 +416,71 @@ func validateProductInput(input store.ProductInput) error {
 		if !validTranslation(translation.Locale, translation.Name, translation.Description) {
 			return errors.New("each translation requires a valid locale and name")
 		}
-		if _, exists := seen[translation.Locale]; exists {
+		locale := strings.ToLower(translation.Locale)
+		if _, exists := seen[locale]; exists {
 			return errors.New("translation locales must be unique")
 		}
-		seen[translation.Locale] = struct{}{}
+		seen[locale] = struct{}{}
+	}
+	if len(input.Variants) > 100 {
+		return errors.New("at most 100 variants are allowed")
+	}
+	if input.Status == "active" && len(input.Variants) == 0 {
+		return errors.New("active products require at least one variant")
+	}
+	variantSKUs := make(map[string]struct{}, len(input.Variants))
+	for i := range input.Variants {
+		if input.Variants[i].Options == nil {
+			input.Variants[i].Options = map[string]any{}
+		}
+		variant := input.Variants[i]
+		if !catalogSKU.MatchString(variant.SKU) {
+			return errors.New("each variant requires a valid SKU")
+		}
+		sku := strings.ToUpper(variant.SKU)
+		if _, exists := variantSKUs[sku]; exists {
+			return errors.New("variant SKUs must be unique")
+		}
+		variantSKUs[sku] = struct{}{}
+		if variant.Inventory.Quantity < 0 {
+			return errors.New("inventory quantity cannot be negative")
+		}
+		if len(variant.Prices) > 10 {
+			return errors.New("at most 10 prices are allowed per variant")
+		}
+		if input.Status == "active" && len(variant.Prices) == 0 {
+			return errors.New("active product variants require at least one price")
+		}
+		currencies := make(map[string]struct{}, len(variant.Prices))
+		for _, price := range variant.Prices {
+			if !catalogCurrency.MatchString(price.Currency) || !catalogAmount.MatchString(price.Amount) {
+				return errors.New("prices require an uppercase currency code and a non-negative amount with at most four decimals")
+			}
+			if price.CompareAt != nil && !catalogAmount.MatchString(*price.CompareAt) {
+				return errors.New("compare_at must be a non-negative amount with at most four decimals")
+			}
+			if _, exists := currencies[price.Currency]; exists {
+				return errors.New("price currencies must be unique per variant")
+			}
+			currencies[price.Currency] = struct{}{}
+		}
+		options, err := json.Marshal(variant.Options)
+		if err != nil || len(options) > 16<<10 {
+			return errors.New("variant options must be a JSON object smaller than 16 KiB")
+		}
+	}
+	if len(input.CategoryIDs) > 100 {
+		return errors.New("at most 100 product categories are allowed")
+	}
+	categories := make(map[string]struct{}, len(input.CategoryIDs))
+	for _, categoryID := range input.CategoryIDs {
+		if strings.TrimSpace(categoryID) == "" {
+			return errors.New("category ids must not be empty")
+		}
+		if _, exists := categories[categoryID]; exists {
+			return errors.New("category ids must be unique")
+		}
+		categories[categoryID] = struct{}{}
 	}
 	return nil
 }
@@ -403,10 +497,11 @@ func validateCategoryInput(input store.CategoryInput) error {
 		if !validTranslation(translation.Locale, translation.Name, translation.Description) {
 			return errors.New("each translation requires a valid locale and name")
 		}
-		if _, exists := seen[translation.Locale]; exists {
+		locale := strings.ToLower(translation.Locale)
+		if _, exists := seen[locale]; exists {
 			return errors.New("translation locales must be unique")
 		}
-		seen[translation.Locale] = struct{}{}
+		seen[locale] = struct{}{}
 	}
 	return nil
 }
@@ -439,19 +534,23 @@ func writeCatalogWriteError(w http.ResponseWriter, err error) {
 }
 
 func staffSessionFromRequest(r *http.Request) (*store.StaffSession, bool) {
-	if token := firstBearerToken(r); token != "" {
+	if token := staffTokenFromRequest(r); token != "" {
 		session, err := currentStaffAuthenticator().ValidateStaffSession(r.Context(), token)
 		if err == nil {
 			return session, true
 		}
 	}
-	if cookie, err := r.Cookie("euromni_staff_session"); err == nil {
-		session, err := currentStaffAuthenticator().ValidateStaffSession(r.Context(), cookie.Value)
-		if err == nil {
-			return session, true
-		}
-	}
 	return nil, false
+}
+
+func staffTokenFromRequest(r *http.Request) string {
+	if token := firstBearerToken(r); token != "" {
+		return token
+	}
+	if cookie, err := r.Cookie("euromni_staff_session"); err == nil {
+		return cookie.Value
+	}
+	return ""
 }
 
 func firstBearerToken(r *http.Request) string {
