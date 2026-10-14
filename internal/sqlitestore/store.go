@@ -38,10 +38,11 @@ type Store struct {
 }
 
 var (
-	_ store.ProductReader  = (*Store)(nil)
-	_ store.CategoryReader = (*Store)(nil)
-	_ store.CartReader     = (*Store)(nil)
-	_ store.CheckoutWriter = (*Store)(nil)
+	_ store.ProductReader         = (*Store)(nil)
+	_ store.ProductCategoryReader = (*Store)(nil)
+	_ store.CategoryReader        = (*Store)(nil)
+	_ store.CartReader            = (*Store)(nil)
+	_ store.CheckoutWriter        = (*Store)(nil)
 )
 
 func Open(path string) (*Store, error) {
@@ -60,16 +61,32 @@ func Open(path string) (*Store, error) {
 	}
 	databasePath := path
 
-	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(%d)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)&_txlock=immediate", path, sqliteBusyTimeoutMilliseconds)
+	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(%d)&_pragma=foreign_keys(ON)&_txlock=immediate", path, sqliteBusyTimeoutMilliseconds)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	if err := db.Ping(); err != nil {
+	ctx := context.Background()
+	if err := retrySQLiteBusy(ctx, func() error { return db.PingContext(ctx) }); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect to SQLite database: %w", err)
+	}
+	if path != ":memory:" {
+		if err := retrySQLiteBusy(ctx, func() error {
+			var journalMode string
+			if err := db.QueryRowContext(ctx, `PRAGMA journal_mode=WAL`).Scan(&journalMode); err != nil {
+				return err
+			}
+			if !strings.EqualFold(journalMode, "wal") {
+				return fmt.Errorf("SQLite journal mode is %q, want WAL", journalMode)
+			}
+			return nil
+		}); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("configure SQLite WAL journal: %w", err)
+		}
 	}
 	s := &Store{db: db, path: databasePath}
 	if err := s.migrate(context.Background()); err != nil {
@@ -184,22 +201,32 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 func (s *Store) beginTx(ctx context.Context) (*sql.Tx, error) {
+	var tx *sql.Tx
+	err := retrySQLiteBusy(ctx, func() error {
+		var err error
+		tx, err = s.db.BeginTx(ctx, nil)
+		return err
+	})
+	return tx, err
+}
+
+func retrySQLiteBusy(ctx context.Context, operation func() error) error {
 	deadline := time.Now().Add(sqliteWriteLockWaitTimeout)
 	for {
-		tx, err := s.db.BeginTx(ctx, nil)
+		err := operation()
 		if err == nil {
-			return tx, nil
+			return nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
+			return ctxErr
 		}
 		var sqliteErr *sqlite.Error
 		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != 5 {
-			return nil, err
+			return err
 		}
 		wait := time.Until(deadline)
 		if wait <= 0 {
-			return nil, err
+			return err
 		}
 		if wait > sqliteBusyTimeoutMilliseconds*time.Millisecond {
 			wait = sqliteBusyTimeoutMilliseconds * time.Millisecond
@@ -208,7 +235,7 @@ func (s *Store) beginTx(ctx context.Context) (*sql.Tx, error) {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-timer.C:
 		}
 	}
@@ -356,11 +383,19 @@ func (s *Store) ListProductsByCategory(ctx context.Context, shopID, categoryID s
 }
 
 func (s *Store) GetProduct(ctx context.Context, shopID, productID string) (*store.ProductView, error) {
+	return s.getProduct(ctx, shopID, productID, true)
+}
+
+func (s *Store) getProduct(ctx context.Context, shopID, productID string, activeOnly bool) (*store.ProductView, error) {
 	var product store.ProductView
-	if err := s.db.QueryRowContext(ctx, `
+	query := `
 		SELECT id, slug, status FROM products
-		WHERE shop_id = ? AND id = ? AND status = 'active'
-	`, shopID, productID).Scan(&product.ID, &product.Slug, &product.Status); err != nil {
+		WHERE shop_id = ? AND id = ?
+	`
+	if activeOnly {
+		query += ` AND status = 'active'`
+	}
+	if err := s.db.QueryRowContext(ctx, query, shopID, productID).Scan(&product.ID, &product.Slug, &product.Status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, store.ErrNotFound
 		}

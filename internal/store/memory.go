@@ -29,6 +29,12 @@ type memoryCart struct {
 	expiresAt time.Time
 }
 
+var (
+	_ ProductReader         = (*Memory)(nil)
+	_ ProductCategoryReader = (*Memory)(nil)
+	_ CatalogAdminWriter    = (*Memory)(nil)
+)
+
 func NewMemory() *Memory {
 	compare := "110.0000"
 	p := &ProductView{
@@ -271,6 +277,159 @@ func cloneCategory(category *CategoryView) CategoryView {
 	copy := *category
 	copy.Translations = append([]CategoryTranslationView(nil), category.Translations...)
 	return copy
+}
+
+func (m *Memory) ListAdminProducts(ctx context.Context, shopID string) ([]ProductView, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	prefix := shopID + "/"
+	products := make([]ProductView, 0)
+	for key, product := range m.products {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		clone, err := cloneProduct(product)
+		if err != nil {
+			return nil, err
+		}
+		products = append(products, *clone)
+	}
+	sort.Slice(products, func(i, j int) bool {
+		if products[i].Slug == products[j].Slug {
+			return products[i].ID < products[j].ID
+		}
+		return products[i].Slug < products[j].Slug
+	})
+	return products, nil
+}
+
+func (m *Memory) CreateProduct(ctx context.Context, shopID string, input ProductInput) (*ProductView, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id, err := NewCatalogID()
+	if err != nil {
+		return nil, err
+	}
+	key := shopID + "/" + id
+	product := &ProductView{
+		ID:           id,
+		Slug:         input.Slug,
+		Status:       input.Status,
+		Translations: append([]TranslationView(nil), input.Translations...),
+		Media:        []MediaView{},
+		Variants:     []VariantView{},
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for existingKey, existing := range m.products {
+		if strings.HasPrefix(existingKey, shopID+"/") && existing.Slug == input.Slug {
+			return nil, ErrConflict
+		}
+	}
+	m.products[key] = product
+	clone, err := cloneProduct(product)
+	if err != nil {
+		return nil, err
+	}
+	return clone, nil
+}
+
+func (m *Memory) UpdateProduct(ctx context.Context, shopID, productID string, input ProductInput) (*ProductView, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := shopID + "/" + productID
+	product, ok := m.products[key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	for existingKey, existing := range m.products {
+		if existingKey != key && strings.HasPrefix(existingKey, shopID+"/") && existing.Slug == input.Slug {
+			return nil, ErrConflict
+		}
+	}
+	product.Slug = input.Slug
+	product.Status = input.Status
+	product.Translations = append([]TranslationView(nil), input.Translations...)
+	return cloneProduct(product)
+}
+
+func (m *Memory) ArchiveProduct(ctx context.Context, shopID, productID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	product, ok := m.products[shopID+"/"+productID]
+	if !ok {
+		return ErrNotFound
+	}
+	product.Status = "archived"
+	return nil
+}
+
+func (m *Memory) CreateCategory(ctx context.Context, shopID string, input CategoryInput) (*CategoryView, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id, err := NewCatalogID()
+	if err != nil {
+		return nil, err
+	}
+	category := &CategoryView{ID: id, Slug: input.Slug, Translations: append([]CategoryTranslationView(nil), input.Translations...)}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, existing := range m.categories {
+		if strings.HasPrefix(key, shopID+"/") && existing.Slug == input.Slug {
+			return nil, ErrConflict
+		}
+	}
+	m.categories[shopID+"/"+id] = category
+	copy := cloneCategory(category)
+	return &copy, nil
+}
+
+func (m *Memory) UpdateCategory(ctx context.Context, shopID, categoryID string, input CategoryInput) (*CategoryView, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := shopID + "/" + categoryID
+	category, ok := m.categories[key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	for existingKey, existing := range m.categories {
+		if existingKey != key && strings.HasPrefix(existingKey, shopID+"/") && existing.Slug == input.Slug {
+			return nil, ErrConflict
+		}
+	}
+	category.Slug = input.Slug
+	category.Translations = append([]CategoryTranslationView(nil), input.Translations...)
+	copy := cloneCategory(category)
+	return &copy, nil
+}
+
+func (m *Memory) DeleteCategory(ctx context.Context, shopID, categoryID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := shopID + "/" + categoryID
+	if _, ok := m.categories[key]; !ok {
+		return ErrNotFound
+	}
+	delete(m.categories, key)
+	delete(m.productCategories, key)
+	return nil
 }
 
 func (m *Memory) CreateCart(ctx context.Context, shopID string, tokenHash []byte) error {

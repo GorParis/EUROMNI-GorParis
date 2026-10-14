@@ -74,6 +74,7 @@ func TestSQLiteStoreCatalogCartCheckoutFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list SQLite products: %v", err)
 	}
+
 	if len(products) != 1 || products[0].Slug != "cabas-lin" || products[0].Variants[0].Prices[0].Amount != "89.0000" {
 		t.Fatalf("products = %+v, want seeded cabas with exact decimal price", products)
 	}
@@ -123,6 +124,67 @@ func TestSQLiteStoreCatalogCartCheckoutFlow(t *testing.T) {
 	}
 	if _, err := db.CheckoutCart(ctx, seed.ShopID, tokenHash[:], store.CheckoutDetails{}); !errors.Is(err, store.ErrEmptyCart) {
 		t.Fatalf("second checkout error = %v, want ErrEmptyCart", err)
+	}
+}
+
+func TestSQLiteCatalogAdministration(t *testing.T) {
+	ctx := context.Background()
+	db := openSeededStore(t, 3)
+
+	product, err := db.CreateProduct(ctx, seed.ShopID, store.ProductInput{
+		Slug: "article-brouillon", Status: "draft",
+		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Article brouillon", Description: "Texte"}},
+	})
+	if err != nil {
+		t.Fatalf("create SQLite product: %v", err)
+	}
+	products, err := db.ListAdminProducts(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("list admin SQLite products: %v", err)
+	}
+	if len(products) != 2 || products[0].ID != product.ID || products[0].Status != "draft" {
+		t.Fatalf("admin products = %+v, want draft product included", products)
+	}
+	updated, err := db.UpdateProduct(ctx, seed.ShopID, product.ID, store.ProductInput{
+		Slug: "article-brouillon", Status: "active",
+		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Article publié", Description: "Mis à jour"}},
+	})
+	if err != nil {
+		t.Fatalf("update SQLite product: %v", err)
+	}
+	publicProduct, err := db.GetProduct(ctx, seed.ShopID, product.ID)
+	if err != nil || updated.Status != "active" || publicProduct.Translations[0].Name != "Article publié" {
+		t.Fatalf("updated/public product = %+v/%+v, error = %v", updated, publicProduct, err)
+	}
+	if err := db.ArchiveProduct(ctx, seed.ShopID, product.ID); err != nil {
+		t.Fatalf("archive SQLite product: %v", err)
+	}
+	if _, err := db.GetProduct(ctx, seed.ShopID, product.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("archived SQLite product error = %v, want %v", err, store.ErrNotFound)
+	}
+
+	category, err := db.CreateCategory(ctx, seed.ShopID, store.CategoryInput{
+		Slug:         "accessoires",
+		Translations: []store.CategoryTranslationView{{Locale: "fr-FR", Name: "Accessoires", Description: "Objets"}},
+	})
+	if err != nil {
+		t.Fatalf("create SQLite category: %v", err)
+	}
+	if _, err := db.CreateCategory(ctx, seed.ShopID, store.CategoryInput{Slug: "accessoires"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate SQLite category error = %v, want %v", err, store.ErrConflict)
+	}
+	updatedCategory, err := db.UpdateCategory(ctx, seed.ShopID, category.ID, store.CategoryInput{
+		Slug:         "accessoires-mode",
+		Translations: []store.CategoryTranslationView{{Locale: "fr-FR", Name: "Accessoires mode"}},
+	})
+	if err != nil || updatedCategory.Slug != "accessoires-mode" {
+		t.Fatalf("updated SQLite category = %+v, error = %v", updatedCategory, err)
+	}
+	if err := db.DeleteCategory(ctx, seed.ShopID, category.ID); err != nil {
+		t.Fatalf("delete SQLite category: %v", err)
+	}
+	if _, err := db.GetCategory(ctx, seed.ShopID, category.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted SQLite category error = %v, want %v", err, store.ErrNotFound)
 	}
 }
 

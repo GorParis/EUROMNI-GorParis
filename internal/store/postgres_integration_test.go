@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"testing"
 
 	"euromni/internal/seed"
@@ -49,6 +50,62 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	}
 	if len(category.Translations) != 2 {
 		t.Fatalf("category translations = %d, want 2", len(category.Translations))
+	}
+	adminProduct, err := db.CreateProduct(ctx, seed.ShopID, ProductInput{
+		Slug: "admin-crud-test", Status: "draft",
+		Translations: []TranslationView{{Locale: "fr-FR", Name: "Article admin", Description: "Brouillon"}},
+	})
+	if err != nil {
+		t.Fatalf("create admin product: %v", err)
+	}
+	if _, err := db.CreateProduct(ctx, seed.ShopID, ProductInput{
+		Slug: "cabas-lin", Status: "draft",
+		Translations: []TranslationView{{Locale: "fr-FR", Name: "Doublon"}},
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate product error = %v, want %v", err, ErrConflict)
+	}
+	adminProducts, err := db.ListAdminProducts(ctx, seed.ShopID)
+	if err != nil || len(adminProducts) != 6 {
+		t.Fatalf("admin products = %d, error = %v; want 6 including draft", len(adminProducts), err)
+	}
+	updatedProduct, err := db.UpdateProduct(ctx, seed.ShopID, adminProduct.ID, ProductInput{
+		Slug: "admin-crud-test", Status: "active",
+		Translations: []TranslationView{{Locale: "fr-FR", Name: "Article publié", Description: "Mis à jour"}},
+	})
+	if err != nil || updatedProduct.Status != "active" || updatedProduct.Translations[0].Name != "Article publié" {
+		t.Fatalf("updated product = %+v, error = %v", updatedProduct, err)
+	}
+	if err := db.ArchiveProduct(ctx, seed.ShopID, adminProduct.ID); err != nil {
+		t.Fatalf("archive admin product: %v", err)
+	}
+	if _, err := db.GetProduct(ctx, seed.ShopID, adminProduct.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("read archived product error = %v, want %v", err, ErrNotFound)
+	}
+
+	adminCategory, err := db.CreateCategory(ctx, seed.ShopID, CategoryInput{
+		Slug:         "admin-crud-test",
+		Translations: []CategoryTranslationView{{Locale: "fr-FR", Name: "Catégorie admin"}},
+	})
+	if err != nil {
+		t.Fatalf("create admin category: %v", err)
+	}
+	if _, err := db.CreateCategory(ctx, seed.ShopID, CategoryInput{
+		Slug: "sacs", Translations: []CategoryTranslationView{{Locale: "fr-FR", Name: "Doublon"}},
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate category error = %v, want %v", err, ErrConflict)
+	}
+	updatedCategory, err := db.UpdateCategory(ctx, seed.ShopID, adminCategory.ID, CategoryInput{
+		Slug:         "admin-crud-modified",
+		Translations: []CategoryTranslationView{{Locale: "fr-FR", Name: "Catégorie modifiée"}},
+	})
+	if err != nil || updatedCategory.Slug != "admin-crud-modified" {
+		t.Fatalf("updated category = %+v, error = %v", updatedCategory, err)
+	}
+	if err := db.DeleteCategory(ctx, seed.ShopID, adminCategory.ID); err != nil {
+		t.Fatalf("delete admin category: %v", err)
+	}
+	if _, err := db.GetCategory(ctx, seed.ShopID, adminCategory.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("read deleted category error = %v, want %v", err, ErrNotFound)
 	}
 	var migrationCount int
 	if err := db.SQL.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {

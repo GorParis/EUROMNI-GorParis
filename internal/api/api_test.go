@@ -130,6 +130,29 @@ func TestProductsListFiltersByCategory(t *testing.T) {
 	}
 }
 
+func TestProductsListDoesNotFakeCategoryFiltering(t *testing.T) {
+	originalReader := productReader
+	SetProductReader(productReaderFunc(func(context.Context, string, string) (*store.ProductView, error) {
+		return &store.ProductView{ID: seed.CategoryID, Status: "active"}, nil
+	}))
+	t.Cleanup(func() {
+		SetProductReader(originalReader)
+	})
+
+	mux := http.NewServeMux()
+	Register(mux)
+	request := httptest.NewRequest(http.MethodGet, "/v1/products?category="+seed.CategoryID, nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusInternalServerError, response.Body)
+	}
+	if strings.Contains(response.Body.String(), `"data"`) {
+		t.Fatalf("unsupported category filtering returned success-shaped data: %s", response.Body)
+	}
+}
+
 func TestProductEndpointsHideStoreErrors(t *testing.T) {
 	originalReader := productReader
 	SetProductReader(productReaderFunc(func(context.Context, string, string) (*store.ProductView, error) {

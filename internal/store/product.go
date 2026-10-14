@@ -53,6 +53,15 @@ type ProductReader interface {
 	ListProducts(ctx context.Context, shopID string) ([]ProductView, error)
 }
 
+type ProductCategoryReader interface {
+	ListProductsByCategory(ctx context.Context, shopID, categoryID string) ([]ProductView, error)
+}
+
+var (
+	_ ProductReader         = (*Store)(nil)
+	_ ProductCategoryReader = (*Store)(nil)
+)
+
 func (s *Store) ListProducts(ctx context.Context, shopID string) ([]ProductView, error) {
 	if s == nil || s.SQL == nil {
 		return nil, errors.New("store not configured")
@@ -133,16 +142,24 @@ func (s *Store) ListProductsByCategory(ctx context.Context, shopID, categoryID s
 }
 
 func (s *Store) GetProduct(ctx context.Context, shopID, productID string) (*ProductView, error) {
+	return s.getProduct(ctx, shopID, productID, true)
+}
+
+func (s *Store) getProduct(ctx context.Context, shopID, productID string, activeOnly bool) (*ProductView, error) {
 	if s == nil || s.SQL == nil {
 		return nil, errors.New("store not configured")
 	}
 
 	var p ProductView
-	err := s.SQL.QueryRowContext(ctx, `
+	query := `
 		SELECT id::text, slug, status::text
 		FROM products
-		WHERE shop_id = $1 AND id = $2 AND status = 'active'
-	`, shopID, productID).Scan(&p.ID, &p.Slug, &p.Status)
+		WHERE shop_id = $1 AND id = $2
+	`
+	if activeOnly {
+		query += ` AND status = 'active'`
+	}
+	err := s.SQL.QueryRowContext(ctx, query, shopID, productID).Scan(&p.ID, &p.Slug, &p.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

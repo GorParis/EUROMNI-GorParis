@@ -4,7 +4,12 @@ L’API REST et GraphQL partagent le même store Go. Les erreurs internes ne son
 
 ## REST
 
-- `GET /v1/products` liste tous les produits **actifs** de la boutique, triés par slug puis id. `GET /v1/products/{id}` lit un produit actif.
+- L’API d’administration utilise `POST /v1/admin/login` avec `{ "email": "…", "password": "…", "shop_id": "…" }`. Le `shop_id` peut être omis pour la boutique de démonstration. Le jeton renvoyé s’utilise avec `Authorization: Bearer <token>`. L’authentification staff exige PostgreSQL et un utilisateur déjà associé à la boutique dans `shop_members` ; aucun compte ni mot de passe de démonstration n’est créé.
+- `GET /v1/admin/me`, `GET /v1/admin/products` et `GET /v1/admin/categories` exigent une session staff. L’admin voit également les produits brouillons et archivés. `owner`, `admin` et `editor` peuvent modifier le catalogue ; `support` est en lecture seule.
+- `POST /v1/admin/products` crée un produit à partir de `{ "slug": "…", "status": "draft", "translations": [{ "locale": "fr-FR", "name": "…", "description": "…" }] }`. `PUT /v1/admin/products/{id}` remplace le slug, le statut et l’ensemble des traductions. Les statuts acceptés sont `draft`, `active` et `archived`. `DELETE /v1/admin/products/{id}` archive le produit sans supprimer ses commandes ni ses variantes.
+- `POST /v1/admin/categories` crée une catégorie avec un slug et des traductions. `PUT /v1/admin/categories/{id}` remplace le slug et les traductions. `DELETE /v1/admin/categories/{id}` supprime la catégorie et ses liens de produits.
+- Les slugs sont en minuscules, avec lettres/chiffres séparés par un tiret simple. Les traductions doivent avoir des locales uniques et un nom non vide. Les requêtes admin acceptent un corps JSON de 1 Mio maximum. Un slug déjà utilisé renvoie `409 Conflict`, une ressource absente `404 Not Found`, et un rôle `support` qui tente une écriture `403 Forbidden`.
+- `GET /v1/products` liste tous les produits **actifs** de la boutique, triés par slug puis id. `GET /v1/products?category={id}` filtre par appartenance à cette catégorie. `GET /v1/products/{id}` lit un produit actif.
 - `GET /v1/categories` et `GET /v1/categories/{id}` exposent les catégories et leurs traductions.
 - `POST /v1/cart` crée un panier invité et renvoie une seule fois un jeton Bearer aléatoire de 256 bits.
 - `GET /v1/cart` lit le panier authentifié.

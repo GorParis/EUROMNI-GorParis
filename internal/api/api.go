@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -36,6 +35,16 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/cart", cartCreate)
 	mux.HandleFunc("POST /v1/cart/add", cartAdd)
 	mux.HandleFunc("POST /v1/checkout", checkout)
+	mux.HandleFunc("POST /v1/admin/login", adminLogin)
+	mux.HandleFunc("GET /v1/admin/me", withStaffAuth(adminMe))
+	mux.HandleFunc("GET /v1/admin/products", withStaffAuth(adminProducts))
+	mux.HandleFunc("POST /v1/admin/products", withCatalogWriteAuth(adminCreateProduct))
+	mux.HandleFunc("PUT /v1/admin/products/{id}", withCatalogWriteAuth(adminUpdateProduct))
+	mux.HandleFunc("DELETE /v1/admin/products/{id}", withCatalogWriteAuth(adminArchiveProduct))
+	mux.HandleFunc("GET /v1/admin/categories", withStaffAuth(adminCategories))
+	mux.HandleFunc("POST /v1/admin/categories", withCatalogWriteAuth(adminCreateCategory))
+	mux.HandleFunc("PUT /v1/admin/categories/{id}", withCatalogWriteAuth(adminUpdateCategory))
+	mux.HandleFunc("DELETE /v1/admin/categories/{id}", withCatalogWriteAuth(adminDeleteCategory))
 	mux.HandleFunc("POST /graphql", graphql)
 	mux.HandleFunc("GET /graphql", graphql)
 	mux.Handle("GET /storefront/", http.StripPrefix("/storefront/", http.FileServer(http.FS(frontend.Assets))))
@@ -65,22 +74,12 @@ func productsList(w http.ResponseWriter, r *http.Request) {
 	var products []store.ProductView
 	var err error
 	if categoryID != "" {
-		if categoryReader, ok := reader.(interface {
-			ListProductsByCategory(context.Context, string, string) ([]store.ProductView, error)
-		}); ok {
-			products, err = categoryReader.ListProductsByCategory(r.Context(), seed.ShopID, categoryID)
-		} else {
-			products, err = reader.ListProducts(r.Context(), seed.ShopID)
-			if err == nil {
-				filtered := make([]store.ProductView, 0, len(products))
-				for _, product := range products {
-					if product.ID == categoryID {
-						filtered = append(filtered, product)
-					}
-				}
-				products = filtered
-			}
+		categoryReader, ok := reader.(store.ProductCategoryReader)
+		if !ok {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "category filtering is unavailable"})
+			return
 		}
+		products, err = categoryReader.ListProductsByCategory(r.Context(), seed.ShopID, categoryID)
 	} else {
 		products, err = reader.ListProducts(r.Context(), seed.ShopID)
 	}
