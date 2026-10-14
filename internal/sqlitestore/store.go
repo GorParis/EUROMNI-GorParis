@@ -10,12 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"euromni/internal/privatefs"
 	"euromni/internal/store"
 	_ "modernc.org/sqlite"
 )
@@ -46,8 +46,8 @@ func Open(path string) (*Store, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve SQLite database path: %w", err)
 		}
-		if err := os.MkdirAll(filepath.Dir(absolutePath), 0o700); err != nil {
-			return nil, fmt.Errorf("create SQLite database directory: %w", err)
+		if err := privatefs.EnsureDirectory(filepath.Dir(absolutePath)); err != nil {
+			return nil, fmt.Errorf("secure SQLite database directory: %w", err)
 		}
 		path = absolutePath
 	}

@@ -14,7 +14,7 @@ import (
 
 func openSeededStore(t *testing.T, stock int) *Store {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "shop.sqlite"))
+	db, err := Open(filepath.Join(t.TempDir(), "sqlite", "shop.sqlite"))
 	if err != nil {
 		t.Fatalf("open SQLite store: %v", err)
 	}

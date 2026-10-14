@@ -28,15 +28,18 @@ connecté à `cmd/cms`.
 - Le backend limite son pool à une connexion et sérialise certaines écritures
   dans un seul processus. Les garanties d’exploitation multi-processus et les
   comportements sous forte concurrence ne sont pas encore qualifiés.
-- Les permissions du fichier et de ses fichiers WAL/SHM, en particulier les
-  ACL NTFS sous Windows, doivent être auditées avant d’y stocker des données
-  réelles.
+- Le backend exige un répertoire dédié et privé pour la base : permissions
+  propriétaire seul sur Unix, ACL NTFS protégée pour l’utilisateur courant,
+  SYSTEM et Administrateurs sur Windows. Les nouveaux fichiers SQLite et
+  auxiliaires WAL/SHM sont créés dans ce répertoire; une configuration dont les
+  permissions ne satisfont pas ces contrôles est refusée. Placer une base
+  préexistante dans ce répertoire ne corrige pas automatiquement ses ACL propres;
+  elles doivent être vérifiées avant ouverture.
 - Le pilote SQLite est pur Go, mais le CMS complet dépend toujours de CGo via
   Wasmtime; choisir SQLite ne rend donc pas l’application complète indépendante
   de CGo.
 
 Avant toute activation ou utilisation avec des données clients, il faudra
 qualifier le verrouillage inter-processus, l’annulation des opérations par
-contexte, la protection des fichiers sur chaque système pris en charge, la
-récupération et sauvegarde des données, puis définir un contrat de configuration
-et de migrations. Le prototype n’est pas activé par défaut.
+contexte et les procédures de récupération/sauvegarde, puis définir un contrat
+de configuration et de migrations. Le prototype n’est pas activé par défaut.
