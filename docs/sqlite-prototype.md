@@ -14,17 +14,21 @@ ainsi que le checkout, sans remplacer PostgreSQL dans le CMS.
   concurrents pour le dernier article.
 - Montants stockés sous forme décimale textuelle et calculés sans flottants.
 
-Le schéma SQLite embarqué dans le binaire est autonome. Il ne lit pas et ne
-convertit pas les migrations PostgreSQL; il n’existe pas encore d’import ou
-d’export de données entre les deux moteurs. Le prototype n’est pas encore
-connecté à `cmd/cms`.
+Les migrations SQLite embarquées sont versionnées séparément de PostgreSQL dans
+`internal/sqlitestore/migrations`; `schema_migrations` enregistre leur
+application. Une base créée par les premières versions du prototype, sans
+registre, reçoit la migration initiale idempotente sans perdre ses tables ni ses
+données. Une base déclarant une version plus récente que le binaire est refusée.
+Les migrations ne convertissent pas le schéma PostgreSQL; il n’existe pas encore
+d’import ou d’export entre les deux moteurs. Le prototype n’est pas connecté à
+`cmd/cms`.
 
 ## Limites et critères avant usage réel
 
 - PostgreSQL reste le moteur de référence, notamment pour l’architecture
   multi-boutique et les fonctions complètes du CMS.
 - SQLite ne couvre pas encore les paiements, taxes, livraisons, comptes clients,
-  administration, migrations versionnées ni le cycle de vie des commandes.
+  administration ni le cycle de vie complet des commandes.
 - Le backend limite son pool à une connexion et sérialise certaines écritures
   par processus. Les transactions prennent le verrou d’écriture dès leur début
   et SQLite attend jusqu’à cinq secondes en cas de verrou occupé. Un test de
@@ -38,11 +42,19 @@ connecté à `cmd/cms`.
   permissions ne satisfont pas ces contrôles est refusée. Placer une base
   préexistante dans ce répertoire ne corrige pas automatiquement ses ACL propres;
   elles doivent être vérifiées avant ouverture.
+- `Store.Backup(ctx, destination)` produit un snapshot cohérent, y compris les
+  transactions validées encore dans le WAL. Le snapshot est d’abord créé sous
+  un nom temporaire puis publié sans écraser une destination existante. La
+  destination doit être nouvelle et située dans un répertoire privé; le chemin
+  de la base est refusé. Ne pas sauvegarder une base active en copiant seulement
+  son fichier `.sqlite`. La restauration doit être testée en ouvrant une copie
+  dans un répertoire privé distinct; conserver aussi une copie hors machine.
 - Le pilote SQLite est pur Go, mais le CMS complet dépend toujours de CGo via
   Wasmtime; choisir SQLite ne rend donc pas l’application complète indépendante
   de CGo.
 
 Avant toute activation ou utilisation avec des données clients, il faudra
-qualifier le verrouillage inter-processus, l’annulation des opérations par
-contexte et les procédures de récupération/sauvegarde, puis définir un contrat
-de configuration et de migrations. Le prototype n’est pas activé par défaut.
+qualifier les opérations annulées par contexte, tester la sauvegarde/restauration
+sur tous les systèmes et systèmes de fichiers visés, et établir une procédure
+opérationnelle de rotation des sauvegardes hors machine. Le prototype n’est pas
+activé par défaut.

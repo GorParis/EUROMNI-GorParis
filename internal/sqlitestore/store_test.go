@@ -3,17 +3,20 @@ package sqlitestore
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"euromni/internal/privatefs"
 	"euromni/internal/seed"
 	"euromni/internal/store"
 )
@@ -120,6 +123,266 @@ func TestSQLiteStoreCatalogCartCheckoutFlow(t *testing.T) {
 	}
 	if _, err := db.CheckoutCart(ctx, seed.ShopID, tokenHash[:], store.CheckoutDetails{}); !errors.Is(err, store.ErrEmptyCart) {
 		t.Fatalf("second checkout error = %v, want ErrEmptyCart", err)
+	}
+}
+
+func TestSQLiteMigrationsRecordAndUpgradeExistingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sqlite", "shop.sqlite")
+	db := openSeededStoreAt(t, path, 2)
+	var version int
+	if err := db.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+		t.Fatalf("read SQLite migration version: %v", err)
+	}
+	if version != 1 {
+		t.Fatalf("migration version = %d, want 1", version)
+	}
+	if _, err := db.db.Exec(`DROP TABLE schema_migrations`); err != nil {
+		t.Fatalf("remove migration ledger to simulate prototype database: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close SQLite store: %v", err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("upgrade existing SQLite database: %v", err)
+	}
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Errorf("close upgraded SQLite store: %v", err)
+		}
+	}()
+	if err := reopened.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+		t.Fatalf("read upgraded SQLite migration version: %v", err)
+	}
+	if version != 1 {
+		t.Fatalf("upgraded migration version = %d, want 1", version)
+	}
+	var shopCount int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM shops WHERE id = ?`, seed.ShopID).Scan(&shopCount); err != nil {
+		t.Fatalf("read existing shop after migration: %v", err)
+	}
+	if shopCount != 1 {
+		t.Fatalf("existing shop count after migration = %d, want 1", shopCount)
+	}
+}
+
+func TestSQLiteRejectsDatabaseFromNewerSchemaVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sqlite", "shop.sqlite")
+	db := openSeededStoreAt(t, path, 1)
+	if _, err := db.db.Exec(`INSERT INTO schema_migrations (version, applied_at) VALUES (99, ?)`, time.Now().Unix()); err != nil {
+		t.Fatalf("set newer SQLite schema version: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close SQLite store: %v", err)
+	}
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "newer than supported") {
+		t.Fatalf("opening newer SQLite database error = %v, want clear version error", err)
+	}
+}
+
+func TestSQLiteConcurrentInitializationAppliesMigrationsOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sqlite", "shop.sqlite")
+	type openResult struct {
+		store *Store
+		err   error
+	}
+	results := make(chan openResult, 2)
+	start := make(chan struct{})
+	for range 2 {
+		go func() {
+			<-start
+			db, err := Open(path)
+			results <- openResult{store: db, err: err}
+		}()
+	}
+	close(start)
+	var stores []*Store
+	var openErr error
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			openErr = errors.Join(openErr, result.err)
+			continue
+		}
+		stores = append(stores, result.store)
+	}
+	for _, db := range stores {
+		if err := db.Close(); err != nil {
+			t.Errorf("close concurrently initialized SQLite store: %v", err)
+		}
+	}
+	if openErr != nil {
+		t.Fatalf("concurrent SQLite initialization: %v", openErr)
+	}
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen concurrently initialized SQLite store: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close SQLite store: %v", err)
+		}
+	}()
+	var migrationCount int
+	if err := db.db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
+		t.Fatalf("count SQLite migrations: %v", err)
+	}
+	if migrationCount != 1 {
+		t.Fatalf("recorded migrations = %d, want 1", migrationCount)
+	}
+}
+
+func TestSQLiteBackupIncludesWALDataAndDoesNotOverwrite(t *testing.T) {
+	db := openSeededStore(t, 1)
+	tokenHash := sha256.Sum256([]byte("SQLite backup cart"))
+	if err := db.CreateCart(context.Background(), seed.ShopID, tokenHash[:]); err != nil {
+		t.Fatalf("create cart before backup: %v", err)
+	}
+	if _, err := db.AddCartLine(context.Background(), seed.ShopID, tokenHash[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add cart line before backup: %v", err)
+	}
+	walInfo, err := os.Stat(db.path + "-wal")
+	if err != nil {
+		t.Fatalf("inspect SQLite WAL before backup: %v", err)
+	}
+	if walInfo.Size() == 0 {
+		t.Fatal("SQLite WAL is empty before backup")
+	}
+
+	backupPath := filepath.Join(t.TempDir(), "backup", "snapshot.sqlite")
+	if err := db.Backup(context.Background(), db.path); err == nil {
+		t.Fatal("backup accepted the source database path")
+	}
+	if err := db.Backup(context.Background(), backupPath); err != nil {
+		t.Fatalf("create SQLite backup: %v", err)
+	}
+	restorePath := filepath.Join(t.TempDir(), "restored", "shop.sqlite")
+	if err := privatefs.EnsureDirectory(filepath.Dir(restorePath)); err != nil {
+		t.Fatalf("create SQLite restore directory: %v", err)
+	}
+	backupBytes, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatalf("read SQLite backup for restore: %v", err)
+	}
+	if err := os.WriteFile(restorePath, backupBytes, 0o600); err != nil {
+		t.Fatalf("restore SQLite backup: %v", err)
+	}
+	restored, err := Open(restorePath)
+	if err != nil {
+		t.Fatalf("open restored SQLite database: %v", err)
+	}
+	var cartCount, lineCount int
+	if err := restored.db.QueryRow(`SELECT count(*) FROM carts`).Scan(&cartCount); err != nil {
+		t.Fatalf("read restored carts: %v", err)
+	}
+	if err := restored.db.QueryRow(`SELECT count(*) FROM cart_lines`).Scan(&lineCount); err != nil {
+		t.Fatalf("read restored cart lines: %v", err)
+	}
+	if cartCount != 1 || lineCount != 1 {
+		t.Fatalf("restored database has carts=%d lines=%d, want 1 and 1", cartCount, lineCount)
+	}
+	backupInfo, err := os.Stat(restorePath)
+	if err != nil {
+		t.Fatalf("inspect restored SQLite database: %v", err)
+	}
+	if runtime.GOOS != "windows" && backupInfo.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("restored SQLite database permissions = %o, want private permissions", backupInfo.Mode().Perm())
+	}
+	if err := restored.Close(); err != nil {
+		t.Fatalf("close restored SQLite database: %v", err)
+	}
+	temporaryBackups, err := filepath.Glob(filepath.Join(filepath.Dir(backupPath), ".euromni-backup-*.sqlite"))
+	if err != nil {
+		t.Fatalf("find temporary SQLite backups: %v", err)
+	}
+	if len(temporaryBackups) != 0 {
+		t.Fatalf("temporary SQLite backups remain: %v", temporaryBackups)
+	}
+
+	if err := os.WriteFile(backupPath, []byte("keep existing file"), 0o600); err != nil {
+		t.Fatalf("replace backup with sentinel for overwrite test: %v", err)
+	}
+	if err := db.Backup(context.Background(), backupPath); err == nil {
+		t.Fatal("backup overwrote an existing file")
+	}
+	content, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatalf("read sentinel backup destination: %v", err)
+	}
+	if string(content) != "keep existing file" {
+		t.Fatalf("existing destination contents changed: %q", content)
+	}
+}
+
+func TestSQLiteCancelledCheckoutRollsBack(t *testing.T) {
+	db := openSeededStore(t, 1)
+	tokenHash := sha256.Sum256([]byte("cancelled SQLite checkout"))
+	if err := db.CreateCart(context.Background(), seed.ShopID, tokenHash[:]); err != nil {
+		t.Fatalf("create cart before cancelled checkout: %v", err)
+	}
+	if _, err := db.AddCartLine(context.Background(), seed.ShopID, tokenHash[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add cart line before cancelled checkout: %v", err)
+	}
+
+	lockerDB, err := sql.Open("sqlite", db.path+"?_pragma=busy_timeout(5000)&_txlock=immediate")
+	if err != nil {
+		t.Fatalf("open SQLite lock connection: %v", err)
+	}
+	lockerDB.SetMaxOpenConns(1)
+	locker, err := lockerDB.Conn(context.Background())
+	if err != nil {
+		_ = lockerDB.Close()
+		t.Fatalf("get SQLite lock connection: %v", err)
+	}
+	if _, err := locker.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
+		_ = locker.Close()
+		_ = lockerDB.Close()
+		t.Fatalf("hold SQLite write lock: %v", err)
+	}
+	lockHeld := true
+	defer func() {
+		if lockHeld {
+			if _, err := locker.ExecContext(context.Background(), `ROLLBACK`); err != nil {
+				t.Errorf("release SQLite write lock: %v", err)
+			}
+		}
+		if err := locker.Close(); err != nil {
+			t.Errorf("close SQLite lock connection: %v", err)
+		}
+		if err := lockerDB.Close(); err != nil {
+			t.Errorf("close SQLite lock database: %v", err)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	_, err = db.CheckoutCart(ctx, seed.ShopID, tokenHash[:], store.CheckoutDetails{
+		Email: "buyer@example.com",
+		ShippingAddress: store.ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cancelled checkout error = %v, want context deadline exceeded", err)
+	}
+	if _, err := locker.ExecContext(context.Background(), `ROLLBACK`); err != nil {
+		t.Fatalf("release SQLite write lock after cancelled checkout: %v", err)
+	}
+	lockHeld = false
+
+	var remainingStock, orderCount, cartLineCount int
+	if err := db.db.QueryRow(`SELECT quantity FROM inventory_items WHERE variant_id = ?`, seed.VariantID).Scan(&remainingStock); err != nil {
+		t.Fatalf("read stock after cancelled checkout: %v", err)
+	}
+	if err := db.db.QueryRow(`SELECT count(*) FROM orders`).Scan(&orderCount); err != nil {
+		t.Fatalf("count orders after cancelled checkout: %v", err)
+	}
+	if err := db.db.QueryRow(`SELECT count(*) FROM cart_lines WHERE cart_id = (SELECT id FROM carts WHERE access_token_hash = ?)`, tokenHash[:]).Scan(&cartLineCount); err != nil {
+		t.Fatalf("count cart lines after cancelled checkout: %v", err)
+	}
+	if remainingStock != 1 || orderCount != 0 || cartLineCount != 1 {
+		t.Fatalf("after cancelled checkout stock=%d orders=%d cart_lines=%d, want 1, 0, 1", remainingStock, orderCount, cartLineCount)
 	}
 }
 

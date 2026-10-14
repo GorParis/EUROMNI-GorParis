@@ -9,25 +9,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math/big"
+	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"euromni/internal/privatefs"
 	"euromni/internal/store"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
-//go:embed schema.sql
+//go:embed migrations/*.sql
 var schema embed.FS
 
 const maxCartLineQuantity = 99
+const sqliteBusyTimeoutMilliseconds = 25
+const sqliteWriteLockWaitTimeout = 5 * time.Second
 
 type Store struct {
-	db *sql.DB
-	mu sync.Mutex
+	db   *sql.DB
+	path string
+	mu   sync.Mutex
 }
 
 var (
@@ -51,8 +58,9 @@ func Open(path string) (*Store, error) {
 		}
 		path = absolutePath
 	}
+	databasePath := path
 
-	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)&_txlock=immediate"
+	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(%d)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)&_txlock=immediate", path, sqliteBusyTimeoutMilliseconds)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
@@ -63,7 +71,7 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect to SQLite database: %w", err)
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, path: databasePath}
 	if err := s.migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize SQLite schema: %w", err)
@@ -79,12 +87,205 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate(ctx context.Context) error {
-	statements, err := schema.ReadFile("schema.sql")
+	entries, err := fs.ReadDir(schema, "migrations")
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, string(statements))
-	return err
+	type migration struct {
+		version int
+		name    string
+	}
+	migrations := make([]migration, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".sql" {
+			continue
+		}
+		versionText := strings.SplitN(entry.Name(), "_", 2)[0]
+		version, err := strconv.Atoi(versionText)
+		if err != nil || version < 1 {
+			return fmt.Errorf("invalid SQLite migration filename %q", entry.Name())
+		}
+		migrations = append(migrations, migration{version: version, name: entry.Name()})
+	}
+	sort.Slice(migrations, func(i, j int) bool { return migrations[i].version < migrations[j].version })
+	for i := 1; i < len(migrations); i++ {
+		if migrations[i].version == migrations[i-1].version {
+			return fmt.Errorf("duplicate SQLite migration version %d", migrations[i].version)
+		}
+	}
+
+	ledgerTx, err := s.beginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin SQLite migration ledger setup: %w", err)
+	}
+	if _, err := ledgerTx.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version INTEGER PRIMARY KEY,
+			applied_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		_ = ledgerTx.Rollback()
+		return fmt.Errorf("create SQLite migration ledger: %w", err)
+	}
+	if err := ledgerTx.Commit(); err != nil {
+		return fmt.Errorf("commit SQLite migration ledger setup: %w", err)
+	}
+	var latestVersion int
+	if len(migrations) > 0 {
+		latestVersion = migrations[len(migrations)-1].version
+	}
+	var currentVersion int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&currentVersion); err != nil {
+		return fmt.Errorf("read SQLite migration version: %w", err)
+	}
+	if currentVersion > latestVersion {
+		return fmt.Errorf("SQLite database schema version %d is newer than supported version %d", currentVersion, latestVersion)
+	}
+	for _, migration := range migrations {
+		statements, err := schema.ReadFile(filepath.ToSlash(filepath.Join("migrations", migration.name)))
+		if err != nil {
+			return fmt.Errorf("read SQLite migration %q: %w", migration.name, err)
+		}
+		tx, err := s.beginTx(ctx)
+		if err != nil {
+			return fmt.Errorf("begin SQLite migration %q: %w", migration.name, err)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&currentVersion); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("read SQLite migration version before %q: %w", migration.name, err)
+		}
+		if currentVersion > latestVersion {
+			_ = tx.Rollback()
+			return fmt.Errorf("SQLite database schema version %d is newer than supported version %d", currentVersion, latestVersion)
+		}
+		if migration.version <= currentVersion {
+			if err := tx.Rollback(); err != nil {
+				return fmt.Errorf("finish SQLite migration check %q: %w", migration.name, err)
+			}
+			continue
+		}
+		if migration.version != currentVersion+1 {
+			_ = tx.Rollback()
+			return fmt.Errorf("SQLite migration sequence missing version %d", currentVersion+1)
+		}
+		if _, err := tx.ExecContext(ctx, string(statements)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply SQLite migration %q: %w", migration.name, err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, migration.version, time.Now().Unix()); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("record SQLite migration %q: %w", migration.name, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit SQLite migration %q: %w", migration.name, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) beginTx(ctx context.Context) (*sql.Tx, error) {
+	deadline := time.Now().Add(sqliteWriteLockWaitTimeout)
+	for {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err == nil {
+			return tx, nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != 5 {
+			return nil, err
+		}
+		wait := time.Until(deadline)
+		if wait <= 0 {
+			return nil, err
+		}
+		if wait > sqliteBusyTimeoutMilliseconds*time.Millisecond {
+			wait = sqliteBusyTimeoutMilliseconds * time.Millisecond
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// Backup writes a consistent SQLite snapshot to a new file without overwriting existing data.
+func (s *Store) Backup(ctx context.Context, destination string) error {
+	if s == nil || s.db == nil {
+		return errors.New("SQLite store is not initialized")
+	}
+	if strings.TrimSpace(destination) == "" {
+		return errors.New("SQLite backup destination is required")
+	}
+	if ctx == nil {
+		return errors.New("SQLite backup context is required")
+	}
+	absoluteDestination, err := filepath.Abs(destination)
+	if err != nil {
+		return fmt.Errorf("resolve SQLite backup destination: %w", err)
+	}
+	absoluteDestination = filepath.Clean(absoluteDestination)
+	if s.path != ":memory:" && samePath(absoluteDestination, s.path) {
+		return errors.New("SQLite backup destination must differ from the database path")
+	}
+	if err := privatefs.EnsureDirectory(filepath.Dir(absoluteDestination)); err != nil {
+		return fmt.Errorf("secure SQLite backup directory: %w", err)
+	}
+	if _, err := os.Lstat(absoluteDestination); err == nil {
+		return fmt.Errorf("SQLite backup destination already exists: %s", absoluteDestination)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect SQLite backup destination: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tempFile, err := os.CreateTemp(filepath.Dir(absoluteDestination), ".euromni-backup-*.sqlite")
+	if err != nil {
+		return fmt.Errorf("reserve temporary SQLite backup path: %w", err)
+	}
+	tempPath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("close temporary SQLite backup file: %w", err)
+	}
+	if err := os.Remove(tempPath); err != nil {
+		return fmt.Errorf("prepare temporary SQLite backup path: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, tempPath); err != nil {
+		if cleanupErr := os.Remove(tempPath); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			return errors.Join(fmt.Errorf("create SQLite backup: %w", err), fmt.Errorf("remove incomplete SQLite backup: %w", cleanupErr))
+		}
+		return fmt.Errorf("create SQLite backup: %w", err)
+	}
+	if err := os.Chmod(tempPath, 0o600); err != nil {
+		if cleanupErr := os.Remove(tempPath); cleanupErr != nil {
+			return errors.Join(fmt.Errorf("restrict SQLite backup permissions: %w", err), fmt.Errorf("remove SQLite backup: %w", cleanupErr))
+		}
+		return fmt.Errorf("restrict SQLite backup permissions: %w", err)
+	}
+	if err := os.Link(tempPath, absoluteDestination); err != nil {
+		if cleanupErr := os.Remove(tempPath); cleanupErr != nil {
+			return errors.Join(fmt.Errorf("publish SQLite backup: %w", err), fmt.Errorf("remove temporary SQLite backup: %w", cleanupErr))
+		}
+		return fmt.Errorf("publish SQLite backup: %w", err)
+	}
+	if err := os.Remove(tempPath); err != nil {
+		return fmt.Errorf("SQLite backup created at %s but temporary backup cleanup failed: %w", absoluteDestination, err)
+	}
+	return nil
+}
+
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if filepath.VolumeName(a) != "" || filepath.VolumeName(b) != "" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func (s *Store) ListProducts(ctx context.Context, shopID string) ([]store.ProductView, error) {
@@ -429,7 +630,7 @@ func (s *Store) AddCartLine(ctx context.Context, shopID string, tokenHash []byte
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -493,7 +694,7 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginTx(ctx)
 	if err != nil {
 		return nil, err
 	}
