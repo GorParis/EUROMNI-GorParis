@@ -48,6 +48,7 @@ Le code invité **n’a jamais** d’accès direct au processus hôte ni au PHP 
 | Runtime Wasmtime | Charge et exécute les modules traduits, capacités minimales (capability-based). |
 | API GraphQL **et** REST | Les deux surfaces dès le départ : même domaine, deux transports. |
 | PostgreSQL | Données souveraines : catalogue, commandes, sessions, config modules. Schéma dans `docs/database.md`. Hébergeur indifférent (aujourd’hui IONOS ; OVH, autre cloud ou dédié conviennent). |
+| SQLite | Prototype isolé mono-boutique pour évaluer une installation légère ; non branché au CMS et non destiné à la production. Voir [`docs/sqlite-prototype.md`](sqlite-prototype.md). |
 
 Principes :
 

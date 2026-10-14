@@ -2,6 +2,8 @@
 
 **Moteur : PostgreSQL 16+.** L’hébergeur n’est pas figé : n’importe quelle instance Postgres suffit. L’instance actuelle est chez IONOS (pas OVH). Le schéma est portable : UUID, `timestamptz`, `jsonb`, pas d’extensions propriétaires.
 
+Un prototype SQLite séparé explore une installation légère mono-boutique pour le catalogue, le panier et le checkout. Il n’est ni compatible avec les migrations PostgreSQL, ni câblé au CMS, et ne change pas le moteur de référence. Son périmètre et ses limites sont décrits dans [`docs/sqlite-prototype.md`](sqlite-prototype.md).
+
 Source de vérité : migrations SQL numérotées et registre `schema_migrations`.  
 Schéma initial : [`migrations/0001_init.sql`](../migrations/0001_init.sql).  
 Jeu exemple : [`migrations/0002_seed_example.sql`](../migrations/0002_seed_example.sql).  
