@@ -60,14 +60,26 @@ Seul le processus Go parle à Postgres. L’ABI Wasm (`catalog`, `cart`, `module
 
 ## Appliquer les migrations
 
-Les fichiers SQL versionnés sont la source importable du schéma. Pour initialiser une base PostgreSQL vierge, depuis la racine du dépôt avec `DATABASE_URL` configuré :
+Les fichiers SQL versionnés et embarqués sont la source de vérité du schéma.
+Depuis la racine du dépôt, configurez `DATABASE_URL` et lancez le migrateur :
 
 ```bash
-for migration in migrations/0001_init.sql migrations/0002_seed_example.sql migrations/0003_cart_access_tokens.sql migrations/0004_schema_migrations.sql migrations/0005_seed_second_product.sql migrations/0006_seed_representative_catalog.sql; do
-  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration" || exit 1
-done
+go run ./cmd/db-migrate
 ```
 
-Appliquer ces scripts une seule fois et dans l’ordre ; `0004` crée `schema_migrations` et enregistre les versions initiales, puis `0005` et `0006` enregistrent les seeds catalogue. Sur une base existante, vérifier le ledger et sauvegarder les données avant toute nouvelle migration. Ne pas rejouer les scripts d’initialisation sur une base qui contient des données.
+Le migrateur applique les scripts dans l’ordre, prend un verrou PostgreSQL pour
+exclure une exécution concurrente et vérifie que `schema_migrations` forme un
+préfixe cohérent des migrations embarquées. Les migrations qui modifient le
+schéma enregistrent leur version dans la même transaction que leur changement ;
+une version inconnue ou une base existante sans registre est refusée pour éviter
+une réinitialisation accidentelle. Les exécutions répétées ne rejouent pas les
+migrations enregistrées. En production, sauvegarder les données avant toute
+migration.
+
+Pour une nouvelle migration, ajouter un fichier `NNNN_description.sql` dans
+`migrations/` et l’appliquer exclusivement avec `cmd/db-migrate` : le migrateur
+gère la transaction et inscrit lui-même le nom dans `schema_migrations`. Ne pas
+ajouter de `BEGIN`, `COMMIT` ni d’insertion manuelle dans le registre ; cela
+permet au migrateur de revenir en arrière sur toute la migration en cas d’échec.
 
 Ces migrations contiennent le schéma et le seed d’exemple, pas une sauvegarde des données clients ou des transactions. Les données doivent être sauvegardées séparément avec `pg_dump`, conservées hors machine et restaurées/testées séparément. Cette procédure opérationnelle reste à mettre en place avant tout usage client.

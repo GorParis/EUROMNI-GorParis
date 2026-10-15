@@ -14,19 +14,11 @@ import (
 	"testing"
 	"time"
 
+	migrationrunner "euromni/internal/migrations"
+	schemafiles "euromni/migrations"
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
-
-var migrationFiles = []string{
-	"0001_init.sql",
-	"0002_seed_example.sql",
-	"0003_cart_access_tokens.sql",
-	"0004_schema_migrations.sql",
-	"0005_seed_second_product.sql",
-	"0006_seed_representative_catalog.sql",
-	"0007_module_build_manifest.sql",
-}
 
 func Start(t testing.TB) *sql.DB {
 	t.Helper()
@@ -92,14 +84,8 @@ func Start(t testing.TB) *sql.DB {
 		t.Fatalf("connect to local PostgreSQL: %v", err)
 	}
 
-	for _, filename := range migrationFiles {
-		migration, err := os.ReadFile(filepath.Join(repoRoot, "migrations", filename))
-		if err != nil {
-			t.Fatalf("read migration %s: %v", filename, err)
-		}
-		if _, err := db.ExecContext(ctx, string(migration)); err != nil {
-			t.Fatalf("apply migration %s: %v", filename, err)
-		}
+	if _, err := migrationrunner.Apply(ctx, db, schemafiles.Files); err != nil {
+		t.Fatalf("apply local PostgreSQL migrations: %v", err)
 	}
 	db.SetMaxOpenConns(10)
 	return db
@@ -112,7 +98,7 @@ func projectRoot(t testing.TB) string {
 		t.Fatal("locate integration fixture source")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", ".."))
-	for _, path := range []string{"go.mod", filepath.Join("migrations", migrationFiles[0])} {
+	for _, path := range []string{"go.mod", filepath.Join("migrations", "0001_init.sql")} {
 		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
 			t.Fatalf("project root %s does not contain %s: %v", root, path, err)
 		}

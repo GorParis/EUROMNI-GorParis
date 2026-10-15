@@ -15,13 +15,6 @@ services:
       retries: 30
     restart: unless-stopped
     volumes:
-      - ./migrations/0001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
-      - ./migrations/0002_seed_example.sql:/docker-entrypoint-initdb.d/002_seed_example.sql:ro
-      - ./migrations/0003_cart_access_tokens.sql:/docker-entrypoint-initdb.d/003_cart_access_tokens.sql:ro
-      - ./migrations/0004_schema_migrations.sql:/docker-entrypoint-initdb.d/004_schema_migrations.sql:ro
-      - ./migrations/0005_seed_second_product.sql:/docker-entrypoint-initdb.d/005_seed_second_product.sql:ro
-      - ./migrations/0006_seed_representative_catalog.sql:/docker-entrypoint-initdb.d/006_seed_representative_catalog.sql:ro
-      - ./migrations/0007_module_build_manifest.sql:/docker-entrypoint-initdb.d/007_module_build_manifest.sql:ro
       - postgres-data:/var/lib/postgresql/data
 
   cms:
@@ -42,7 +35,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: ["go", "run", "./cmd/cms"]
+    command: ["sh", "-c", "go run ./cmd/db-migrate && exec go run ./cmd/cms"]
     restart: unless-stopped
 
   integration-test:

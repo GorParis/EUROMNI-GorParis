@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 1.8 |
+| Version | 2.0 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-15 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -120,10 +120,9 @@ Pour chaque action :
 ## Feuille de route CMS catalogue
 
 Cette feuille de route suit la stabilisation du CMS catalogue et de son parcours
-de commande ; elle ne remplace pas les actions QP du pipeline PHP→Wasm. Les tests
-automatisés et les validations locales restent indépendants de la base IONOS.
-Toute validation IONOS doit utiliser une base isolée, sans données client, et
-des secrets fournis directement par le responsable du compte.
+de commande ; elle ne remplace pas les actions QP du pipeline PHP→Wasm. La
+priorité est un CMS installable sur une machine Windows ou Linux avec PostgreSQL
+standard. Docker et tout hébergeur cloud restent optionnels.
 
 | Étape | Priorité | Action / dépendance | Critère d’acceptation et preuve | Statut |
 |---|---|---|---|---|
@@ -131,14 +130,25 @@ des secrets fournis directement par le responsable du compte.
 | CMS-02 | P1 | Ajouter la gestion des médias aux produits en réutilisant `media` et `product_media`. Dépend de CMS-01. | L’admin peut associer, ordonner, éditer le texte alternatif et retirer des URI d’images ; URI validées, accès boutique isolé, aucune ingestion de fichier local dans cette tranche. Tests API/store réussis et vérification visuelle authentifiée du parcours média réussie. | Terminé |
 | CMS-03 | P1 | Compléter le cycle de vie des comptes staff et protéger l’accès CMS. Dépend de CMS-02. | Gestion du personnel limitée au rôle owner, révocation des sessions affectées et tests des permissions/échecs ; pas d’identifiants de démonstration par défaut. Tests API/PostgreSQL couvrent création, mise à jour, révocation, retrait et refus d’accès. | Terminé |
 | CMS-04 | P1 | Ajouter la consultation des commandes et les transitions de statut sûres au CMS. Dépend de CMS-03. | Liste et détail tenant-scopés ; transitions explicites, snapshots commande conservés et tests API/store couvrant pagination, permissions, annulation et refus avec paiement ou statut incompatible. Tests Go/PostgreSQL réussis. | Terminé |
-| CMS-05 | P2 | Préparer et valider le lancement du CMS sur une machine locale/serveur autonome, sans dépendance obligatoire à Docker ni à un hébergeur particulier. Dépend de CMS-01 à CMS-04 ; IONOS est une option ultérieure, pas un prérequis. | Procédure portable Windows/Linux documentée ; PostgreSQL fourni comme service local ou distant via `DATABASE_URL` ; binaire Go et assets embarqués démarrent, restent limités au réseau configuré, conservent les données et disposent d’une procédure de sauvegarde/restauration vérifiée. | À faire |
+| CMS-05 | P1 | Terminer l’installation et l’exploitation du CMS sur machine locale/serveur autonome, sans dépendance obligatoire à Docker ni à un hébergeur. Dépend de CMS-01 à CMS-04. | Sous-étapes CMS-05a à CMS-05d ci-dessous terminées : démarrage sûr, migrations reproductibles, binaire portable et exercice vérifié de persistance/restauration. | En cours |
+| CMS-06 | P3 | Évaluer un hébergeur distant (IONOS ou autre) uniquement si le besoin est confirmé, après CMS-05. | Environnement de test isolé, secrets hors Git, TLS, migrations et restauration vérifiés. Cette étape est facultative et ne bloque pas la livraison du CMS autonome. | Reporté — décision différée |
+
+### Décomposition de CMS-05
+
+| Sous-étape | Action / dépendance | Critère d’acceptation et preuve | Statut |
+|---|---|---|---|
+| CMS-05a | Fiabiliser le démarrage et la configuration portable. | Le défaut d’écoute est limité à `127.0.0.1`; `LISTEN_ADDR` permet un bind explicite ; un `DATABASE_URL` invalide fait échouer le démarrage plutôt qu’un repli silencieux en mémoire. Tests unitaires, documentation et configuration Compose alignés. | Terminé |
+| CMS-05b | Fournir un outil de migration de schéma utilisable sans Docker. Dépend de CMS-05a. | `cmd/db-migrate` applique les migrations embarquées dans l’ordre sous verrou PostgreSQL ; un bootstrap vierge est atomique, chaque mise à jour et son entrée de registre sont atomiques, et le ledger non contigu ou un schéma non géré sont refusés. Intégrations PostgreSQL vérifient le bootstrap utilisé par les suites, l’idempotence, l’échec/rollback et la réutilisation de la connexion. `go test ./...` et `go vet ./...` réussis. La validation Compose reste à faire sur une machine équipée de Docker. | Terminé |
+| CMS-05c | Construire et lancer une distribution autonome sur les cibles retenues. Dépend de CMS-05b. | Binaires de release Go avec assets admin/storefront embarqués ; matrice Windows/Linux et architectures explicitement déclarée et vérifiée ; PostgreSQL reste un service standard séparé. Procédure de configuration, initialisation owner, lancement et redémarrage sans Docker démontrée sur chaque cible supportée. | À faire |
+| CMS-05d | Vérifier persistance, sauvegarde et restauration locales. Dépend de CMS-05c. | Créer/modifier des données CMS, redémarrer le serveur et constater leur persistance ; produire une sauvegarde PostgreSQL, la restaurer dans une base isolée et vérifier catalogue, comptes et snapshots de commandes. Documenter rétention, emplacement protégé et procédure testée. | À faire |
 
 Le périmètre média initial accepte les URI gérées par le propriétaire (par
 exemple un CDN) ; l’upload binaire et l’intégration à un fournisseur d’objets
 feront l’objet d’une décision et d’une validation de sécurité séparées. La cible
 de déploiement intermédiaire est une machine locale ou un serveur autonome ;
-Docker peut rester une commodité de développement. IONOS ne sera évalué que si
-le besoin est confirmé et n’est pas requis pour terminer le CMS portable.
+Docker peut rester une commodité de développement. L’ordre de travail est
+CMS-05b (migrations), CMS-05c (distribution), puis CMS-05d (restauration).
+IONOS ne sera évalué que si le besoin est confirmé.
 
 ## Historique des révisions
 
@@ -153,3 +163,5 @@ le besoin est confirmé et n’est pas requis pour terminer le CMS portable.
 | 1.6 | 2026-10-15 | Ajout de la documentation API staff/commandes et mise à jour des preuves des étapes CMS-02 à CMS-04 après validation Go/PostgreSQL. | En attente du responsable produit/qualité |
 | 1.7 | 2026-10-15 | Réorientation de CMS-05 vers le déploiement portable sur machine locale/serveur autonome ; IONOS devient optionnel et hors chemin critique. | En attente du responsable produit/qualité |
 | 1.8 | 2026-10-15 | CMS-02 vérifié dans le navigateur ; objectif de portabilité locale précisé et sécurisation du démarrage direct en cours. | En attente du responsable produit/qualité |
+| 1.9 | 2026-10-15 | Décomposition de CMS-05 en démarrage sûr, outil de migrations, distribution Windows/Linux et exercice de sauvegarde/restauration ; IONOS isolé en étape facultative CMS-06. | En attente du responsable produit/qualité |
+| 2.0 | 2026-10-15 | CMS-05b terminé : commande Go de migration embarquée, bootstrap et mises à jour atomiques, registre contrôlé, documentation autonome mise à jour et intégrations PostgreSQL réussies. | En attente du responsable produit/qualité |

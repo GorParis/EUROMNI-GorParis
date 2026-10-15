@@ -2,8 +2,6 @@
 -- Hébergeur volontairement indifférent : n’importe quelle instance Postgres.
 -- Une boutique = une ligne shops. Un déploiement mono-boutique = une seule ligne.
 
-BEGIN;
-
 CREATE EXTENSION IF NOT EXISTS citext;
 
 CREATE OR REPLACE FUNCTION set_updated_at()
@@ -419,5 +417,3 @@ BEGIN
   END LOOP;
 END;
 $$;
-
-COMMIT;

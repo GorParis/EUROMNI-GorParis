@@ -1,5 +1,4 @@
 -- Second active catalog product so listing is not a singleton seed.
-BEGIN;
 
 INSERT INTO products (id, shop_id, slug, status, metadata)
 VALUES (
@@ -62,7 +61,3 @@ VALUES (
   12,
   true
 );
-
-INSERT INTO schema_migrations (version) VALUES ('0005_seed_second_product.sql');
-
-COMMIT;

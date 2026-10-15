@@ -41,6 +41,10 @@ CMS persistante, configurez PostgreSQL et appliquez les migrations décrites dan
 
 L’interface CMS minimale est servie sous `/admin/` et utilise l’API REST staff. La connexion requiert un compte PostgreSQL associé à la boutique. Aucun mot de passe de démonstration n’est fourni.
 
+Le schéma est installé ou mis à jour avec le migrateur intégré ; Compose lance
+la même commande avant le serveur CMS. Pour un lancement autonome, configurez
+`DATABASE_URL`, puis exécutez `go run ./cmd/db-migrate`.
+
 Initialisez le premier propriétaire en transmettant son mot de passe sur l’entrée standard (12 à 72 octets), jamais dans les arguments de la commande :
 
 ```sh

@@ -1,6 +1,5 @@
 -- Representative products for the storefront: single-SKU goods and products
 -- with selectable size variants.
-BEGIN;
 
 UPDATE media
 SET uri = '/storefront/images/cabas-lin.svg', mime_type = 'image/svg+xml'
@@ -75,7 +74,3 @@ VALUES
   ('e0e00000-0001-4000-8000-000000000050', 'e0e00000-0001-4000-8000-000000000065', 0),
   ('e0e00000-0001-4000-8000-000000000054', 'e0e00000-0001-4000-8000-000000000066', 0),
   ('e0e00000-0001-4000-8000-000000000056', 'e0e00000-0001-4000-8000-000000000067', 0);
-
-INSERT INTO schema_migrations (version) VALUES ('0006_seed_representative_catalog.sql');
-
-COMMIT;

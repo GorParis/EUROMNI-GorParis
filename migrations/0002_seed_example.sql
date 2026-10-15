@@ -1,8 +1,6 @@
 -- Jeu exemple EUROMNI (boutique démo). À appliquer après 0001_init.sql.
 -- IDs fixes pour coller au mapping ABI (docs/abi.md).
 
-BEGIN;
-
 INSERT INTO shops (id, slug, name, default_locale, currency, timezone, settings)
 VALUES (
   'e0e00000-0001-4000-8000-000000000001',
@@ -283,5 +281,3 @@ VALUES (
   '{"order_id":"e0e00000-0001-4000-8000-000000000060","number":"AD-1001"}'::jsonb,
   now() - interval '2 days'
 );
-
-COMMIT;

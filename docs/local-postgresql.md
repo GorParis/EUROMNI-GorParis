@@ -15,49 +15,36 @@ docker compose --profile cms up -d --wait
 
 Compose démarre PostgreSQL et le CMS sur le réseau privé du projet. Seul le port HTTP du CMS est publié, sur loopback ; `docker compose --profile cms port cms 8081` affiche l’adresse locale attribuée.
 
-Au premier démarrage sur un volume vide, les migrations numérotées et le seed d’exemple sont exécutés ; `schema_migrations` conserve les versions enregistrées. Les démarrages suivants réutilisent les données existantes et ne rejouent pas les scripts d’initialisation. Toute nouvelle migration doit être appliquée explicitement, dans l’ordre, et enregistrer sa version dans `schema_migrations` au sein de la même transaction.
+Au démarrage, le CMS applique `cmd/db-migrate` avant de lancer le serveur. Sur
+une base vide, l’outil installe le schéma et le catalogue exemple ; sur les
+démarrages suivants, il n’applique que les nouvelles migrations. Le registre
+`schema_migrations` est vérifié à chaque passage.
 
 ## Lancer sans Docker
 
-Installer et démarrer PostgreSQL comme service sur la machine, créer une base et
-un rôle dédiés, puis appliquer les migrations versionnées dans l’ordre à cette
-base vide. Ne pas rejouer les migrations sur une base initialisée : la table
-`schema_migrations` sert de registre. Définir `DATABASE_URL`, initialiser le
-premier propriétaire avec `cmd/staff-bootstrap`, puis démarrer le CMS :
-
-PowerShell :
+Installer et démarrer PostgreSQL comme service sur la machine, puis créer une
+base et un rôle dédiés. Définir `DATABASE_URL` et lancer l’outil de migrations ;
+il découvre les scripts embarqués, vérifie leur ordre et leur registre, applique
+les migrations manquantes de façon idempotente et échoue explicitement en cas de
+ledger incohérent :
 
 ```powershell
 $env:DATABASE_URL = "postgres://euromni:<mot-de-passe>@127.0.0.1:5432/euromni?sslmode=disable"
-Get-ChildItem .\migrations\*.sql | Sort-Object Name | ForEach-Object {
-  psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f $_.FullName
-  if ($LASTEXITCODE -ne 0) { throw "Migration failed: $($_.Name)" }
-}
+go run ./cmd/db-migrate
 ```
 
-Linux/macOS :
+La même commande sous Linux/macOS est `go run ./cmd/db-migrate` après
+configuration de `DATABASE_URL` avec `export`. Les scripts SQL sont aussi
+embarqués dans le binaire, aucune copie du dossier des migrations n’est requise
+à l’exécution.
 
-```sh
-export DATABASE_URL='postgres://euromni:<mot-de-passe>@127.0.0.1:5432/euromni?sslmode=disable'
-for migration in migrations/*.sql; do
-  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration" || exit 1
-done
-```
-
-Ensuite, depuis la racine du dépôt, configurez l’owner avec la commande du
-README en fournissant son secret sur stdin, jamais dans les arguments, puis
-démarrez le service Go :
-
-```powershell
-$env:LISTEN_ADDR = "127.0.0.1:8081"
-go run ./cmd/cms
-```
-
-Sous Linux/macOS, définissez `LISTEN_ADDR` avec `export` avant de démarrer. Le
-CMS écoute par défaut sur `127.0.0.1:8081`; `LISTEN_ADDR` permet de choisir
-explicitement l’adresse et le port. Si `DATABASE_URL` est fourni mais que
-PostgreSQL est injoignable, le processus échoue au démarrage au lieu de basculer
-silencieusement vers le store mémoire.
+Initialisez ensuite le premier propriétaire avec la commande documentée dans le
+README, en fournissant le mot de passe sur stdin, jamais dans les arguments.
+Lancez enfin `go run ./cmd/cms`. Le CMS écoute par défaut sur
+`127.0.0.1:8081`; `LISTEN_ADDR` permet de choisir explicitement l’adresse et le
+port. Si `DATABASE_URL` est fourni mais que PostgreSQL est injoignable, le
+processus échoue au démarrage au lieu de basculer silencieusement vers le store
+mémoire.
 
 Pour un accès depuis un réseau local de confiance, configurez une adresse
 d’interface dédiée ou `0.0.0.0:8081`, limitez l’accès avec le pare-feu et placez
