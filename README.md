@@ -30,7 +30,12 @@ go test ./...
 go run ./cmd/cms
 ```
 
-Prérequis : Go 1.23+, PostgreSQL 16+ (hébergeur libre ; actuellement IONOS). L’ABI Wasm n’est pas exposée en HTTP.
+Prérequis : Go 1.23+, PostgreSQL 16+ (service local recommandé pour commencer ; tout PostgreSQL standard convient). Docker et un hébergeur cloud sont facultatifs. Le CMS écoute par défaut sur `127.0.0.1:8081`; utilisez `LISTEN_ADDR` pour définir explicitement une autre adresse. L’ABI Wasm n’est pas exposée en HTTP.
+
+Sans `DATABASE_URL`, le serveur démarre volontairement avec un catalogue mémoire
+de démonstration et l’authentification staff est indisponible. Pour une instance
+CMS persistante, configurez PostgreSQL et appliquez les migrations décrites dans
+[`docs/local-postgresql.md`](docs/local-postgresql.md) avant le démarrage.
 
 ## Administration du catalogue
 

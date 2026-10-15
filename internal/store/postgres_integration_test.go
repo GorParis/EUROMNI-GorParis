@@ -268,8 +268,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err := db.SQL.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("read migration ledger: %v", err)
 	}
-	if migrationCount != 6 {
-		t.Fatalf("recorded migrations = %d, want 6", migrationCount)
+	if migrationCount != 7 {
+		t.Fatalf("recorded migrations = %d, want 7", migrationCount)
 	}
 	installedModule, err := db.GetInstalledModule(ctx, seed.ShopID, seed.ModuleID)
 	if err != nil {

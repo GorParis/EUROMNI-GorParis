@@ -5,11 +5,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"euromni/internal/store"
 )
 
 func TestNewHandlerWiresMemoryCatalogAndStorefront(t *testing.T) {
-	t.Setenv("DATABASE_URL", "")
-	handler := newHandler()
+	handler := newHandler(store.NewMemory())
 
 	productResponse := httptest.NewRecorder()
 	handler.ServeHTTP(productResponse, httptest.NewRequest(http.MethodGet, "/v1/products", nil))
@@ -27,5 +28,35 @@ func TestNewHandlerWiresMemoryCatalogAndStorefront(t *testing.T) {
 	}
 	if body := storefrontResponse.Body.String(); !strings.Contains(body, "euromni-catalog") {
 		t.Fatalf("storefront response does not contain the catalog component: %s", body)
+	}
+}
+
+func TestConfiguredProductReaderRejectsUnavailableDatabase(t *testing.T) {
+	t.Setenv("DATABASE_URL", "://invalid")
+	reader, closeReader, err := configuredProductReader()
+	if err == nil {
+		if closeReader != nil {
+			_ = closeReader()
+		}
+		t.Fatalf("configuredProductReader() = %T, nil error; want database connection error", reader)
+	}
+	if reader != nil || closeReader != nil {
+		t.Fatalf("configuredProductReader() returned reader=%T and close=%v on error", reader, closeReader != nil)
+	}
+}
+
+func TestListenAddressDefaultsToLoopbackAndAcceptsOverride(t *testing.T) {
+	t.Setenv("LISTEN_ADDR", "")
+	t.Setenv("PORT", "")
+	if got := listenAddress(); got != "127.0.0.1:8081" {
+		t.Fatalf("default listen address = %q, want 127.0.0.1:8081", got)
+	}
+	t.Setenv("PORT", "9090")
+	if got := listenAddress(); got != "127.0.0.1:9090" {
+		t.Fatalf("port-based listen address = %q, want 127.0.0.1:9090", got)
+	}
+	t.Setenv("LISTEN_ADDR", "0.0.0.0:8081")
+	if got := listenAddress(); got != "0.0.0.0:8081" {
+		t.Fatalf("explicit listen address = %q, want 0.0.0.0:8081", got)
 	}
 }
