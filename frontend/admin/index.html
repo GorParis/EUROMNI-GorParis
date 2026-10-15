@@ -123,6 +123,10 @@
                 <legend>Catégories</legend>
                 <div id="category-options" class="category-options"></div>
               </fieldset>
+              <label class="wide">Images — JSON
+                <textarea name="media" spellcheck="false">[]</textarea>
+                <span class="muted">Utilisez une URL HTTPS ou une image de /storefront/images/. Un élément par image, dans l’ordre d’affichage.</span>
+              </label>
               <label class="wide">Variantes — JSON
                 <textarea name="variants" spellcheck="false">[
   {
@@ -161,6 +165,40 @@
               <button id="cancel-category-edit" class="secondary" type="button" hidden>Annuler</button>
             </div>
           </form>
+        </section>
+        <section id="staff-panel" class="panel" hidden>
+          <h2>Membres staff</h2>
+          <p class="muted">Réservé au propriétaire. Ajouter ou modifier un membre réinitialise son mot de passe si un nouveau mot de passe est renseigné.</p>
+          <div id="staff-members" class="product-list"></div>
+          <h3 id="staff-form-title">Ajouter un membre</h3>
+          <form id="staff-form">
+            <input name="id" type="hidden" />
+            <div class="form-grid">
+              <label>E-mail<input name="email" type="email" maxlength="254" autocomplete="off" required /></label>
+              <label>Nom<input name="name" maxlength="120" required /></label>
+              <label>Rôle
+                <select name="role">
+                  <option value="editor">Éditeur</option>
+                  <option value="support">Support</option>
+                  <option value="admin">Administrateur</option>
+                </select>
+              </label>
+              <label>Mot de passe initial / nouveau
+                <input name="password" type="password" minlength="12" maxlength="72" autocomplete="new-password" />
+              </label>
+            </div>
+            <p class="muted">Un mot de passe de 12 à 72 octets est requis à la création. Laissez ce champ vide pour ne pas le modifier.</p>
+            <div class="actions">
+              <button type="submit">Enregistrer le membre</button>
+              <button id="cancel-staff-edit" class="secondary" type="button" hidden>Annuler</button>
+            </div>
+          </form>
+        </section>
+        <section id="orders-panel" class="panel" hidden>
+          <h2>Commandes</h2>
+          <p class="muted">Consultation des commandes récentes. Une commande en attente sans paiement peut être annulée ; le stock est alors restitué.</p>
+          <div id="orders" class="product-list"></div>
+          <div id="order-detail" class="card" hidden></div>
         </section>
       </section>
     </main>

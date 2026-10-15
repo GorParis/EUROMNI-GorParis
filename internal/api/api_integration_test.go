@@ -79,6 +79,17 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	if checkoutResponse.Code != http.StatusCreated || !strings.Contains(checkoutResponse.Body.String(), `"grand_total":"178.0000"`) {
 		t.Fatalf("REST checkout status/body = %d/%s", checkoutResponse.Code, checkoutResponse.Body)
 	}
+	var createdOrder struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(checkoutResponse.Body).Decode(&createdOrder); err != nil {
+		t.Fatalf("decode checkout order: %v", err)
+	}
+	if createdOrder.Data.ID == "" {
+		t.Fatal("checkout response has no order ID")
+	}
 
 	if err := db.BootstrapStaff(context.Background(), seed.ShopID, "owner@atelier-demo.example", "Demo Owner", "integration-password"); err != nil {
 		t.Fatalf("bootstrap seeded staff owner: %v", err)
@@ -95,8 +106,9 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	}
 	var staffLogin struct {
 		Data struct {
-			Token string `json:"token"`
-			Role  string `json:"role"`
+			Token  string `json:"token"`
+			UserID string `json:"user_id"`
+			Role   string `json:"role"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(loginResponse.Body).Decode(&staffLogin); err != nil {
@@ -106,9 +118,26 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		t.Fatalf("staff login payload = %+v; want a token and owner role", staffLogin.Data)
 	}
 	staffAuthorization := "Bearer " + staffLogin.Data.Token
+	protectedOwner := performAPIRequest(mux, http.MethodDelete, "/v1/admin/staff/"+staffLogin.Data.UserID, staffAuthorization, "")
+	if protectedOwner.Code != http.StatusConflict {
+		t.Fatalf("remove owner status/body = %d/%s; want 409", protectedOwner.Code, protectedOwner.Body)
+	}
 	meResponse := performAPIRequest(mux, http.MethodGet, "/v1/admin/me", staffAuthorization, "")
 	if meResponse.Code != http.StatusOK || !strings.Contains(meResponse.Body.String(), `"role":"owner"`) {
 		t.Fatalf("admin identity status/body = %d/%s; want owner identity", meResponse.Code, meResponse.Body)
+	}
+	orderList := performAPIRequest(mux, http.MethodGet, "/v1/admin/orders?limit=10", staffAuthorization, "")
+	if orderList.Code != http.StatusOK || !strings.Contains(orderList.Body.String(), createdOrder.Data.ID) {
+		t.Fatalf("admin order list status/body = %d/%s; want checkout order", orderList.Code, orderList.Body)
+	}
+	invalidOrderPage := performAPIRequest(mux, http.MethodGet, "/v1/admin/orders?limit=0", staffAuthorization, "")
+	if invalidOrderPage.Code != http.StatusBadRequest {
+		t.Fatalf("invalid order page status/body = %d/%s; want 400", invalidOrderPage.Code, invalidOrderPage.Body)
+	}
+	orderDetail := performAPIRequest(mux, http.MethodGet, "/v1/admin/orders/"+createdOrder.Data.ID, staffAuthorization, "")
+	if orderDetail.Code != http.StatusOK || !strings.Contains(orderDetail.Body.String(), `"email":"checkout@example.com"`) ||
+		!strings.Contains(orderDetail.Body.String(), `"sku":"CABAS-LIN-NAT"`) {
+		t.Fatalf("admin order detail status/body = %d/%s; want customer and line snapshots", orderDetail.Code, orderDetail.Body)
 	}
 
 	adminCategory := performAPIRequest(mux, http.MethodPost, "/v1/admin/categories", staffAuthorization,
@@ -116,6 +145,96 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	if adminCategory.Code != http.StatusCreated {
 		t.Fatalf("admin category create status/body = %d/%s; want 201", adminCategory.Code, adminCategory.Body)
 	}
+	createStaff := performAPIRequest(mux, http.MethodPost, "/v1/admin/staff", staffAuthorization,
+		`{"email":"integration-editor@example.com","name":"Integration Editor","role":"editor","password":"initial-editor-password"}`)
+	if createStaff.Code != http.StatusCreated || !strings.Contains(createStaff.Body.String(), `"role":"editor"`) {
+		t.Fatalf("staff create status/body = %d/%s; want editor member", createStaff.Code, createStaff.Body)
+	}
+	var createdStaff struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(createStaff.Body).Decode(&createdStaff); err != nil {
+		t.Fatalf("decode created staff member: %v", err)
+	}
+	if createdStaff.Data.ID == "" {
+		t.Fatal("created staff member response has no ID")
+	}
+	editorLogin := performAPIRequest(mux, http.MethodPost, "/v1/admin/login", "",
+		`{"email":"integration-editor@example.com","password":"initial-editor-password"}`)
+	if editorLogin.Code != http.StatusOK {
+		t.Fatalf("editor login status/body = %d/%s; want 200", editorLogin.Code, editorLogin.Body)
+	}
+	var editorSession struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(editorLogin.Body).Decode(&editorSession); err != nil {
+		t.Fatalf("decode editor login: %v", err)
+	}
+	editorStaffAccess := performAPIRequest(mux, http.MethodGet, "/v1/admin/staff", "Bearer "+editorSession.Data.Token, "")
+	if editorStaffAccess.Code != http.StatusForbidden {
+		t.Fatalf("editor staff-list status/body = %d/%s; want 403", editorStaffAccess.Code, editorStaffAccess.Body)
+	}
+	editorOrderAccess := performAPIRequest(mux, http.MethodGet, "/v1/admin/orders", "Bearer "+editorSession.Data.Token, "")
+	if editorOrderAccess.Code != http.StatusForbidden {
+		t.Fatalf("editor order-list status/body = %d/%s; want 403", editorOrderAccess.Code, editorOrderAccess.Body)
+	}
+	staffList := performAPIRequest(mux, http.MethodGet, "/v1/admin/staff", staffAuthorization, "")
+	if staffList.Code != http.StatusOK || !strings.Contains(staffList.Body.String(), "integration-editor@example.com") {
+		t.Fatalf("staff list status/body = %d/%s; want new editor", staffList.Code, staffList.Body)
+	}
+	updateStaff := performAPIRequest(mux, http.MethodPut, "/v1/admin/staff/"+createdStaff.Data.ID, staffAuthorization,
+		`{"email":"integration-editor@example.com","name":"Integration Support","role":"support","password":"replacement-editor-password"}`)
+	if updateStaff.Code != http.StatusOK || !strings.Contains(updateStaff.Body.String(), `"role":"support"`) {
+		t.Fatalf("staff update status/body = %d/%s; want support role", updateStaff.Code, updateStaff.Body)
+	}
+	revokedAfterReset := performAPIRequest(mux, http.MethodGet, "/v1/admin/me", "Bearer "+editorSession.Data.Token, "")
+	if revokedAfterReset.Code != http.StatusUnauthorized {
+		t.Fatalf("editor session after password reset status/body = %d/%s; want 401", revokedAfterReset.Code, revokedAfterReset.Body)
+	}
+	supportLogin := performAPIRequest(mux, http.MethodPost, "/v1/admin/login", "",
+		`{"email":"integration-editor@example.com","password":"replacement-editor-password"}`)
+	if supportLogin.Code != http.StatusOK || !strings.Contains(supportLogin.Body.String(), `"role":"support"`) {
+		t.Fatalf("support login after reset status/body = %d/%s; want support session", supportLogin.Code, supportLogin.Body)
+	}
+	var supportSession struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(supportLogin.Body).Decode(&supportSession); err != nil {
+		t.Fatalf("decode support login: %v", err)
+	}
+	supportOrders := performAPIRequest(mux, http.MethodGet, "/v1/admin/orders", "Bearer "+supportSession.Data.Token, "")
+	if supportOrders.Code != http.StatusOK {
+		t.Fatalf("support order list status/body = %d/%s; want 200", supportOrders.Code, supportOrders.Body)
+	}
+	supportCancel := performAPIRequest(mux, http.MethodPatch, "/v1/admin/orders/"+createdOrder.Data.ID+"/status",
+		"Bearer "+supportSession.Data.Token, `{"status":"cancelled"}`)
+	if supportCancel.Code != http.StatusForbidden {
+		t.Fatalf("support cancellation status/body = %d/%s; want 403", supportCancel.Code, supportCancel.Body)
+	}
+	cancelOrder := performAPIRequest(mux, http.MethodPatch, "/v1/admin/orders/"+createdOrder.Data.ID+"/status",
+		staffAuthorization, `{"status":"cancelled"}`)
+	if cancelOrder.Code != http.StatusNoContent {
+		t.Fatalf("admin cancellation status/body = %d/%s; want 204", cancelOrder.Code, cancelOrder.Body)
+	}
+	cancelledDetail := performAPIRequest(mux, http.MethodGet, "/v1/admin/orders/"+createdOrder.Data.ID, staffAuthorization, "")
+	if cancelledDetail.Code != http.StatusOK || !strings.Contains(cancelledDetail.Body.String(), `"status":"cancelled"`) {
+		t.Fatalf("cancelled order detail status/body = %d/%s; want cancelled status", cancelledDetail.Code, cancelledDetail.Body)
+	}
+	deleteStaff := performAPIRequest(mux, http.MethodDelete, "/v1/admin/staff/"+createdStaff.Data.ID, staffAuthorization, "")
+	if deleteStaff.Code != http.StatusNoContent {
+		t.Fatalf("staff remove status/body = %d/%s; want 204", deleteStaff.Code, deleteStaff.Body)
+	}
+	revokedAfterRemoval := performAPIRequest(mux, http.MethodGet, "/v1/admin/me", "Bearer "+supportSession.Data.Token, "")
+	if revokedAfterRemoval.Code != http.StatusUnauthorized {
+		t.Fatalf("support session after removal status/body = %d/%s; want 401", revokedAfterRemoval.Code, revokedAfterRemoval.Body)
+	}
+
 	var createdCategory struct {
 		Data struct {
 			ID string `json:"id"`

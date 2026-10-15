@@ -453,7 +453,7 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	}
 
 	rows, err = s.db.QueryContext(ctx, `
-		SELECT m.uri, m.mime_type, m.alt
+		SELECT m.id, pm.position, m.uri, m.mime_type, m.alt
 		FROM product_media pm JOIN media m ON m.id = pm.media_id
 		WHERE pm.product_id = ? AND m.shop_id = ?
 		ORDER BY pm.position, m.id
@@ -464,7 +464,7 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	product.Media = make([]store.MediaView, 0)
 	for rows.Next() {
 		var media store.MediaView
-		if err := rows.Scan(&media.URI, &media.MimeType, &media.Alt); err != nil {
+		if err := rows.Scan(&media.ID, &media.Position, &media.URI, &media.MimeType, &media.Alt); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}

@@ -6,12 +6,17 @@
   const logoutButton = document.querySelector("#logout");
   const productForm = document.querySelector("#product-form");
   const categoryForm = document.querySelector("#category-form");
+  const staffForm = document.querySelector("#staff-form");
   const productList = document.querySelector("#products");
   const categoryList = document.querySelector("#categories");
   const categoryOptions = document.querySelector("#category-options");
+  const staffList = document.querySelector("#staff-members");
+  const orderList = document.querySelector("#orders");
+  const orderDetail = document.querySelector("#order-detail");
   let token = null;
   let categories = [];
   let editingCategory = null;
+  let currentIdentity = null;
 
   function setStatus(message, isError = false) {
     status.textContent = message;
@@ -34,9 +39,13 @@
   }
 
   function showDashboard(identity) {
+    currentIdentity = identity;
     loginPanel.hidden = true;
     dashboard.hidden = false;
     logoutButton.hidden = false;
+    document.querySelector("#staff-panel").hidden = identity.role !== "owner";
+    document.querySelector("#orders-panel").hidden =
+      !["owner", "admin", "support"].includes(identity.role);
     document.querySelector("#identity").textContent =
       `${identity.name || identity.email} · ${identity.email} · rôle ${identity.role}`;
   }
@@ -65,6 +74,17 @@
       card.className = "card";
       const title = document.createElement("h3");
       title.textContent = translationLabel(product.translations);
+      const image = product.media?.[0];
+      if (image) {
+        const preview = document.createElement("img");
+        preview.src = image.uri;
+        preview.alt = image.alt || "";
+        preview.loading = "lazy";
+        preview.style.maxWidth = "8rem";
+        preview.style.maxHeight = "8rem";
+        preview.style.objectFit = "cover";
+        card.append(preview);
+      }
       const metadata = document.createElement("p");
       metadata.className = "muted";
       metadata.textContent = `${product.slug} · ${product.status} · ${product.variants.length} variante(s)`;
@@ -147,11 +167,125 @@
     }
   }
 
+  function renderStaff(members) {
+    staffList.replaceChildren();
+    for (const member of members) {
+      const card = document.createElement("article");
+      card.className = "card";
+      const title = document.createElement("h3");
+      title.textContent = `${member.name} · ${member.role}`;
+      const email = document.createElement("p");
+      email.className = "muted";
+      email.textContent = member.email;
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      if (member.role !== "owner") {
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "secondary";
+        edit.textContent = "Modifier";
+        edit.addEventListener("click", () => editStaff(member));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "danger";
+        remove.textContent = "Retirer";
+        remove.addEventListener("click", async () => {
+          if (!confirm(`Retirer ${member.email} de cette boutique et révoquer ses sessions ?`)) return;
+          try {
+            await request(`/v1/admin/staff/${encodeURIComponent(member.id)}`, { method: "DELETE" });
+            setStatus("Membre retiré et sessions révoquées.");
+            await refresh();
+          } catch (error) {
+            setStatus(error.message, true);
+          }
+        });
+        actions.append(edit, remove);
+      }
+      card.append(title, email, actions);
+      staffList.append(card);
+    }
+  }
+
+  function renderOrderDetail(order) {
+    orderDetail.replaceChildren();
+    orderDetail.hidden = false;
+    const heading = document.createElement("h3");
+    heading.textContent = `Commande ${order.number} · ${order.status}`;
+    const customer = document.createElement("p");
+    customer.textContent = `${order.name} · ${order.email}`;
+    const total = document.createElement("p");
+    total.textContent = `Total : ${order.grand_total} ${order.currency}`;
+    const items = document.createElement("ul");
+    for (const item of order.items) {
+      const row = document.createElement("li");
+      row.textContent = `${item.quantity} × ${item.name} (${item.sku}) · ${item.line_total} ${order.currency}`;
+      items.append(row);
+    }
+    const address = document.createElement("p");
+    address.textContent = `${order.shipping_address.line1 || ""} · ${order.shipping_address.postal_code || ""} ${order.shipping_address.city || ""} · ${order.shipping_address.country || ""}`;
+    orderDetail.append(heading, customer, total, items, address);
+  }
+
+  function renderOrders(orders) {
+    orderList.replaceChildren();
+    orderDetail.hidden = true;
+    for (const order of orders) {
+      const card = document.createElement("article");
+      card.className = "card";
+      const title = document.createElement("h3");
+      title.textContent = `${order.number} · ${order.status}`;
+      const summary = document.createElement("p");
+      summary.className = "muted";
+      summary.textContent = `${order.name} · ${order.email} · ${order.grand_total} ${order.currency}`;
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      const view = document.createElement("button");
+      view.type = "button";
+      view.className = "secondary";
+      view.textContent = "Détail";
+      view.addEventListener("click", async () => {
+        try {
+          renderOrderDetail(await request(`/v1/admin/orders/${encodeURIComponent(order.id)}`));
+        } catch (error) {
+          setStatus(error.message, true);
+        }
+      });
+      actions.append(view);
+      if (order.status === "pending" && ["owner", "admin"].includes(currentIdentity?.role)) {
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "danger";
+        cancel.textContent = "Annuler";
+        cancel.addEventListener("click", async () => {
+          if (!confirm(`Annuler la commande ${order.number} et restituer le stock ?`)) return;
+          try {
+            await request(`/v1/admin/orders/${encodeURIComponent(order.id)}/status`, {
+              method: "PATCH",
+              body: JSON.stringify({ status: "cancelled" }),
+            });
+            setStatus("Commande annulée et stock restitué.");
+            await refresh();
+          } catch (error) {
+            setStatus(error.message, true);
+          }
+        });
+        actions.append(cancel);
+      }
+      card.append(title, summary, actions);
+      orderList.append(card);
+    }
+  }
+
   function editProduct(product) {
     productForm.elements.id.value = product.id;
     productForm.elements.slug.value = product.slug;
     productForm.elements.status.value = product.status;
     productForm.elements.translations.value = JSON.stringify(product.translations, null, 2);
+    productForm.elements.media.value = JSON.stringify((product.media || []).map((media) => ({
+      uri: media.uri,
+      mime_type: media.mime_type,
+      alt: media.alt,
+    })), null, 2);
     productForm.elements.variants.value = JSON.stringify(product.variants.map((variant) => ({
       sku: variant.sku,
       options: variant.options || {},
@@ -176,11 +310,24 @@
     categoryForm.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  function editStaff(member) {
+    staffForm.elements.id.value = member.id;
+    staffForm.elements.email.value = member.email;
+    staffForm.elements.email.readOnly = true;
+    staffForm.elements.name.value = member.name;
+    staffForm.elements.role.value = member.role;
+    staffForm.elements.password.value = "";
+    document.querySelector("#staff-form-title").textContent = "Modifier un membre";
+    document.querySelector("#cancel-staff-edit").hidden = false;
+    staffForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   function resetProductForm() {
     productForm.reset();
     productForm.elements.id.value = "";
     productForm.elements.status.value = "draft";
     productForm.elements.translations.value = '[\n  { "locale": "fr-FR", "name": "Nom du produit", "description": "" }\n]';
+    productForm.elements.media.value = "[]";
     productForm.elements.variants.value = '[\n  {\n    "sku": "ARTICLE-001",\n    "options": {},\n    "prices": [{ "currency": "EUR", "amount": "12.0000" }],\n    "inventory": { "quantity": 10, "track": true }\n  }\n]';
     for (const checkbox of productForm.querySelectorAll('input[name="category_ids"]')) checkbox.checked = false;
     document.querySelector("#product-form-title").textContent = "Créer un produit";
@@ -196,6 +343,15 @@
     document.querySelector("#cancel-category-edit").hidden = true;
   }
 
+  function resetStaffForm() {
+    staffForm.reset();
+    staffForm.elements.id.value = "";
+    staffForm.elements.email.readOnly = false;
+    staffForm.elements.role.value = "editor";
+    document.querySelector("#staff-form-title").textContent = "Ajouter un membre";
+    document.querySelector("#cancel-staff-edit").hidden = true;
+  }
+
   async function refresh() {
     try {
       const [products, loadedCategories] = await Promise.all([
@@ -205,6 +361,12 @@
       categories = loadedCategories;
       renderCategories();
       renderProducts(products);
+      if (currentIdentity?.role === "owner") {
+        renderStaff(await request("/v1/admin/staff"));
+      }
+      if (["owner", "admin", "support"].includes(currentIdentity?.role)) {
+        renderOrders(await request("/v1/admin/orders"));
+      }
       setStatus(`${products.length} produit(s), ${categories.length} catégorie(s).`);
     } catch (error) {
       setStatus(error.message, true);
@@ -213,8 +375,9 @@
 
   document.querySelector("#login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const button = event.currentTarget.querySelector('button[type="submit"]');
+    const loginForm = event.currentTarget;
+    const form = new FormData(loginForm);
+    const button = loginForm.querySelector('button[type="submit"]');
     button.disabled = true;
     try {
       const result = await request("/v1/admin/login", {
@@ -232,10 +395,10 @@
       message.className = "status";
       message.dataset.kind = "error";
       message.textContent = error.message;
-      event.currentTarget.append(message);
+      loginForm.append(message);
     } finally {
       button.disabled = false;
-      event.currentTarget.elements.password.value = "";
+      loginForm.elements.password.value = "";
     }
   });
 
@@ -243,19 +406,22 @@
     event.preventDefault();
     const form = new FormData(productForm);
     let translations;
+    let media;
     let variants;
     try {
       translations = JSON.parse(form.get("translations"));
+      media = JSON.parse(form.get("media"));
       variants = JSON.parse(form.get("variants"));
-      if (!Array.isArray(translations) || !Array.isArray(variants)) throw new Error();
+      if (!Array.isArray(translations) || !Array.isArray(media) || !Array.isArray(variants)) throw new Error();
     } catch {
-      setStatus("Les traductions et variantes doivent être des tableaux JSON valides.", true);
+      setStatus("Les traductions, images et variantes doivent être des tableaux JSON valides.", true);
       return;
     }
     const product = {
       slug: form.get("slug"),
       status: form.get("status"),
       translations,
+      media,
       variants,
       category_ids: [...productForm.querySelectorAll('input[name="category_ids"]:checked')].map((input) => input.value),
     };
@@ -299,8 +465,34 @@
     }
   });
 
+  staffForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(staffForm);
+    const id = form.get("id");
+    const member = {
+      email: form.get("email"),
+      name: form.get("name"),
+      role: form.get("role"),
+      password: form.get("password"),
+    };
+    try {
+      await request(id ? `/v1/admin/staff/${encodeURIComponent(id)}` : "/v1/admin/staff", {
+        method: id ? "PUT" : "POST",
+        body: JSON.stringify(member),
+      });
+      resetStaffForm();
+      setStatus("Membre enregistré.");
+      await refresh();
+    } catch (error) {
+      setStatus(error.message, true);
+    } finally {
+      staffForm.elements.password.value = "";
+    }
+  });
+
   document.querySelector("#cancel-product-edit").addEventListener("click", resetProductForm);
   document.querySelector("#cancel-category-edit").addEventListener("click", resetCategoryForm);
+  document.querySelector("#cancel-staff-edit").addEventListener("click", resetStaffForm);
   logoutButton.addEventListener("click", async () => {
     try {
       await request("/v1/admin/logout", { method: "POST" });

@@ -8,7 +8,10 @@ import (
 	"euromni/internal/store"
 	"io"
 	"net/http"
+	"net/mail"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -231,11 +234,255 @@ func withCatalogWriteAuth(next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
+func withOwnerAuth(next http.HandlerFunc) http.HandlerFunc {
+	return withStaffAuth(func(w http.ResponseWriter, r *http.Request) {
+		session, ok := adminSessionFromContext(r.Context())
+		if !ok || session.Role != "owner" {
+			writePrivateJSON(w, http.StatusForbidden, map[string]any{"error": "owner permission required"})
+			return
+		}
+		next(w, r)
+	})
+}
+
+func withOrderReadAuth(next http.HandlerFunc) http.HandlerFunc {
+	return withStaffAuth(func(w http.ResponseWriter, r *http.Request) {
+		session, ok := adminSessionFromContext(r.Context())
+		if !ok || (session.Role != "owner" && session.Role != "admin" && session.Role != "support") {
+			writePrivateJSON(w, http.StatusForbidden, map[string]any{"error": "order read permission required"})
+			return
+		}
+		next(w, r)
+	})
+}
+
+func withOrderWriteAuth(next http.HandlerFunc) http.HandlerFunc {
+	return withStaffAuth(func(w http.ResponseWriter, r *http.Request) {
+		session, ok := adminSessionFromContext(r.Context())
+		if !ok || (session.Role != "owner" && session.Role != "admin") {
+			writePrivateJSON(w, http.StatusForbidden, map[string]any{"error": "order write permission required"})
+			return
+		}
+		next(w, r)
+	})
+}
+
+func adminOrders(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	reader, ok := currentProductReader().(store.OrderAdminReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "order administration unavailable"})
+		return
+	}
+	limit := 50
+	offset := 0
+	var err error
+	if value := r.URL.Query().Get("limit"); value != "" {
+		limit, err = strconv.Atoi(value)
+		if err != nil || limit < 1 || limit > 100 {
+			writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "limit must be between 1 and 100"})
+			return
+		}
+	}
+	if value := r.URL.Query().Get("offset"); value != "" {
+		offset, err = strconv.Atoi(value)
+		if err != nil || offset < 0 || offset > 100000 {
+			writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "offset must be between 0 and 100000"})
+			return
+		}
+	}
+	orders, err := reader.ListAdminOrders(r.Context(), session.ShopID, limit, offset)
+	if err != nil {
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	if orders == nil {
+		orders = []store.AdminOrderView{}
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": orders})
+}
+
+func adminOrderDetail(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	reader, ok := currentProductReader().(store.OrderAdminReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "order administration unavailable"})
+		return
+	}
+	order, err := reader.GetAdminOrder(r.Context(), session.ShopID, r.PathValue("id"))
+	if err != nil {
+		writeOrderAdminError(w, err)
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": order})
+}
+
+func adminOrderStatus(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Status string `json:"status"`
+	}
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	if input.Status != "cancelled" {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "only cancellation is currently supported"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.OrderAdminReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "order administration unavailable"})
+		return
+	}
+	if err := writer.CancelAdminOrder(r.Context(), session.ShopID, r.PathValue("id")); err != nil {
+		writeOrderAdminError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeOrderAdminError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "order not found"})
+	case errors.Is(err, store.ErrOrderTransition):
+		writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "order cannot be cancelled in its current state"})
+	default:
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+	}
+}
+
+func adminStaffList(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	manager, ok := currentProductReader().(store.StaffMemberWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "staff management unavailable"})
+		return
+	}
+	members, err := manager.ListStaffMembers(r.Context(), session.ShopID)
+	if err != nil {
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": members})
+}
+
+func adminStaffCreate(w http.ResponseWriter, r *http.Request) {
+	var input store.StaffMemberInput
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	if err := validateStaffMemberInput(input, true); err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	manager, ok := currentProductReader().(store.StaffMemberWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "staff management unavailable"})
+		return
+	}
+	member, err := manager.CreateStaffMember(r.Context(), session.ShopID, input)
+	if err != nil {
+		writeStaffWriteError(w, err)
+		return
+	}
+	writePrivateJSON(w, http.StatusCreated, map[string]any{"data": member})
+}
+
+func adminStaffUpdate(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "staff member id is required"})
+		return
+	}
+	var input store.StaffMemberInput
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	if err := validateStaffMemberInput(input, false); err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	manager, ok := currentProductReader().(store.StaffMemberWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "staff management unavailable"})
+		return
+	}
+	member, err := manager.UpdateStaffMember(r.Context(), session.ShopID, id, input)
+	if err != nil {
+		writeStaffWriteError(w, err)
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": member})
+}
+
+func adminStaffRemove(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "staff member id is required"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	manager, ok := currentProductReader().(store.StaffMemberWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "staff management unavailable"})
+		return
+	}
+	if err := manager.RemoveStaffMember(r.Context(), session.ShopID, id); err != nil {
+		writeStaffWriteError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func validateStaffMemberInput(input store.StaffMemberInput, requirePassword bool) error {
+	email := strings.TrimSpace(input.Email)
+	parsedEmail, err := mail.ParseAddress(email)
+	if err != nil || !strings.EqualFold(parsedEmail.Address, email) || len(email) > 254 {
+		return errors.New("a valid email address is required")
+	}
+	if len(strings.TrimSpace(input.Name)) == 0 || len(input.Name) > 120 {
+		return errors.New("staff name is required and must be at most 120 bytes")
+	}
+	if input.Role != "admin" && input.Role != "editor" && input.Role != "support" {
+		return errors.New("role must be admin, editor, or support")
+	}
+	if requirePassword && len(input.Password) == 0 {
+		return errors.New("an initial password is required")
+	}
+	if input.Password != "" && (len(input.Password) < 12 || len(input.Password) > 72) {
+		return errors.New("password must contain 12 to 72 bytes")
+	}
+	return nil
+}
+
+func writeStaffWriteError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "staff member not found"})
+	case errors.Is(err, store.ErrStaffAlreadyExists), errors.Is(err, store.ErrStaffOwnerProtected):
+		writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "staff member conflicts with existing data"})
+	case errors.Is(err, store.ErrStaffRoleInvalid):
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid staff role"})
+	default:
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+	}
+}
+
 var catalogSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 var catalogLocalePattern = regexp.MustCompile(`^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$`)
 var catalogSKU = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 var catalogCurrency = regexp.MustCompile(`^[A-Z]{3}$`)
 var catalogAmount = regexp.MustCompile(`^(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{1,4})?$`)
+var catalogMediaTypes = map[string]struct{}{
+	"image/avif": {}, "image/gif": {}, "image/jpeg": {}, "image/png": {},
+	"image/svg+xml": {}, "image/webp": {},
+}
 
 func adminCreateProduct(w http.ResponseWriter, r *http.Request) {
 	var input store.ProductInput
@@ -469,6 +716,25 @@ func validateProductInput(input store.ProductInput) error {
 			return errors.New("variant options must be a JSON object smaller than 16 KiB")
 		}
 	}
+	if len(input.Media) > 20 {
+		return errors.New("at most 20 product media items are allowed")
+	}
+	mediaURIs := make(map[string]struct{}, len(input.Media))
+	for _, media := range input.Media {
+		if !validCatalogMediaURI(media.URI) {
+			return errors.New("media URI must be an HTTPS URL or a storefront image path")
+		}
+		if _, exists := catalogMediaTypes[media.MimeType]; !exists {
+			return errors.New("media must use a supported image MIME type")
+		}
+		if len(media.Alt) > 500 {
+			return errors.New("media alt text must be at most 500 bytes")
+		}
+		if _, exists := mediaURIs[media.URI]; exists {
+			return errors.New("media URIs must be unique per product")
+		}
+		mediaURIs[media.URI] = struct{}{}
+	}
 	if len(input.CategoryIDs) > 100 {
 		return errors.New("at most 100 product categories are allowed")
 	}
@@ -483,6 +749,23 @@ func validateProductInput(input store.ProductInput) error {
 		categories[categoryID] = struct{}{}
 	}
 	return nil
+}
+
+func validCatalogMediaURI(raw string) bool {
+	if len(raw) == 0 || len(raw) > 2048 || strings.TrimSpace(raw) != raw || strings.ContainsAny(raw, "\\\r\n\t ") {
+		return false
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.User != nil {
+		return false
+	}
+	if parsed.Scheme == "https" {
+		return parsed.Host != "" && parsed.Opaque == ""
+	}
+	if parsed.Scheme != "" || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/storefront/images/") {
+		return false
+	}
+	return !strings.Contains(parsed.Path, "/../") && !strings.HasSuffix(parsed.Path, "/..")
 }
 
 func validateCategoryInput(input store.CategoryInput) error {

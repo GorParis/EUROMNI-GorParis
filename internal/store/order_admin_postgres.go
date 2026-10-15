@@ -1,0 +1,163 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+)
+
+var _ OrderAdminReader = (*Store)(nil)
+
+func (s *Store) ListAdminOrders(ctx context.Context, shopID string, limit, offset int) ([]AdminOrderView, error) {
+	if s == nil || s.SQL == nil {
+		return nil, errors.New("store not configured")
+	}
+	rows, err := s.SQL.QueryContext(ctx, `
+		SELECT id::text
+		FROM orders
+		WHERE shop_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2 OFFSET $3
+	`, shopID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, limit)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	orders := make([]AdminOrderView, 0, len(ids))
+	for _, id := range ids {
+		order, err := s.GetAdminOrder(ctx, shopID, id)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, *order)
+	}
+	return orders, nil
+}
+
+func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*AdminOrderView, error) {
+	if s == nil || s.SQL == nil {
+		return nil, errors.New("store not configured")
+	}
+	var order AdminOrderView
+	var address sql.NullString
+	err := s.SQL.QueryRowContext(ctx, `
+		SELECT o.id::text, o.number, o.status::text, o.currency::text,
+		       o.subtotal::text, o.tax_total::text, o.shipping_total::text, o.grand_total::text,
+		       COALESCE(c.email::text, ''), COALESCE(c.name, ''),
+		       o.shipping_address::text, o.created_at
+		FROM orders o
+		LEFT JOIN customers c ON c.id = o.customer_id
+		WHERE o.shop_id = $1 AND o.id = $2
+	`, shopID, orderID).Scan(
+		&order.ID, &order.Number, &order.Status, &order.Currency,
+		&order.Subtotal, &order.TaxTotal, &order.ShippingTotal, &order.GrandTotal,
+		&order.Email, &order.Name, &address, &order.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if address.Valid && address.String != "" {
+		if err := json.Unmarshal([]byte(address.String), &order.ShippingAddress); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := s.SQL.QueryContext(ctx, `
+		SELECT sku, name, quantity, unit_price::text, line_total::text
+		FROM order_lines
+		WHERE order_id = $1
+		ORDER BY id
+	`, orderID)
+	if err != nil {
+		return nil, err
+	}
+	order.Items = make([]OrderLineView, 0)
+	for rows.Next() {
+		var item OrderLineView
+		if err := rows.Scan(&item.SKU, &item.Name, &item.Quantity, &item.UnitPrice, &item.LineTotal); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		order.Items = append(order.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func (s *Store) CancelAdminOrder(ctx context.Context, shopID, orderID string) error {
+	if s == nil || s.SQL == nil {
+		return errors.New("store not configured")
+	}
+	tx, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var status string
+	err = tx.QueryRowContext(ctx, `
+		SELECT status::text FROM orders
+		WHERE shop_id = $1 AND id = $2
+		FOR UPDATE
+	`, shopID, orderID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status != "pending" {
+		return ErrOrderTransition
+	}
+	var paymentCount int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM payments WHERE order_id = $1`, orderID).Scan(&paymentCount); err != nil {
+		return err
+	}
+	if paymentCount != 0 {
+		return ErrOrderTransition
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE orders SET status = 'cancelled', updated_at = now()
+		WHERE shop_id = $1 AND id = $2
+	`, shopID, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inventory_items inventory
+		SET quantity = inventory.quantity + lines.quantity, updated_at = now()
+		FROM (
+			SELECT variant_id, sum(quantity)::integer AS quantity
+			FROM order_lines
+			WHERE order_id = $1 AND variant_id IS NOT NULL
+			GROUP BY variant_id
+		) lines
+		WHERE inventory.variant_id = lines.variant_id AND inventory.track = true
+	`, orderID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

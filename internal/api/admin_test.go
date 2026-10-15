@@ -201,7 +201,7 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	if updatedCategory.Code != http.StatusOK {
 		t.Fatalf("update category status = %d, want %d; body=%s", updatedCategory.Code, http.StatusOK, updatedCategory.Body.String())
 	}
-	productBody := `{"slug":"porte-cle-demo","status":"draft","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Prototype"}],"category_ids":["` + createdCategory.Data.ID + `"],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"bleu"},"prices":[{"currency":"EUR","amount":"10.0000"}],"inventory":{"quantity":4,"track":true}}]}`
+	productBody := `{"slug":"porte-cle-demo","status":"draft","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Prototype"}],"category_ids":["` + createdCategory.Data.ID + `"],"media":[{"uri":"/storefront/images/cabas-lin.svg","mime_type":"image/svg+xml","alt":"Porte-clés en lin"}],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"bleu"},"prices":[{"currency":"EUR","amount":"10.0000"}],"inventory":{"quantity":4,"track":true}}]}`
 	productCreated := performAdminRequest(mux, http.MethodPost, "/v1/admin/products", auth.token, productBody)
 	if productCreated.Code != http.StatusCreated {
 		t.Fatalf("create product status = %d, want %d; body=%s", productCreated.Code, http.StatusCreated, productCreated.Body.String())
@@ -212,7 +212,8 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	if err := json.Unmarshal(productCreated.Body.Bytes(), &createdProduct); err != nil {
 		t.Fatalf("decode created product: %v", err)
 	}
-	if createdProduct.Data.ID == "" || createdProduct.Data.Status != "draft" || len(createdProduct.Data.Variants) != 1 || createdProduct.Data.Variants[0].Inventory.Quantity != 4 || len(createdProduct.Data.CategoryIDs) != 1 || createdProduct.Data.CategoryIDs[0] != createdCategory.Data.ID {
+	if createdProduct.Data.ID == "" || createdProduct.Data.Status != "draft" || len(createdProduct.Data.Variants) != 1 || createdProduct.Data.Variants[0].Inventory.Quantity != 4 || len(createdProduct.Data.CategoryIDs) != 1 || createdProduct.Data.CategoryIDs[0] != createdCategory.Data.ID ||
+		len(createdProduct.Data.Media) != 1 || createdProduct.Data.Media[0].URI != "/storefront/images/cabas-lin.svg" || createdProduct.Data.Media[0].Position != 0 {
 		t.Fatalf("created product = %+v", createdProduct.Data)
 	}
 	adminList := performAdminRequest(mux, http.MethodGet, "/v1/admin/products", auth.token, "")
@@ -221,11 +222,12 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	}
 
 	updatedProduct := performAdminRequest(mux, http.MethodPut, "/v1/admin/products/"+createdProduct.Data.ID, auth.token,
-		`{"slug":"porte-cle-demo","status":"active","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Mis à jour"}],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"rouge"},"prices":[{"currency":"EUR","amount":"12.5000"}],"inventory":{"quantity":7,"track":true}}],"category_ids":["`+createdCategory.Data.ID+`"]}`)
+		`{"slug":"porte-cle-demo","status":"active","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Mis à jour"}],"media":[{"uri":"https://cdn.example.test/porte-cle.webp","mime_type":"image/webp","alt":"Porte-clés rouge"}],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"rouge"},"prices":[{"currency":"EUR","amount":"12.5000"}],"inventory":{"quantity":7,"track":true}}],"category_ids":["`+createdCategory.Data.ID+`"]}`)
 	if updatedProduct.Code != http.StatusOK {
 		t.Fatalf("update product status = %d, want %d; body=%s", updatedProduct.Code, http.StatusOK, updatedProduct.Body.String())
 	}
-	if !strings.Contains(updatedProduct.Body.String(), `"amount":"12.5000"`) || !strings.Contains(updatedProduct.Body.String(), `"quantity":7`) {
+	if !strings.Contains(updatedProduct.Body.String(), `"amount":"12.5000"`) || !strings.Contains(updatedProduct.Body.String(), `"quantity":7`) ||
+		!strings.Contains(updatedProduct.Body.String(), `"alt":"Porte-clés rouge"`) {
 		t.Fatalf("updated product did not return the saved variant details: %s", updatedProduct.Body.String())
 	}
 	publicProduct := performAdminRequest(mux, http.MethodGet, "/v1/products/"+createdProduct.Data.ID, "", "")
@@ -257,6 +259,11 @@ func TestAdminCatalogValidationAndRoleAuthorization(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux)
 
+	forbiddenStaffList := performAdminRequest(mux, http.MethodGet, "/v1/admin/staff", auth.token, "")
+	if forbiddenStaffList.Code != http.StatusForbidden {
+		t.Fatalf("staff list for catalog admin status = %d; want %d", forbiddenStaffList.Code, http.StatusForbidden)
+	}
+
 	for _, test := range []struct {
 		name   string
 		body   string
@@ -266,6 +273,8 @@ func TestAdminCatalogValidationAndRoleAuthorization(t *testing.T) {
 		{name: "duplicate locale", body: `{"slug":"valid-slug","status":"draft","translations":[{"locale":"fr-FR","name":"Nom"},{"locale":"fr-FR","name":"Name"}]}`, status: http.StatusBadRequest},
 		{name: "unknown field", body: `{"slug":"valid-slug","status":"draft","extra":true,"translations":[{"locale":"fr-FR","name":"Nom"}]}`, status: http.StatusBadRequest},
 		{name: "invalid price", body: `{"slug":"valid-slug","status":"active","translations":[{"locale":"fr-FR","name":"Nom"}],"variants":[{"sku":"SKU-1","options":{},"prices":[{"currency":"EUR","amount":"-10"}],"inventory":{"quantity":1,"track":true}}]}`, status: http.StatusBadRequest},
+		{name: "unsafe media URI", body: `{"slug":"valid-slug","status":"draft","translations":[{"locale":"fr-FR","name":"Nom"}],"media":[{"uri":"javascript:alert(1)","mime_type":"image/png"}]}`, status: http.StatusBadRequest},
+		{name: "unsupported media MIME type", body: `{"slug":"valid-slug","status":"draft","translations":[{"locale":"fr-FR","name":"Nom"}],"media":[{"uri":"https://cdn.example.test/image.png","mime_type":"text/html"}]}`, status: http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := performAdminRequest(mux, http.MethodPost, "/v1/admin/products", auth.token, test.body)

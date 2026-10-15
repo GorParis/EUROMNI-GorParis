@@ -15,7 +15,14 @@ type ProductInput struct {
 	Status       string            `json:"status"`
 	Translations []TranslationView `json:"translations"`
 	CategoryIDs  []string          `json:"category_ids"`
+	Media        []MediaInput      `json:"media"`
 	Variants     []VariantInput    `json:"variants"`
+}
+
+type MediaInput struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mime_type"`
+	Alt      string `json:"alt"`
 }
 
 type VariantInput struct {

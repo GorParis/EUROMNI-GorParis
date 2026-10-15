@@ -17,9 +17,16 @@ import (
 )
 
 var ErrEmptyCart = errors.New("cart is empty")
+var ErrOrderTransition = errors.New("order status transition is not allowed")
 
 type CheckoutWriter interface {
 	CheckoutCart(ctx context.Context, shopID string, tokenHash []byte, details CheckoutDetails) (*OrderView, error)
+}
+
+type OrderAdminReader interface {
+	ListAdminOrders(ctx context.Context, shopID string, limit, offset int) ([]AdminOrderView, error)
+	GetAdminOrder(ctx context.Context, shopID, orderID string) (*AdminOrderView, error)
+	CancelAdminOrder(ctx context.Context, shopID, orderID string) error
 }
 
 type CheckoutDetails struct {
@@ -55,6 +62,22 @@ type OrderLineView struct {
 	Quantity  int    `json:"quantity"`
 	UnitPrice string `json:"unit_price"`
 	LineTotal string `json:"line_total"`
+}
+
+type AdminOrderView struct {
+	ID              string          `json:"id"`
+	Number          string          `json:"number"`
+	Status          string          `json:"status"`
+	Currency        string          `json:"currency"`
+	Subtotal        string          `json:"subtotal"`
+	TaxTotal        string          `json:"tax_total"`
+	ShippingTotal   string          `json:"shipping_total"`
+	GrandTotal      string          `json:"grand_total"`
+	Email           string          `json:"email"`
+	Name            string          `json:"name"`
+	ShippingAddress ShippingAddress `json:"shipping_address"`
+	CreatedAt       time.Time       `json:"created_at"`
+	Items           []OrderLineView `json:"items"`
 }
 
 type checkoutLine struct {

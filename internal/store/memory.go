@@ -319,6 +319,10 @@ func (m *Memory) CreateProduct(ctx context.Context, shopID string, input Product
 	if err != nil {
 		return nil, err
 	}
+	media, err := updatedMemoryMedia(nil, input.Media)
+	if err != nil {
+		return nil, err
+	}
 	key := shopID + "/" + id
 	product := &ProductView{
 		ID:           id,
@@ -326,7 +330,7 @@ func (m *Memory) CreateProduct(ctx context.Context, shopID string, input Product
 		Status:       input.Status,
 		Translations: append([]TranslationView(nil), input.Translations...),
 		CategoryIDs:  append([]string(nil), input.CategoryIDs...),
-		Media:        []MediaView{},
+		Media:        media,
 		Variants:     variants,
 	}
 	m.mu.Lock()
@@ -368,6 +372,10 @@ func (m *Memory) UpdateProduct(ctx context.Context, shopID, productID string, in
 	if err != nil {
 		return nil, err
 	}
+	media, err := updatedMemoryMedia(product.Media, input.Media)
+	if err != nil {
+		return nil, err
+	}
 	if err := m.validateMemoryCategories(shopID, input.CategoryIDs); err != nil {
 		return nil, err
 	}
@@ -375,9 +383,34 @@ func (m *Memory) UpdateProduct(ctx context.Context, shopID, productID string, in
 	product.Status = input.Status
 	product.Translations = append([]TranslationView(nil), input.Translations...)
 	product.CategoryIDs = append([]string(nil), input.CategoryIDs...)
+	product.Media = media
 	product.Variants = variants
 	m.setMemoryProductCategories(shopID, productID, input.CategoryIDs)
 	return cloneProduct(product)
+}
+
+func updatedMemoryMedia(existing []MediaView, inputs []MediaInput) ([]MediaView, error) {
+	existingByURI := make(map[string]MediaView, len(existing))
+	for _, media := range existing {
+		existingByURI[media.URI] = media
+	}
+	media := make([]MediaView, 0, len(inputs))
+	for position, input := range inputs {
+		entry, exists := existingByURI[input.URI]
+		if !exists || entry.ID == "" {
+			id, err := NewCatalogID()
+			if err != nil {
+				return nil, err
+			}
+			entry.ID = id
+		}
+		entry.Position = position
+		entry.URI = input.URI
+		entry.MimeType = input.MimeType
+		entry.Alt = input.Alt
+		media = append(media, entry)
+	}
+	return media, nil
 }
 
 func (m *Memory) ArchiveProduct(ctx context.Context, shopID, productID string) error {

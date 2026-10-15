@@ -3,9 +3,9 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 1.4 |
+| Version | 1.6 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
-| Date de révision | 2026-10-14 |
+| Date de révision | 2026-10-15 |
 | Responsable du document | Responsable produit/technique, à désigner |
 | Périmètre | Architecture, pipeline PHP→Wasm, ABI, artefacts et validation du cœur EUROMNI |
 | Exigence de portabilité | Artefacts Wasm indépendants de l’hôte de build ; plateformes runtime déclarées et testées |
@@ -117,6 +117,27 @@ Pour chaque action :
   référencées ; reprendre la première action non terminée sans supposer que les
   conclusions non testées sont acquises.
 
+## Feuille de route CMS catalogue
+
+Cette feuille de route suit la stabilisation du CMS catalogue et de son parcours
+de commande ; elle ne remplace pas les actions QP du pipeline PHP→Wasm. Les tests
+automatisés et les validations locales restent indépendants de la base IONOS.
+Toute validation IONOS doit utiliser une base isolée, sans données client, et
+des secrets fournis directement par le responsable du compte.
+
+| Étape | Priorité | Action / dépendance | Critère d’acceptation et preuve | Statut |
+|---|---|---|---|---|
+| CMS-01 | P0 | Valider l’interface admin dans un navigateur intégré : rendu, connexion, consultation/édition du catalogue, erreurs et déconnexion. S’appuyer sur les tests Go PostgreSQL du parcours staff. | Écran et gestion d’erreur observés au navigateur ; défaut du formulaire asynchrone corrigé. Connexion/CRUD/déconnexion validés par l’intégration Go/PostgreSQL. | Terminé |
+| CMS-02 | P1 | Ajouter la gestion des médias aux produits en réutilisant `media` et `product_media`. Dépend de CMS-01. | L’admin peut associer, ordonner, éditer le texte alternatif et retirer des URI d’images ; URI validées, accès boutique isolé, aucune ingestion de fichier local dans cette tranche. Tests API/store réussis ; validation visuelle authentifiée à finaliser. | Vérification |
+| CMS-03 | P1 | Compléter le cycle de vie des comptes staff et protéger l’accès CMS. Dépend de CMS-02. | Gestion du personnel limitée au rôle owner, révocation des sessions affectées et tests des permissions/échecs ; pas d’identifiants de démonstration par défaut. Tests API/PostgreSQL couvrent création, mise à jour, révocation, retrait et refus d’accès. | Terminé |
+| CMS-04 | P1 | Ajouter la consultation des commandes et les transitions de statut sûres au CMS. Dépend de CMS-03. | Liste et détail tenant-scopés ; transitions explicites, snapshots commande conservés et tests API/store couvrant pagination, permissions, annulation et refus avec paiement ou statut incompatible. Tests Go/PostgreSQL réussis. | Terminé |
+| CMS-05 | P2 | Vérifier la compatibilité du déploiement avec l’environnement IONOS. Dépend de CMS-01 à CMS-04 ; ne bloque pas les tests locaux. | Base PostgreSQL de test isolée, TLS/connectivité confirmés, migrations et sauvegarde/restauration vérifiées ; aucun secret stocké dans Git ni exposé dans le rapport. | À faire |
+
+Le périmètre média initial accepte les URI gérées par le propriétaire (par
+exemple un CDN) ; l’upload binaire et l’intégration à un fournisseur d’objets
+feront l’objet d’une décision et d’une validation de sécurité séparées. L’étape
+IONOS est une répétition de déploiement, pas une dépendance pour les tests Go.
+
 ## Historique des révisions
 
 | Version | Date | Modification | Approbation |
@@ -126,3 +147,5 @@ Pour chaque action :
 | 1.2 | 2026-10-12 | Clarification de l’exigence de portabilité et ajout d’une matrice d’hôtes runtime distincte du poste de build. | En attente du responsable produit/qualité |
 | 1.3 | 2026-10-13 | Ajout d’une matrice initiale séparant runtime CGo, guests Wasm et worker de build ; aucune cible n’est déclarée supportée sans validation. | En attente du responsable produit/qualité |
 | 1.4 | 2026-10-14 | Suite Windows/amd64 validee ; correction du FileStore avec DACL NTFS protege et documentation du test. QP-10 reste ouvert en attente de l'integration et des cibles de production. | En attente du responsable produit/qualité |
+| 1.5 | 2026-10-15 | Ajout de la feuille de route vérifiable du CMS : navigateur, médias, cycle staff, commandes et répétition de déploiement IONOS isolée. | En attente du responsable produit/qualité |
+| 1.6 | 2026-10-15 | Ajout de la documentation API staff/commandes et mise à jour des preuves des étapes CMS-02 à CMS-04 après validation Go/PostgreSQL. | En attente du responsable produit/qualité |

@@ -105,10 +105,54 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err != nil || emptyShopSession.Role != "owner" {
 		t.Fatalf("authenticate empty-shop owner = %+v, error = %v", emptyShopSession, err)
 	}
+	staffMember, err := db.CreateStaffMember(ctx, seed.ShopID, StaffMemberInput{
+		Email: "catalog-editor@example.com", Name: "Catalog Editor", Role: "editor", Password: "initial-editor-password",
+	})
+	if err != nil {
+		t.Fatalf("create staff member: %v", err)
+	}
+	editorSession, err := db.AuthenticateStaff(ctx, seed.ShopID, staffMember.Email, "initial-editor-password")
+	if err != nil || editorSession.Role != "editor" {
+		t.Fatalf("authenticate staff member = %+v, error = %v", editorSession, err)
+	}
+	updatedStaff, err := db.UpdateStaffMember(ctx, seed.ShopID, staffMember.ID, StaffMemberInput{
+		Email: staffMember.Email, Name: "Catalog Support", Role: "support", Password: "replacement-editor-password",
+	})
+	if err != nil || updatedStaff.Role != "support" || updatedStaff.Name != "Catalog Support" {
+		t.Fatalf("update staff member = %+v, error = %v", updatedStaff, err)
+	}
+	if _, err := db.ValidateStaffSession(ctx, editorSession.Token); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("validate session after password reset error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if _, err := db.AuthenticateStaff(ctx, seed.ShopID, staffMember.Email, "initial-editor-password"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("authenticate with old staff password error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	supportSession, err := db.AuthenticateStaff(ctx, seed.ShopID, staffMember.Email, "replacement-editor-password")
+	if err != nil || supportSession.Role != "support" {
+		t.Fatalf("authenticate updated staff member = %+v, error = %v", supportSession, err)
+	}
+	if _, err := db.UpdateStaffMember(ctx, seed.ShopID, staffSession.UserID, StaffMemberInput{
+		Email: staffSession.Email, Name: staffSession.Name, Role: "editor",
+	}); !errors.Is(err, ErrStaffOwnerProtected) {
+		t.Fatalf("change owner role error = %v, want %v", err, ErrStaffOwnerProtected)
+	}
+	if err := db.RemoveStaffMember(ctx, seed.ShopID, staffSession.UserID); !errors.Is(err, ErrStaffOwnerProtected) {
+		t.Fatalf("remove owner error = %v, want %v", err, ErrStaffOwnerProtected)
+	}
+	if err := db.RemoveStaffMember(ctx, seed.ShopID, staffMember.ID); err != nil {
+		t.Fatalf("remove staff member: %v", err)
+	}
+	if _, err := db.ValidateStaffSession(ctx, supportSession.Token); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("validate removed staff session error = %v, want %v", err, ErrInvalidCredentials)
+	}
 
 	adminProduct, err := db.CreateProduct(ctx, seed.ShopID, ProductInput{
 		Slug: "admin-crud-test", Status: "draft", CategoryIDs: []string{seed.CategoryID},
 		Translations: []TranslationView{{Locale: "fr-FR", Name: "Article admin", Description: "Brouillon"}},
+		Media: []MediaInput{
+			{URI: "https://cdn.example.test/admin-main.webp", MimeType: "image/webp", Alt: "Image principale"},
+			{URI: "https://cdn.example.test/admin-detail.webp", MimeType: "image/webp", Alt: "Détail"},
+		},
 		Variants: []VariantInput{{
 			SKU: "ADMIN-CRUD-TEST", Options: map[string]any{"taille": "unique"},
 			Prices:    []PriceView{{Currency: "EUR", Amount: "12.5000"}},
@@ -120,9 +164,11 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	}
 	if len(adminProduct.CategoryIDs) != 1 || adminProduct.CategoryIDs[0] != seed.CategoryID || len(adminProduct.Variants) != 1 ||
 		adminProduct.Variants[0].SKU != "ADMIN-CRUD-TEST" || adminProduct.Variants[0].Prices[0].Amount != "12.5000" ||
-		adminProduct.Variants[0].Inventory.Quantity != 8 {
+		adminProduct.Variants[0].Inventory.Quantity != 8 || len(adminProduct.Media) != 2 ||
+		adminProduct.Media[0].Position != 0 || adminProduct.Media[1].Position != 1 {
 		t.Fatalf("created admin product associations and inventory = %+v", adminProduct)
 	}
+	primaryMediaID := adminProduct.Media[0].ID
 	if _, err := db.CreateProduct(ctx, seed.ShopID, ProductInput{
 		Slug: "cabas-lin", Status: "draft",
 		Translations: []TranslationView{{Locale: "fr-FR", Name: "Doublon"}},
@@ -136,6 +182,9 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	updatedProduct, err := db.UpdateProduct(ctx, seed.ShopID, adminProduct.ID, ProductInput{
 		Slug: "admin-crud-test", Status: "active", CategoryIDs: []string{seed.CategoryID},
 		Translations: []TranslationView{{Locale: "fr-FR", Name: "Article publié", Description: "Mis à jour"}},
+		Media: []MediaInput{
+			{URI: "https://cdn.example.test/admin-main.webp", MimeType: "image/webp", Alt: "Image principale modifiée"},
+		},
 		Variants: []VariantInput{{
 			SKU: "ADMIN-CRUD-TEST", Options: map[string]any{"taille": "unique"},
 			Prices:    []PriceView{{Currency: "EUR", Amount: "15.0000"}},
@@ -147,7 +196,9 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	}
 	if len(updatedProduct.CategoryIDs) != 1 || len(updatedProduct.Variants) != 1 ||
 		updatedProduct.Variants[0].ID != adminProduct.Variants[0].ID ||
-		updatedProduct.Variants[0].Prices[0].Amount != "15.0000" || updatedProduct.Variants[0].Inventory.Quantity != 6 {
+		updatedProduct.Variants[0].Prices[0].Amount != "15.0000" || updatedProduct.Variants[0].Inventory.Quantity != 6 ||
+		len(updatedProduct.Media) != 1 || updatedProduct.Media[0].ID != primaryMediaID ||
+		updatedProduct.Media[0].Position != 0 || updatedProduct.Media[0].Alt != "Image principale modifiée" {
 		t.Fatalf("updated admin product associations and inventory = %+v", updatedProduct)
 	}
 	adminCartToken := sha256.Sum256([]byte("admin variant reference cart"))
@@ -293,5 +344,81 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	}
 	if _, err := db.CheckoutCart(ctx, seed.ShopID, tokenHash[:], CheckoutDetails{}); err != ErrEmptyCart {
 		t.Fatalf("second checkout error = %v, want %v", err, ErrEmptyCart)
+	}
+	adminOrder, err := db.GetAdminOrder(ctx, seed.ShopID, order.ID)
+	if err != nil || adminOrder.Email != "checkout@example.com" || adminOrder.Name != "Checkout test" ||
+		adminOrder.ShippingAddress.Country != "FR" || len(adminOrder.Items) != 1 || adminOrder.Items[0].SKU != "CABAS-LIN-NAT" {
+		t.Fatalf("read admin order = %+v, error = %v", adminOrder, err)
+	}
+	adminOrderPage, err := db.ListAdminOrders(ctx, seed.ShopID, 1, 0)
+	if err != nil || len(adminOrderPage) != 1 {
+		t.Fatalf("first admin order page = %+v, error = %v; want one row", adminOrderPage, err)
+	}
+	adminOrders, err := db.ListAdminOrders(ctx, seed.ShopID, 100, 0)
+	if err != nil {
+		t.Fatalf("list admin orders: %v", err)
+	}
+	foundAdminOrder := false
+	for _, listedOrder := range adminOrders {
+		if listedOrder.ID == order.ID {
+			foundAdminOrder = true
+			break
+		}
+	}
+	if !foundAdminOrder {
+		t.Fatalf("admin order list %+v does not contain checkout order %s", adminOrders, order.ID)
+	}
+	emptyAdminOrderPage, err := db.ListAdminOrders(ctx, seed.ShopID, 10, 1000)
+	if err != nil || len(emptyAdminOrderPage) != 0 {
+		t.Fatalf("empty admin order page = %+v, error = %v; want no rows", emptyAdminOrderPage, err)
+	}
+	if _, err := db.GetAdminOrder(ctx, "e0e00000-0001-4000-8000-000000000099", order.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-shop admin order error = %v, want %v", err, ErrNotFound)
+	}
+	if err := db.CancelAdminOrder(ctx, seed.ShopID, order.ID); err != nil {
+		t.Fatalf("cancel pending order: %v", err)
+	}
+	adminOrder, err = db.GetAdminOrder(ctx, seed.ShopID, order.ID)
+	if err != nil || adminOrder.Status != "cancelled" {
+		t.Fatalf("cancelled order = %+v, error = %v", adminOrder, err)
+	}
+	if err := db.CancelAdminOrder(ctx, seed.ShopID, order.ID); !errors.Is(err, ErrOrderTransition) {
+		t.Fatalf("cancel already-cancelled order error = %v, want %v", err, ErrOrderTransition)
+	}
+	if err := db.SQL.QueryRowContext(ctx, `SELECT quantity FROM inventory_items WHERE variant_id::text = $1`, seed.VariantID).Scan(&remainingStock); err != nil {
+		t.Fatalf("read restocked inventory: %v", err)
+	}
+	if remainingStock != 24 {
+		t.Fatalf("inventory after cancelling order = %d, want 24", remainingStock)
+	}
+
+	paymentCartToken := sha256.Sum256([]byte("payment protected order cart"))
+	if err := db.CreateCart(ctx, seed.ShopID, paymentCartToken[:]); err != nil {
+		t.Fatalf("create payment-protected order cart: %v", err)
+	}
+	defer func() {
+		_, _ = db.SQL.ExecContext(context.Background(), "DELETE FROM carts WHERE access_token_hash = $1", paymentCartToken[:])
+	}()
+	if _, err := db.AddCartLine(ctx, seed.ShopID, paymentCartToken[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add payment-protected order line: %v", err)
+	}
+	paymentOrder, err := db.CheckoutCart(ctx, seed.ShopID, paymentCartToken[:], CheckoutDetails{
+		Email: "payment-protected@example.com",
+		Name:  "Payment protected",
+		ShippingAddress: ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create payment-protected order: %v", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		INSERT INTO payments (order_id, provider, amount, currency)
+		VALUES ($1, 'test', 89, 'EUR')
+	`, paymentOrder.ID); err != nil {
+		t.Fatalf("add payment record: %v", err)
+	}
+	if err := db.CancelAdminOrder(ctx, seed.ShopID, paymentOrder.ID); !errors.Is(err, ErrOrderTransition) {
+		t.Fatalf("cancel order with payment record error = %v, want %v", err, ErrOrderTransition)
 	}
 }

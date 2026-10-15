@@ -25,6 +25,8 @@ type TranslationView struct {
 }
 
 type MediaView struct {
+	ID       string `json:"id"`
+	Position int    `json:"position"`
 	URI      string `json:"uri"`
 	MimeType string `json:"mime_type"`
 	Alt      string `json:"alt"`
@@ -215,7 +217,7 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	}
 
 	mediaRows, err := s.SQL.QueryContext(ctx, `
-		SELECT m.uri, m.mime_type, m.alt
+		SELECT m.id::text, pm.position, m.uri, m.mime_type, m.alt
 		FROM product_media pm
 		JOIN media m ON m.id = pm.media_id
 		WHERE pm.product_id = $1 AND m.shop_id = $2
@@ -227,7 +229,7 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	defer mediaRows.Close()
 	for mediaRows.Next() {
 		var m MediaView
-		if err := mediaRows.Scan(&m.URI, &m.MimeType, &m.Alt); err != nil {
+		if err := mediaRows.Scan(&m.ID, &m.Position, &m.URI, &m.MimeType, &m.Alt); err != nil {
 			return nil, err
 		}
 		p.Media = append(p.Media, m)

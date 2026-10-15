@@ -134,6 +134,9 @@ func TestSQLiteCatalogAdministration(t *testing.T) {
 	product, err := db.CreateProduct(ctx, seed.ShopID, store.ProductInput{
 		Slug: "article-brouillon", Status: "draft",
 		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Article brouillon", Description: "Texte"}},
+		Media: []store.MediaInput{{
+			URI: "/storefront/images/cabas-lin.svg", MimeType: "image/svg+xml", Alt: "Cabas local",
+		}},
 		Variants: []store.VariantInput{{
 			SKU: "ARTICLE-BROUILLON", Options: map[string]any{"taille": "unique"},
 			Prices:    []store.PriceView{{Currency: "EUR", Amount: "12.5000"}},
@@ -146,6 +149,10 @@ func TestSQLiteCatalogAdministration(t *testing.T) {
 	if len(product.Variants) != 1 || product.Variants[0].Prices[0].Amount != "12.5000" || product.Variants[0].Inventory.Quantity != 8 {
 		t.Fatalf("created SQLite variant, price, and inventory = %+v", product.Variants)
 	}
+	if len(product.Media) != 1 || product.Media[0].Position != 0 || product.Media[0].Alt != "Cabas local" {
+		t.Fatalf("created SQLite media = %+v", product.Media)
+	}
+	mediaID := product.Media[0].ID
 	products, err := db.ListAdminProducts(ctx, seed.ShopID)
 	if err != nil {
 		t.Fatalf("list admin SQLite products: %v", err)
@@ -156,6 +163,10 @@ func TestSQLiteCatalogAdministration(t *testing.T) {
 	updated, err := db.UpdateProduct(ctx, seed.ShopID, product.ID, store.ProductInput{
 		Slug: "article-brouillon", Status: "active",
 		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Article publié", Description: "Mis à jour"}},
+		Media: []store.MediaInput{
+			{URI: "/storefront/images/cabas-lin.svg", MimeType: "image/svg+xml", Alt: "Cabas édité"},
+			{URI: "https://cdn.example.test/detail.webp", MimeType: "image/webp", Alt: "Détail du cabas"},
+		},
 		Variants: []store.VariantInput{{
 			SKU: "ARTICLE-BROUILLON", Options: map[string]any{"taille": "unique"},
 			Prices:    []store.PriceView{{Currency: "EUR", Amount: "15.0000"}},
@@ -168,7 +179,9 @@ func TestSQLiteCatalogAdministration(t *testing.T) {
 	publicProduct, err := db.GetProduct(ctx, seed.ShopID, product.ID)
 	if err != nil || updated.Status != "active" || publicProduct.Translations[0].Name != "Article publié" ||
 		len(publicProduct.Variants) != 1 || publicProduct.Variants[0].Prices[0].Amount != "15.0000" ||
-		publicProduct.Variants[0].Inventory.Quantity != 6 {
+		publicProduct.Variants[0].Inventory.Quantity != 6 || len(publicProduct.Media) != 2 ||
+		publicProduct.Media[0].ID != mediaID || publicProduct.Media[0].Position != 0 ||
+		publicProduct.Media[0].Alt != "Cabas édité" || publicProduct.Media[1].Position != 1 {
 		t.Fatalf("updated/public product = %+v/%+v, error = %v", updated, publicProduct, err)
 	}
 
@@ -193,6 +206,9 @@ func TestSQLiteCatalogAdministration(t *testing.T) {
 		Slug: "article-brouillon", Status: "active",
 		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Article publié"}},
 		CategoryIDs:  []string{category.ID},
+		Media: []store.MediaInput{
+			{URI: "/storefront/images/cabas-lin.svg", MimeType: "image/svg+xml", Alt: "Cabas édité"},
+		},
 		Variants: []store.VariantInput{{
 			SKU: "ARTICLE-BROUILLON", Options: map[string]any{"taille": "unique"},
 			Prices:    []store.PriceView{{Currency: "EUR", Amount: "15.0000"}},

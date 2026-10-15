@@ -75,6 +75,9 @@ func (s *Store) CreateProduct(ctx context.Context, shopID string, input store.Pr
 	if err := replaceProductCategories(ctx, tx, shopID, id, input.CategoryIDs); err != nil {
 		return nil, err
 	}
+	if err := replaceProductMedia(ctx, tx, shopID, id, input.Media); err != nil {
+		return nil, err
+	}
 	if err := replaceProductVariants(ctx, tx, id, input.Variants); err != nil {
 		return nil, err
 	}
@@ -115,6 +118,9 @@ func (s *Store) UpdateProduct(ctx context.Context, shopID, productID string, inp
 		}
 	}
 	if err := replaceProductCategories(ctx, tx, shopID, productID, input.CategoryIDs); err != nil {
+		return nil, err
+	}
+	if err := replaceProductMedia(ctx, tx, shopID, productID, input.Media); err != nil {
 		return nil, err
 	}
 	if err := replaceProductVariants(ctx, tx, productID, input.Variants); err != nil {
@@ -246,6 +252,66 @@ func replaceProductCategories(ctx context.Context, tx *sql.Tx, shopID, productID
 		}
 		if affected != 1 {
 			return store.ErrNotFound
+		}
+	}
+	return nil
+}
+
+func replaceProductMedia(ctx context.Context, tx *sql.Tx, shopID, productID string, inputs []store.MediaInput) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT m.id, m.uri
+		FROM product_media pm
+		JOIN media m ON m.id = pm.media_id
+		WHERE pm.product_id = ? AND m.shop_id = ?
+	`, productID, shopID)
+	if err != nil {
+		return err
+	}
+	existing := make(map[string]string)
+	for rows.Next() {
+		var id, uri string
+		if err := rows.Scan(&id, &uri); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		existing[uri] = id
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM product_media WHERE product_id = ?`, productID); err != nil {
+		return err
+	}
+	for position, input := range inputs {
+		mediaID, found := existing[input.URI]
+		if found {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE media SET mime_type = ?, alt = ?
+				WHERE id = ? AND shop_id = ?
+			`, input.MimeType, input.Alt, mediaID, shopID); err != nil {
+				return err
+			}
+		} else {
+			mediaID, err = store.NewCatalogID()
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO media (id, shop_id, uri, mime_type, alt)
+				VALUES (?, ?, ?, ?, ?)
+			`, mediaID, shopID, input.URI, input.MimeType, input.Alt); err != nil {
+				return catalogSQLiteError(err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO product_media (product_id, media_id, position)
+			VALUES (?, ?, ?)
+		`, productID, mediaID, position); err != nil {
+			return catalogSQLiteError(err)
 		}
 	}
 	return nil
