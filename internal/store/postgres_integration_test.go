@@ -54,6 +54,9 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if _, err := db.AuthenticateStaff(ctx, seed.ShopID, "owner@atelier-demo.example", "integration-password"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("authenticate unconfigured seeded owner error = %v, want %v", err, ErrInvalidCredentials)
 	}
+	if err := db.BootstrapStaff(ctx, seed.ShopID, "wrong-owner@atelier-demo.example", "Wrong Owner", "integration-password"); !errors.Is(err, ErrStaffAlreadyBootstrapped) {
+		t.Fatalf("bootstrap seeded owner with wrong email error = %v, want %v", err, ErrStaffAlreadyBootstrapped)
+	}
 	if err := db.BootstrapStaff(ctx, seed.ShopID, "owner@atelier-demo.example", "Demo Owner", "integration-password"); err != nil {
 		t.Fatalf("bootstrap seeded owner: %v", err)
 	}
@@ -72,6 +75,35 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	}
 	if _, err := db.ValidateStaffSession(ctx, staffSession.Token); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("revoked staff session error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	expiredSession, err := db.AuthenticateStaff(ctx, seed.ShopID, "owner@atelier-demo.example", "integration-password")
+	if err != nil {
+		t.Fatalf("authenticate owner for expiry test: %v", err)
+	}
+	expiredHash := sha256.Sum256([]byte(expiredSession.Token))
+	if _, err := db.SQL.ExecContext(ctx, `UPDATE sessions SET expires_at = now() - interval '1 second' WHERE token_hash = $1`, expiredHash[:]); err != nil {
+		t.Fatalf("expire staff session: %v", err)
+	}
+	if _, err := db.ValidateStaffSession(ctx, expiredSession.Token); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expired staff session error = %v, want %v", err, ErrInvalidCredentials)
+	}
+	if err := db.RevokeStaffSession(ctx, expiredSession.Token); err != nil {
+		t.Fatalf("revoke expired staff session: %v", err)
+	}
+
+	emptyShopID := "e0e00000-0001-4000-8000-000000000099"
+	if _, err := db.SQL.ExecContext(ctx, `INSERT INTO shops (id, slug, name) VALUES ($1, 'bootstrap-test', 'Bootstrap test')`, emptyShopID); err != nil {
+		t.Fatalf("create empty bootstrap shop: %v", err)
+	}
+	if err := db.BootstrapStaff(ctx, emptyShopID, "new-owner@example.com", "New Owner", "empty-shop-password"); err != nil {
+		t.Fatalf("bootstrap owner in empty shop: %v", err)
+	}
+	if err := db.BootstrapStaff(ctx, emptyShopID, "another-owner@example.com", "Another Owner", "another-password"); !errors.Is(err, ErrStaffAlreadyBootstrapped) {
+		t.Fatalf("second empty-shop bootstrap error = %v, want %v", err, ErrStaffAlreadyBootstrapped)
+	}
+	emptyShopSession, err := db.AuthenticateStaff(ctx, emptyShopID, "new-owner@example.com", "empty-shop-password")
+	if err != nil || emptyShopSession.Role != "owner" {
+		t.Fatalf("authenticate empty-shop owner = %+v, error = %v", emptyShopSession, err)
 	}
 
 	adminProduct, err := db.CreateProduct(ctx, seed.ShopID, ProductInput{
@@ -114,6 +146,7 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		t.Fatalf("updated product = %+v, error = %v", updatedProduct, err)
 	}
 	if len(updatedProduct.CategoryIDs) != 1 || len(updatedProduct.Variants) != 1 ||
+		updatedProduct.Variants[0].ID != adminProduct.Variants[0].ID ||
 		updatedProduct.Variants[0].Prices[0].Amount != "15.0000" || updatedProduct.Variants[0].Inventory.Quantity != 6 {
 		t.Fatalf("updated admin product associations and inventory = %+v", updatedProduct)
 	}
@@ -132,6 +165,21 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		Translations: []TranslationView{{Locale: "fr-FR", Name: "Article publié"}},
 	}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("removing cart-referenced variant error = %v, want %v", err, ErrConflict)
+	}
+	if _, err := db.CheckoutCart(ctx, seed.ShopID, adminCartToken[:], CheckoutDetails{
+		Email: "admin-variant-order@example.com",
+		Name:  "Admin variant order",
+		ShippingAddress: ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	}); err != nil {
+		t.Fatalf("checkout cart containing admin variant: %v", err)
+	}
+	if _, err := db.UpdateProduct(ctx, seed.ShopID, adminProduct.ID, ProductInput{
+		Slug: "admin-crud-test", Status: "active",
+		Translations: []TranslationView{{Locale: "fr-FR", Name: "Article publié"}},
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("removing order-referenced variant error = %v, want %v", err, ErrConflict)
 	}
 	if err := db.ArchiveProduct(ctx, seed.ShopID, adminProduct.ID); err != nil {
 		t.Fatalf("archive admin product: %v", err)
