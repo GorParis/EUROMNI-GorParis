@@ -1,0 +1,98 @@
+name: CMS standalone distribution
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "cms-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: linux-amd64
+          - os: windows-2022
+            target: windows-amd64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Windows C toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test -count=1 ./...
+
+      - name: Build and archive Linux distribution
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="euromni-cms-${{ matrix.target }}"
+          mkdir -p "dist/$bundle/docs"
+          for command in cms db-migrate staff-bootstrap artifact-reconciler; do
+            go build -trimpath -o "dist/$bundle/euromni-$command" "./cmd/$command"
+          done
+          cp docs/cms-distribution.md docs/database.md docs/local-postgresql.md "dist/$bundle/docs/"
+          {
+            printf 'Target: %s\n' '${{ matrix.target }}'
+            printf 'Commit: %s\n' "$GITHUB_SHA"
+            go version
+            go env GOOS GOARCH CGO_ENABLED
+          } > "dist/$bundle/BUILD-INFO.txt"
+          tar -czf "dist/$bundle.tar.gz" -C dist "$bundle"
+
+      - name: Build and archive Windows distribution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundle = "euromni-cms-${{ matrix.target }}"
+          $bundlePath = Join-Path "dist" $bundle
+          $docsPath = Join-Path $bundlePath "docs"
+          New-Item -ItemType Directory -Force -Path $docsPath | Out-Null
+          foreach ($command in @("cms", "db-migrate", "staff-bootstrap", "artifact-reconciler")) {
+            go build -trimpath -o (Join-Path $bundlePath "euromni-$command.exe") "./cmd/$command"
+            if ($LASTEXITCODE -ne 0) { throw "Build failed for $command" }
+          }
+          Copy-Item docs/cms-distribution.md,docs/database.md,docs/local-postgresql.md -Destination $docsPath
+          @(
+            "Target: ${{ matrix.target }}"
+            "Commit: $env:GITHUB_SHA"
+            (go version)
+            (go env GOOS GOARCH CGO_ENABLED)
+          ) | Set-Content -Encoding ascii (Join-Path $bundlePath "BUILD-INFO.txt")
+          Compress-Archive -Path $bundlePath -DestinationPath (Join-Path "dist" "$bundle.zip")
+
+      - name: Upload distribution archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: euromni-cms-${{ matrix.target }}
+          path: dist/euromni-cms-${{ matrix.target }}.*
+          if-no-files-found: error
+          retention-days: 30

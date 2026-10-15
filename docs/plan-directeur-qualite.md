@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 2.0 |
+| Version | 2.1 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-15 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -139,7 +139,7 @@ standard. Docker et tout hébergeur cloud restent optionnels.
 |---|---|---|---|
 | CMS-05a | Fiabiliser le démarrage et la configuration portable. | Le défaut d’écoute est limité à `127.0.0.1`; `LISTEN_ADDR` permet un bind explicite ; un `DATABASE_URL` invalide fait échouer le démarrage plutôt qu’un repli silencieux en mémoire. Tests unitaires, documentation et configuration Compose alignés. | Terminé |
 | CMS-05b | Fournir un outil de migration de schéma utilisable sans Docker. Dépend de CMS-05a. | `cmd/db-migrate` applique les migrations embarquées dans l’ordre sous verrou PostgreSQL ; un bootstrap vierge est atomique, chaque mise à jour et son entrée de registre sont atomiques, et le ledger non contigu ou un schéma non géré sont refusés. Intégrations PostgreSQL vérifient le bootstrap utilisé par les suites, l’idempotence, l’échec/rollback et la réutilisation de la connexion. `go test ./...` et `go vet ./...` réussis. La validation Compose reste à faire sur une machine équipée de Docker. | Terminé |
-| CMS-05c | Construire et lancer une distribution autonome sur les cibles retenues. Dépend de CMS-05b. | Binaires de release Go avec assets admin/storefront embarqués ; matrice Windows/Linux et architectures explicitement déclarée et vérifiée ; PostgreSQL reste un service standard séparé. Procédure de configuration, initialisation owner, lancement et redémarrage sans Docker démontrée sur chaque cible supportée. | À faire |
+| CMS-05c | Construire et lancer une distribution autonome sur les cibles retenues. Dépend de CMS-05b. | Binaires natifs et workflow de paquetage Windows/Linux amd64 ajoutés ; les assets admin/storefront et migrations sont embarqués. Les binaires Windows ont été construits et le CMS a servi `/admin/` depuis le paquet hors du dépôt. Exécution du workflow Linux/Windows et démonstration d’installation complète restent à valider ; PostgreSQL reste un service standard séparé. | En cours |
 | CMS-05d | Vérifier persistance, sauvegarde et restauration locales. Dépend de CMS-05c. | Créer/modifier des données CMS, redémarrer le serveur et constater leur persistance ; produire une sauvegarde PostgreSQL, la restaurer dans une base isolée et vérifier catalogue, comptes et snapshots de commandes. Documenter rétention, emplacement protégé et procédure testée. | À faire |
 
 Le périmètre média initial accepte les URI gérées par le propriétaire (par
@@ -165,3 +165,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 1.8 | 2026-10-15 | CMS-02 vérifié dans le navigateur ; objectif de portabilité locale précisé et sécurisation du démarrage direct en cours. | En attente du responsable produit/qualité |
 | 1.9 | 2026-10-15 | Décomposition de CMS-05 en démarrage sûr, outil de migrations, distribution Windows/Linux et exercice de sauvegarde/restauration ; IONOS isolé en étape facultative CMS-06. | En attente du responsable produit/qualité |
 | 2.0 | 2026-10-15 | CMS-05b terminé : commande Go de migration embarquée, bootstrap et mises à jour atomiques, registre contrôlé, documentation autonome mise à jour et intégrations PostgreSQL réussies. | En attente du responsable produit/qualité |
+| 2.1 | 2026-10-15 | CMS-05c démarré : paquetage autonome Go et workflow de build natif Windows/Linux amd64 ; build et démarrage avec assets embarqués vérifiés localement sous Windows, validation des runners encore attendue. | En attente du responsable produit/qualité |

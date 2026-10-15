@@ -8,7 +8,7 @@ CMS souverain **headless** et **sandboxed** : le cœur d’exécution est en Go,
 2. **Cœur CMS (Go)** — runtime Wasm (Wasmtime), API GraphQL **et** REST, PostgreSQL.
 3. **Front boutique** — Web Components universels, isolation Shadow DOM.
 
-Docs : [`docs/architecture.md`](docs/architecture.md), [`docs/api.md`](docs/api.md), [`docs/database.md`](docs/database.md), [`docs/sqlite-prototype.md`](docs/sqlite-prototype.md) (prototype mono-boutique, non destiné à la production), [`docs/abi.md`](docs/abi.md) (mapping Wasm → SQL), [`docs/portability.md`](docs/portability.md) (runtime CGo et guests Wasm), [`docs/local-postgresql.md`](docs/local-postgresql.md) (persistance locale), [`docs/testing-postgresql.md`](docs/testing-postgresql.md) (intégration réelle).
+Docs : [`docs/architecture.md`](docs/architecture.md), [`docs/api.md`](docs/api.md), [`docs/database.md`](docs/database.md), [`docs/sqlite-prototype.md`](docs/sqlite-prototype.md) (prototype mono-boutique, non destiné à la production), [`docs/abi.md`](docs/abi.md) (mapping Wasm → SQL), [`docs/portability.md`](docs/portability.md) (runtime CGo et guests Wasm), [`docs/local-postgresql.md`](docs/local-postgresql.md) (persistance locale), [`docs/cms-distribution.md`](docs/cms-distribution.md) (paquet autonome sans Docker), [`docs/testing-postgresql.md`](docs/testing-postgresql.md) (intégration réelle).
 
 ## Structure
 
