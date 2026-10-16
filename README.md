@@ -1,4 +1,4 @@
-# EUROMNI dasegole
+# EUROMNI 
 
 CMS souverain **headless** et **sandboxed** : le cœur d’exécution est en Go, les extensions du marché (WooCommerce, PrestaShop, etc.) sont transpilées vers WebAssembly et isolées dans Wasmtime, le front boutique est livré en composants web (Shadow DOM).
 
