@@ -115,6 +115,92 @@ func TestMinimalCatalogGuestRequiresOnlyEuromniCall(t *testing.T) {
 	t.Log("minimal catalog guest uses only euromni.call and no WASI imports")
 }
 
+func TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes(t *testing.T) {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot := filepath.Clean(filepath.Join(workingDirectory, "..", ".."))
+	fixtureDirectory := filepath.Join(projectRoot, "pipeline", "testdata", "rust-euromni")
+	buildDirectory := t.TempDir()
+	build := func(targetDirectory string) []byte {
+		t.Helper()
+		command := exec.Command("cargo",
+			"build",
+			"--frozen",
+			"--release",
+			"--target", "wasm32-unknown-unknown",
+			"--target-dir", targetDirectory,
+		)
+		command.Dir = fixtureDirectory
+		if result, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("build locked Rust wasm32-unknown-unknown guest: %v\n%s", err, result)
+		}
+		wasmPath := filepath.Join(targetDirectory, "wasm32-unknown-unknown", "release", "euromni_rust_guest.wasm")
+		wasm, err := os.ReadFile(wasmPath)
+		if err != nil {
+			t.Fatalf("read Rust guest: %v", err)
+		}
+		return wasm
+	}
+	wasm := build(filepath.Join(buildDirectory, "build-a"))
+	repeatedWASM := build(filepath.Join(buildDirectory, "build-b"))
+	if !bytes.Equal(wasm, repeatedWASM) {
+		t.Fatal("identical Rust guest builds produced different Wasm bytes")
+	}
+
+	engine := wasmtime.NewEngine()
+	defer engine.Close()
+	module, err := wasmtime.NewModule(engine, wasm)
+	if err != nil {
+		t.Fatalf("inspect Rust guest: %v", err)
+	}
+	defer module.Close()
+
+	imports := make([]string, 0)
+	for _, imported := range module.Imports() {
+		moduleName := imported.Module()
+		name := imported.Name()
+		importName := "<nil>"
+		if name != nil {
+			importName = *name
+		}
+		imports = append(imports, moduleName+"."+importName)
+		imported.Close()
+	}
+	if len(imports) != 1 || imports[0] != guestCallModule+"."+guestCallName {
+		t.Fatalf("Rust guest imports = %v, want only %s.%s", imports, guestCallModule, guestCallName)
+	}
+	exports := make(map[string]struct{})
+	for _, exported := range module.Exports() {
+		exports[exported.Name()] = struct{}{}
+	}
+	for _, name := range []string{"memory", "run"} {
+		if _, ok := exports[name]; !ok {
+			t.Errorf("Rust guest is missing required %q export", name)
+		}
+	}
+	if t.Failed() {
+		return
+	}
+
+	host := testHost()
+	runtime := NewRuntime(host)
+	defer runtime.Close()
+	if err := runtime.Load("rust-minimal-catalog", wasm); err != nil {
+		t.Fatalf("load Rust guest: %v", err)
+	}
+	input := []byte(`{"abi":"euromni.abi.v1","call":"catalog.product.get","input":{"product_id":"e0e00000-0001-4000-8000-000000000040"}}`)
+	expected := host.Invoke(context.Background(), mustCtx(t, CapCatalog), input)
+	results, err := runtime.runWithInput(context.Background(), mustCtx(t, CapCatalog), manualModuleKey("rust-minimal-catalog"), "run", input)
+	if err != nil {
+		t.Fatalf("run Rust guest through EUROMNI ABI: %v", err)
+	}
+	if len(results) != 1 || results[0] != int32(len(expected)) {
+		t.Fatalf("Rust guest result = %v, want ABI response size %d", results, len(expected))
+	}
+}
+
 func TestMinimalCatalogGuestRuntimeExecution(t *testing.T) {
 	host := testHost()
 	runtime := NewRuntime(host)

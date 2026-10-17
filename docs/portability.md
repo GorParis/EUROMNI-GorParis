@@ -97,6 +97,37 @@ les imports WASI de la politique du runtime pour faire passer ce guest. Une
 nouvelle toolchain candidate devra fournir une fixture qui appelle l'ABI et
 dont la liste complete d'imports est inspectee avant execution.
 
+### Candidate Rust `wasm32-unknown-unknown`
+
+Une preuve expérimentale compile `pipeline/testdata/rust-euromni/minimal_catalog.rs`
+avec Rust `1.99.1`, `--target wasm32-unknown-unknown`, `#![no_std]` et un import
+explicite `euromni.call`. Le test inspecte l'ensemble des imports Wasm, exige
+les exports `memory` et `run`, puis exécute l'appel au travers de Wasmtime.
+Le projet Cargo embarque son lockfile, n'a aucune dépendance externe et se
+construit avec `--frozen`. Le test compile deux fois les mêmes sources dans des
+répertoires de sortie distincts et compare les octets Wasm. L'absence de WASI
+est une propriété vérifiée sur l'artefact généré, pas une garantie tirée du
+seul nom de target.
+
+Preuve locale exécutée sur Windows/amd64 : Rust `1.99.1
+(58cf8f9c3 2026-10-13)`, Cargo en mode `--frozen`. Deux répertoires de build
+vierges produisent des artefacts identiques, avec import unique et appel ABI
+exécuté dans Wasmtime. Commandes reproductibles :
+
+```powershell
+rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+$env:RUSTUP_TOOLCHAIN = "1.99.1"
+go test -tags=wasmtoolchain -count=1 ./internal/wasm -run '^TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes$'
+```
+
+La CI générale répète le test sur Linux ; le workflow natif de distribution le
+répète aussi sur ses runners Linux amd64 et Windows amd64. Ces résultats
+distants restent à confirmer après le push. Ce spike valide un guest Rust
+`no_std` minimal et la reproductibilité locale de cette fixture uniquement ; il
+ne démontre ni une traduction PHP ni un processus de build/promotion complet et
+approuvé. QP-01 reste en cours jusqu'à la réussite des deux runners et à
+l'évaluation du cycle complet de build/promotion.
+
 ## Criteres de validation d'une cible hote
 
 Pour chaque OS/architecture retenu :

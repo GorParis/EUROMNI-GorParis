@@ -34,6 +34,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install pinned Rust guest target
+        run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+
+      - name: Inspect and execute Rust guest
+        run: go test -tags=wasmtoolchain -count=1 ./internal/wasm -run '^TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes$'
+
       - name: Set up Windows C toolchain
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2

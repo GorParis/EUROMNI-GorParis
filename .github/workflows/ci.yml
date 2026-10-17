@@ -34,3 +34,23 @@ jobs:
 
       - name: Unit tests
         run: go test -count=1 ./...
+
+  wasm-toolchain-spike:
+    name: Rust wasm32-unknown-unknown guest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install pinned Rust guest target
+        run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+
+      - name: Inspect imports and execute Rust guest
+        run: go test -tags=wasmtoolchain -count=1 ./internal/wasm -run '^TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes$'

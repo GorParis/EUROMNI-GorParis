@@ -102,6 +102,12 @@ seul import `euromni.call`. Les appels statiques exportent `run()` ; les appels
 dynamiques exportent `run(ptr,len)`, alimenté par `Runtime.RunWithInput` après
 validation de l’enveloppe et copie bornée en mémoire linéaire.
 
+Un spike séparé compile une fixture Rust `no_std` pour
+`wasm32-unknown-unknown` avec Rust `1.99.1`, puis inspecte tous les imports et
+exécute l'appel ABI dans Wasmtime. Il s'agit d'une candidate expérimentale, pas
+d'une toolchain de production ni d'une traduction générique de code métier.
+Voir la [matrice de portabilité](../docs/portability.md).
+
 Une règle explicite relie pour l’instant le seul hook WooCommerce
 `woocommerce_product_query` à `catalog.product.list`. Aucun trigger PrestaShop,
 Shopify ou Magento n’est encore abaissé. L’IR accepte un appel par module et ne

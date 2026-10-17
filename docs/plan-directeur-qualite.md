@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 2.8 |
+| Version | 2.9 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-17 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -67,7 +67,7 @@ la documentation du projet.
 
 | ID | Priorité | Action / dépendance | Critère d’acceptation | Preuve attendue | Statut |
 |---|---|---|---|---|---|
-| QP-01 | P0 | Prouver une toolchain qui produit un artefact Wasm portable compatible avec `euromni.call`, sans imports système implicites. Dépend du contrat ABI actuel. | Build reproductible depuis un worker épinglé ; module n’importe que l’ABI autorisée et s’exécute sur la matrice Wasmtime approuvée. Aucun compilateur/LLVM local requis en production. | Spike Go 1.26.8 conservé comme preuve que `wasip1` ajoute des imports WASI ; fixture ABI compilée et testée sur les hôtes runtime approuvés. | Bloqué |
+| QP-01 | P0 | Prouver une toolchain qui produit un artefact Wasm portable compatible avec `euromni.call`, sans imports système implicites. Dépend du contrat ABI actuel. | Build reproductible depuis un worker épinglé ; module n’importe que l’ABI autorisée et s’exécute sur la matrice Wasmtime approuvée. Aucun compilateur/LLVM local requis en production. | Spike Go 1.26.8 : imports WASI incompatibles. Candidate Rust 1.99.1/Cargo `--frozen` : imports, exports, exécution Wasmtime et deux builds en répertoires propres identiques localement sur Windows/amd64 ; tests épinglés configurés dans la CI Linux et la matrice native Windows/Linux, résultats distants et chaîne complète de promotion restent à établir. | En cours |
 | QP-02 | P0 | Définir le manifeste/versionnement d’artefact et son lien atomique avec `modules` et `shop_modules`. | Hash source, hash Wasm, plateforme/version, versions d’adaptateur/IR/compilateur, ABI et capabilities sont traçables ; un échec ne remplace pas la version active. | Schéma/migration, contrat store et test d’échec/reprise. | À faire |
 | QP-03 | P0 | Concevoir une ingestion admin authentifiée avec quarantaine d’archives. | Taille/nombre d’entrées bornés ; traversal, chemins absolus, liens symboliques, archives bombes et extensions non autorisées rejetés ; aucun PHP exécuté. | Tests négatifs d’archives et revue sécurité ; aucun endpoint anonyme. | À faire |
 | QP-04 | P1 | Créer les adaptateurs statiques WooCommerce et PrestaShop et leur matrice de versions/hooks supportés. | Un jeu de fixtures autorisé par plateforme produit des diagnostics déterministes et identifie les appels de données/effets de bord. | Fixtures, version source, résultats d’analyse golden et rapports de limites. | À faire |
@@ -173,3 +173,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 2.6 | 2026-10-17 | CMS-05c terminé : distributions Windows/Linux extraites et lancées sur runners natifs ; archive Windows publiée installée contre PostgreSQL 16.15. CMS-05d reste en cours, car rétention et stockage protégé hors machine sont à décider. | En attente du responsable produit/qualité |
 | 2.7 | 2026-10-17 | CMS-05d : rétention locale, RPO de 24 h et stockage protégé de développement cadrés ; commande de sauvegarde/restauration PostgreSQL/FileStore et intégration réelle validées. Stockage hors machine, chiffrement et mesure du RTO restent ouverts. | En attente du responsable produit/qualité |
 | 2.8 | 2026-10-17 | QP-10 : Windows/amd64 et Linux/amd64 retenus par le responsable produit ; le workflow natif de distribution exécute désormais la suite d’intégration PostgreSQL sur les deux runners. Support non déclaré avant réussite du workflow sur les deux cibles. | En attente du responsable qualité |
+| 2.9 | 2026-10-17 | QP-01 : spike Rust `no_std` `wasm32-unknown-unknown` épinglé à Rust 1.99.1, Cargo sans dépendances et lockfile vérifié en `--frozen` ; import unique, exports, appel ABI Wasmtime et égalité octet à octet de builds depuis deux répertoires propres validés localement sur Windows/amd64. CI générale Linux et workflow natif Windows/Linux configurés ; résultats distants et chaîne complète de promotion restent attendus. | En attente du responsable qualité |

@@ -1,5 +1,10 @@
 # Changelog - EUROMNI dasegole
 
+## 2026-10-17
+
+- Ajout d'un spike Rust `no_std` vers `wasm32-unknown-unknown` : import exclusivement `euromni.call`, exports requis et exécution ABI vérifiés dans Wasmtime.
+- Vérification locale de deux builds Cargo verrouillés en répertoires propres, identiques octet à octet ; CI générale Linux et matrice native Windows/Linux configurées avec Rust 1.99.1 épinglé.
+
 ## 2026-10-12
 
 - Validation de l’incompatibilité Go WASI avec le linker actuel : les imports `wasi_snapshot_preview1` sont présents en plus de `euromni.call`.
