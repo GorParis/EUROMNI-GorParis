@@ -28,7 +28,7 @@ le serveur Go EUROMNI peut etre construit sans CGo.
 |---|---|---|
 | Guest Wasm | Le WAT minimal et l'IR generent un module utilisant `euromni.call`. La fixture minimale est le seul contrat de guest actuellement prouve. | Format cible du pipeline, pas une declaration de support pour un compilateur de code source arbitraire. |
 | Go `wasip1` vers Wasm | Le spike consigne avec Go 1.26.8 retrouve `euromni.call` et des imports `wasi_snapshot_preview1` ; cette configuration ne respecte pas le linker strict. | Rejete pour cette configuration precise ; les autres compilateurs et versions restent a evaluer. |
-| Runtime Go + Wasmtime | `go.mod` cible Go 1.23 et depend de `wasmtime-go/v36`. Le binding requiert CGo. | Aucune combinaison OS/architecture n'est encore declaree validee par une matrice de tests. |
+| Runtime Go + Wasmtime | `go.mod` cible Go 1.23 et depend de `wasmtime-go/v36`. Le binding requiert CGo. | Tests natifs valides en CI sur Windows/amd64 et Linux/amd64 ; voir les preuves ci-dessous. |
 | PostgreSQL | Compose utilise PostgreSQL 16 pour le developpement et les tests locaux. | La version seule ne valide ni une offre hebergee ni un profil de production. |
 | FileStore | Le CMS et le reconciliateur partagent le meme stockage local par SHA-256. POSIX utilise des permissions de repertoire privees ; Windows configure un DACL NTFS protege. | Les garanties de permissions, atomicite et durabilite doivent etre verifiees sur chaque systeme de fichiers retenu. |
 
@@ -37,9 +37,9 @@ support :
 
 | OS / architecture | Runtime Wasmtime natif | FileStore | Statut |
 |---|---|---|---|
-| Linux / amd64 | Tests natifs, Wasmtime et PostgreSQL integres au workflow de distribution ; premiere execution a confirmer | Integration et FileStore executes par le meme workflow | En validation |
+| Linux / amd64 | Tests natifs, Wasmtime et PostgreSQL integres au workflow de distribution | Integration et FileStore passes sur runner natif | Matrice CI validee le 2026-10-17 |
 | Linux / arm64 | A tester avec CGo actif | A tester | Non valide |
-| Windows / amd64 | Tests Go, Wasmtime, integration PostgreSQL et build natif passes avec CGo actif | Tests FileStore passes avec DACL prive | Runtime local et paquet distribue valides le 2026-10-17 ; cible de production retenue, execution CI d'integration a confirmer |
+| Windows / amd64 | Tests Go, Wasmtime, integration PostgreSQL et build natif passes avec CGo actif | Tests FileStore passes avec DACL prive | Matrice CI validee le 2026-10-17 |
 | macOS / amd64 et arm64 | A tester avec CGo actif | A tester | Non valide |
 
 ### Preuves executees le 2026-10-17
@@ -63,17 +63,32 @@ a egalement extrait et lance les paquets CMS amd64 sur Ubuntu 22.04 et Windows
 Server 2022 ; `/health`, `/admin/` et `/v1/products` ont repondu HTTP 200. Le
 paquet Windows du run initial a ete installe contre PostgreSQL 16.15. Ces
 resultats valident les distributions CMS, mais le smoke test sans base ne
-constitue pas un test du runtime Wasmtime natif sur Linux ni du FileStore Linux.
-Linux/macOS et les autres architectures restent non valides pour ces surfaces.
-QP-10 reste en cours jusqu'a la decision des cibles de production et la
-validation de chaque surface native retenue.
+ne constituait pas un test du runtime Wasmtime natif sur Linux ni du FileStore
+Linux ; ces surfaces ont ensuite ete couvertes par le run de qualification
+ci-dessous. Linux/arm64, macOS et les autres architectures restent non valides.
 
 Le responsable produit a retenu Windows/amd64 et Linux/amd64 comme cibles a
-qualifier. Le workflow `cms-distribution.yml` execute desormais la suite
-d'integration PostgreSQL sur les deux runners natifs, en plus du build et du
-smoke test des archives. Les deux cibles restent en validation jusqu'a la
-reussite effective de ce workflow ; aucun support de production n'est declare
-par cette seule decision.
+qualifier. Le workflow `cms-distribution.yml` execute la suite d'integration
+PostgreSQL, les builds CGo et les smoke tests des archives sur les deux runners.
+Le run corrige
+[39032334862](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39032334862)
+a reussi ses deux jobs : le client PostgreSQL 16 a ete installe depuis PGDG sur
+Ubuntu 22.04, les integrations ont passe sur les deux OS, les distributions
+ont ete construites et extraites, et les smoke tests HTTP ont repondu avec
+succes. Les deux artifacts Windows/Linux ont ete publies par le run.
+
+Le run precedent
+[39032009205](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39032009205)
+avait reussi completement le job Windows, mais le job Linux s'etait arrete avant
+les integrations faute du paquet `postgresql-client-16` dans les depots Ubuntu
+actifs. Le workflow ajoute maintenant le depot officiel PGDG. La CI generale
+sur ce correctif a egalement reussi
+([39032300222](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39032300222)).
+
+La matrice technique Windows/amd64 et Linux/amd64 est validee sur les runners
+natifs et les filesystems locaux testes. Cela ne qualifie pas Linux/arm64,
+macOS, les filesystems reseau ni tous les environnements de production ;
+aucune garantie n'est etendue au-dela des surfaces explicitement testees.
 
 Sur Windows, les bits de permission POSIX exposes par `os.FileMode` ne
 representent pas l'ACL NTFS et `os.Chmod(0600)` ne protege pas les artefacts.
