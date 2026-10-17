@@ -128,8 +128,13 @@ a exécuté avec succès le test Rust sur les deux runners, mais les intégratio
 complètes ont révélé deux problèmes de runner : `pg_dump` 14 face au PostgreSQL
 16 embarqué sous Ubuntu, et une course de première extraction du cache PostgreSQL
 sur Windows quand plusieurs packages s'exécutent en parallèle. Le workflow
-installe maintenant `postgresql-client-16` sous Linux et utilise `go test -p 1`
-pour les intégrations. Le run corrigé sur les deux OS reste à confirmer. Ce spike
+installe maintenant `postgresql-client-16` depuis le dépôt officiel PGDG sous
+Linux et utilise `go test -p 1` pour les intégrations. Le run de confirmation
+[39032009205](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39032009205)
+a échoué sous Ubuntu avant les intégrations : Ubuntu 22.04 ne fournit pas
+`postgresql-client-16` dans ses dépôts activés par défaut. Le workflow ajoute
+désormais le dépôt PGDG ; cette correction et le résultat Windows de ce run
+restent à confirmer. Ce spike
 valide un guest Rust `no_std` minimal et la reproductibilité de cette fixture ;
 il ne démontre ni une traduction PHP ni un processus de build/promotion complet
 et approuvé. QP-01 reste en cours jusqu'à la réussite du nouveau run et à
