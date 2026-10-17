@@ -59,6 +59,8 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 	err := s.SQL.QueryRowContext(ctx, `
 		SELECT o.id::text, o.number, o.status::text, o.currency::text,
 		       o.subtotal::text, o.tax_total::text, o.shipping_total::text, o.grand_total::text,
+		       COALESCE(o.shipping_carrier_code, ''), COALESCE(o.shipping_carrier_name, ''),
+		       COALESCE(o.shipping_zone_code, ''), COALESCE(o.shipping_zone_name, ''),
 		       COALESCE(c.email::text, ''), COALESCE(c.name, ''),
 		       o.shipping_address::text, o.created_at
 		FROM orders o
@@ -67,6 +69,7 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 	`, shopID, orderID).Scan(
 		&order.ID, &order.Number, &order.Status, &order.Currency,
 		&order.Subtotal, &order.TaxTotal, &order.ShippingTotal, &order.GrandTotal,
+		&order.ShippingCarrierCode, &order.ShippingCarrierName, &order.ShippingZoneCode, &order.ShippingZoneName,
 		&order.Email, &order.Name, &address, &order.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -46,6 +46,39 @@ port. Si `DATABASE_URL` est fourni mais que PostgreSQL est injoignable, le
 processus échoue au démarrage au lieu de basculer silencieusement vers le store
 mémoire.
 
+## Pilote portable Windows sans privilèges administrateur
+
+Pour un essai local uniquement, le dépôt fournit des scripts qui démarrent et
+arrêtent l'instance préparée dans le profil Windows courant :
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\local-pilot\Start-EuromniPilot.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\local-pilot\Stop-EuromniPilot.ps1
+```
+
+Le CMS écoute sur `http://127.0.0.1:18081/admin/` ; PostgreSQL 16.9 écoute
+uniquement sur `127.0.0.1:55432`. Les exécutables, le cluster de démonstration
+et ses données restent sous `%LOCALAPPDATA%\EUROMNI\pilot`. Les commandes
+recréent le démarrage après une fermeture ou un redémarrage de la machine ; aucun
+service Windows ni démarrage automatique n'est installé. Le mot de passe owner
+et le secret PostgreSQL sont dans des fichiers `PSCredential` protégés par
+DPAPI pour le compte Windows courant. Pour révéler localement le mot de passe
+owner nécessaire à la connexion web :
+
+```powershell
+$owner = Import-Clixml "$env:LOCALAPPDATA\EUROMNI\pilot\owner-credential.xml"
+$owner.UserName
+$owner.GetNetworkCredential().Password
+```
+
+Cette instance PostgreSQL embarquée provient de la fixture de développement
+`embedded-postgres`, et non d'une distribution serveur de production. Elle ne
+contient que des données de démonstration. Les outils `pg_dump` et `pg_restore`
+ne sont pas inclus dans cette fixture ; les sauvegardes du pilote ne sont donc
+pas validées. Ne pas y stocker de données client ni exposer ses ports au réseau.
+Pour un usage durable, installer PostgreSQL standard, configurer ses sauvegardes
+protégées, puis suivre la procédure ci-dessous.
+
 Pour un accès depuis un réseau local de confiance, configurez une adresse
 d’interface dédiée ou `0.0.0.0:8081`, limitez l’accès avec le pare-feu et placez
 un reverse proxy TLS devant le CMS. Ne publiez pas directement le serveur HTTP

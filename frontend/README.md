@@ -23,8 +23,13 @@ Les attributs `cart-src` (`/v1/cart` par défaut) et `checkout-src`
 (`/v1/checkout` par défaut) configurent les points d’entrée du panier et du
 checkout. Le checkout crée une commande en attente, enregistre les coordonnées
 et l’adresse de livraison, puis décrémente le stock dans la même transaction.
-Le paiement, les taxes et la livraison ne sont pas encore calculés ; la vitrine
-de démonstration le signale avant confirmation.
+Le sélecteur de pays charge les modes disponibles via `/v1/shipping-options`
+(configurable avec `shipping-src`) et affiche les tarifs correspondants. Le
+client choisit son transporteur ; le serveur revalide le tarif et la zone puis
+enregistre leur snapshot sur la commande avec les frais dans le total. Les
+paiements et taxes ne sont pas encore calculés. La configuration initiale ne
+contient aucun tarif actif : un membre `owner` ou `admin` doit configurer les
+transporteurs, les zones et au moins un prix avant de pouvoir commander.
 
 Le seed de démonstration présente cinq produits : cabas, ceinture et chemise
 avec plusieurs tailles au choix pour les deux derniers, plus une tasse et une

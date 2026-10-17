@@ -391,7 +391,15 @@ func TestCheckoutCreatesOrderAndConsumesMemoryStock(t *testing.T) {
 		t.Fatalf("add cart line status = %d, body = %s", addResponse.Code, addResponse.Body)
 	}
 
-	checkoutBody := `{"email":"buyer@example.com","name":"Client de test","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
+	checkoutBody := `{"email":"buyer@example.com","name":"Client de test","shipping_carrier_code":"colissimo","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
+	unavailableMethodBody := strings.Replace(checkoutBody, `"colissimo"`, `"chronopost"`, 1)
+	unavailableMethodRequest := httptest.NewRequest(http.MethodPost, "/v1/checkout", strings.NewReader(unavailableMethodBody))
+	unavailableMethodRequest.Header.Set("Authorization", "Bearer "+created.Data.Token)
+	unavailableMethodResponse := httptest.NewRecorder()
+	mux.ServeHTTP(unavailableMethodResponse, unavailableMethodRequest)
+	if unavailableMethodResponse.Code != http.StatusConflict {
+		t.Fatalf("checkout unavailable method status/body = %d/%s, want 409", unavailableMethodResponse.Code, unavailableMethodResponse.Body)
+	}
 	checkoutRequest := httptest.NewRequest(http.MethodPost, "/v1/checkout", strings.NewReader(checkoutBody))
 	checkoutRequest.Header.Set("Authorization", "Bearer "+created.Data.Token)
 	checkoutRequest.Header.Set("Content-Type", "application/json")
@@ -409,7 +417,9 @@ func TestCheckoutCreatesOrderAndConsumesMemoryStock(t *testing.T) {
 	if err := json.NewDecoder(checkoutResponse.Body).Decode(&order); err != nil {
 		t.Fatalf("decode order: %v", err)
 	}
-	if order.Data.Status != "pending" || order.Data.Subtotal != "178.0000" || len(order.Data.Items) != 1 {
+	if order.Data.Status != "pending" || order.Data.Subtotal != "178.0000" ||
+		order.Data.ShippingTotal != "6.9000" || order.Data.GrandTotal != "184.9000" ||
+		order.Data.ShippingCarrierCode != "colissimo" || len(order.Data.Items) != 1 {
 		t.Fatalf("order = %+v, want pending order for EUR 178.0000", order.Data)
 	}
 

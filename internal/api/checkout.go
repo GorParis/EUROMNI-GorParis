@@ -13,9 +13,10 @@ import (
 )
 
 type checkoutRequest struct {
-	Email           string                `json:"email"`
-	Name            string                `json:"name"`
-	ShippingAddress store.ShippingAddress `json:"shipping_address"`
+	Email               string                `json:"email"`
+	Name                string                `json:"name"`
+	ShippingCarrierCode string                `json:"shipping_carrier_code"`
+	ShippingAddress     store.ShippingAddress `json:"shipping_address"`
 }
 
 func checkout(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +35,10 @@ func checkout(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if _, ok := reader.(store.ShippingOptionReader); !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "shipping service unavailable"})
+		return
+	}
 	writer, ok := reader.(store.CheckoutWriter)
 	if !ok {
 		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "checkout service unavailable"})
@@ -48,6 +53,8 @@ func checkout(w http.ResponseWriter, r *http.Request) {
 			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "insufficient inventory"})
 		case errors.Is(err, store.ErrEmptyCart):
 			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "cart is empty"})
+		case errors.Is(err, store.ErrShippingUnavailable):
+			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "shipping method unavailable for this destination"})
 		case errors.Is(err, store.ErrNotFound):
 			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "cart contains unavailable items"})
 		default:
@@ -82,14 +89,18 @@ func decodeCheckoutRequest(w http.ResponseWriter, r *http.Request) (store.Checko
 	address.Region = strings.TrimSpace(address.Region)
 	address.Country = strings.ToUpper(strings.TrimSpace(address.Country))
 	name := strings.TrimSpace(request.Name)
+	carrierCode := strings.TrimSpace(request.ShippingCarrierCode)
 	parsedEmail, err := mail.ParseAddress(strings.TrimSpace(request.Email))
 	if err != nil || parsedEmail.Address == "" || len(parsedEmail.Address) > 320 || len(name) == 0 || len(name) > 120 ||
+		!shippingCodePattern.MatchString(carrierCode) ||
 		len(address.Line1) == 0 || len(address.Line1) > 200 || len(address.Line2) > 200 ||
 		len(address.City) == 0 || len(address.City) > 100 || len(address.PostalCode) == 0 || len(address.PostalCode) > 32 ||
 		len(address.Region) > 100 || !validCountryCode(address.Country) {
 		return store.CheckoutDetails{}, errors.New("invalid checkout details")
 	}
-	return store.CheckoutDetails{Email: parsedEmail.Address, Name: name, ShippingAddress: address}, nil
+	return store.CheckoutDetails{
+		Email: parsedEmail.Address, Name: name, ShippingCarrierCode: carrierCode, ShippingAddress: address,
+	}, nil
 }
 
 func validCountryCode(country string) bool {

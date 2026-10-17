@@ -200,7 +200,23 @@
           <div id="orders" class="product-list"></div>
           <div id="order-detail" class="card" hidden></div>
         </section>
-      </section>
+        <section id="shipping-panel" class="panel" hidden>
+          <h2>Transporteurs et livraisons</h2>
+          <p class="muted">Configurez les transporteurs, les zones pays et un tarif fixe par transporteur et zone. Les tarifs ne sont pas encore proposés au checkout et aucune étiquette transporteur n’est achetée.</p>
+          <h3>Transporteurs</h3>
+          <div id="shipping-carriers" class="product-list"></div>
+          <button id="add-shipping-carrier" class="secondary" type="button">Ajouter un transporteur</button>
+          <h3>Zones de livraison</h3>
+          <div id="shipping-zones" class="product-list"></div>
+          <button id="add-shipping-zone" class="secondary" type="button">Ajouter une zone</button>
+          <h3>Tarifs fixes</h3>
+          <div id="shipping-rates" class="product-list"></div>
+          <button id="add-shipping-rate" class="secondary" type="button">Ajouter un tarif</button>
+          <div class="actions" style="margin-top: 1rem">
+            <button id="save-shipping" type="button">Enregistrer la configuration transport</button>
+          </div>
+        </section>
+        </section>
     </main>
   </body>
 </html>

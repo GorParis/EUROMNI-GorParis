@@ -63,7 +63,7 @@ a egalement extrait et lance les paquets CMS amd64 sur Ubuntu 22.04 et Windows
 Server 2022 ; `/health`, `/admin/` et `/v1/products` ont repondu HTTP 200. Le
 paquet Windows du run initial a ete installe contre PostgreSQL 16.15. Ces
 resultats valident les distributions CMS, mais le smoke test sans base ne
-ne constituait pas un test du runtime Wasmtime natif sur Linux ni du FileStore
+constituait pas un test du runtime Wasmtime natif sur Linux ni du FileStore
 Linux ; ces surfaces ont ensuite ete couvertes par le run de qualification
 ci-dessous. Linux/arm64, macOS et les autres architectures restent non valides.
 
@@ -89,6 +89,11 @@ La matrice technique Windows/amd64 et Linux/amd64 est validee sur les runners
 natifs et les filesystems locaux testes. Cela ne qualifie pas Linux/arm64,
 macOS, les filesystems reseau ni tous les environnements de production ;
 aucune garantie n'est etendue au-dela des surfaces explicitement testees.
+
+Un pilote local Windows sans privileges administrateur est documente dans
+[`local-postgresql.md`](local-postgresql.md). Il utilise PostgreSQL 16.9 issu
+de la fixture embarquee de developpement ; ce n'est pas une installation
+serveur de production et il n'inclut pas `pg_dump`/`pg_restore`.
 
 Sur Windows, les bits de permission POSIX exposes par `os.FileMode` ne
 representent pas l'ACL NTFS et `os.Chmod(0600)` ne protege pas les artefacts.
@@ -148,9 +153,10 @@ Linux et utilise `go test -p 1` pour les intégrations. Le run de confirmation
 [39032009205](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39032009205)
 a échoué sous Ubuntu avant les intégrations : Ubuntu 22.04 ne fournit pas
 `postgresql-client-16` dans ses dépôts activés par défaut. Le workflow ajoute
-désormais le dépôt PGDG ; cette correction et le résultat Windows de ce run
-restent à confirmer. Ce spike
-valide un guest Rust `no_std` minimal et la reproductibilité de cette fixture ;
+désormais le dépôt PGDG. Le run de qualification corrigé
+[39032334862](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39032334862)
+a passé ses deux jobs natifs, y compris le test Rust sur Windows et Linux. Ce
+spike valide un guest Rust `no_std` minimal et la reproductibilité de cette fixture ;
 il ne démontre ni une traduction PHP ni un processus de build/promotion complet
 et approuvé. QP-01 reste en cours jusqu'à la réussite du nouveau run et à
 l'évaluation du cycle complet de build/promotion.

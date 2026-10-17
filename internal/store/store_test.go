@@ -99,8 +99,9 @@ func TestMemoryCheckoutConsumesStockAndEmptiesCart(t *testing.T) {
 	}
 
 	order, err := memory.CheckoutCart(ctx, seed.ShopID, tokenHash[:], CheckoutDetails{
-		Email: "buyer@example.com",
-		Name:  "Client de test",
+		Email:               "buyer@example.com",
+		Name:                "Client de test",
+		ShippingCarrierCode: "colissimo",
 		ShippingAddress: ShippingAddress{
 			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
 		},
@@ -111,8 +112,10 @@ func TestMemoryCheckoutConsumesStockAndEmptiesCart(t *testing.T) {
 	if order.Status != "pending" || !strings.HasPrefix(order.Number, "EU-") {
 		t.Fatalf("order = %+v, want pending order with EU number", order)
 	}
-	if order.Subtotal != "178.0000" || order.GrandTotal != "178.0000" || order.Currency != "EUR" {
-		t.Fatalf("order total = %+v, want EUR 178.0000", order)
+	if order.Subtotal != "178.0000" || order.ShippingTotal != "6.9000" ||
+		order.GrandTotal != "184.9000" || order.Currency != "EUR" ||
+		order.ShippingCarrierName != "Colissimo (tarif de démonstration)" {
+		t.Fatalf("order total = %+v, want EUR 184.9000 including demo shipping", order)
 	}
 	if len(order.Items) != 1 || order.Items[0].Name != "Cabas en lin" || order.Items[0].LineTotal != "178.0000" {
 		t.Fatalf("order items = %+v, want one snapshotted cabas line", order.Items)

@@ -16,11 +16,32 @@ import (
 func TestPostgresStoreIntegration(t *testing.T) {
 	ctx := context.Background()
 	db := NewSQL(testdb.Start(t))
+	shippingConfig, err := db.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("read default shipping configuration: %v", err)
+	}
+	carrierCode := "colissimo"
+	for index := range shippingConfig.Carriers {
+		if shippingConfig.Carriers[index].Code == carrierCode {
+			shippingConfig.Carriers[index].Active = true
+		}
+	}
+	shippingConfig.Rates = []ShippingRate{{
+		CarrierCode: carrierCode,
+		ZoneCode:    shippingConfig.Zones[0].Code,
+		Amount:      "6.90",
+		Currency:    "EUR",
+		Active:      true,
+	}}
+	if err := db.ReplaceShippingConfig(ctx, seed.ShopID, *shippingConfig); err != nil {
+		t.Fatalf("configure checkout shipping rate: %v", err)
+	}
 
 	product, err := db.GetProduct(ctx, seed.ShopID, seed.ProductID)
 	if err != nil {
 		t.Fatalf("read seeded product: %v", err)
 	}
+
 	if product.Slug != "cabas-lin" || len(product.Variants) != 1 {
 		t.Fatalf("unexpected seeded product: %+v", product)
 	}
@@ -218,8 +239,9 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		t.Fatalf("removing cart-referenced variant error = %v, want %v", err, ErrConflict)
 	}
 	if _, err := db.CheckoutCart(ctx, seed.ShopID, adminCartToken[:], CheckoutDetails{
-		Email: "admin-variant-order@example.com",
-		Name:  "Admin variant order",
+		Email:               "admin-variant-order@example.com",
+		Name:                "Admin variant order",
+		ShippingCarrierCode: "colissimo",
 		ShippingAddress: ShippingAddress{
 			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
 		},
@@ -268,8 +290,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err := db.SQL.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("read migration ledger: %v", err)
 	}
-	if migrationCount != 7 {
-		t.Fatalf("recorded migrations = %d, want 7", migrationCount)
+	if migrationCount != 9 {
+		t.Fatalf("recorded migrations = %d, want 9", migrationCount)
 	}
 	installedModule, err := db.GetInstalledModule(ctx, seed.ShopID, seed.ModuleID)
 	if err != nil {
@@ -317,8 +339,9 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	}
 
 	order, err := db.CheckoutCart(ctx, seed.ShopID, tokenHash[:], CheckoutDetails{
-		Email: "checkout@example.com",
-		Name:  "Checkout test",
+		Email:               "checkout@example.com",
+		Name:                "Checkout test",
+		ShippingCarrierCode: "colissimo",
 		ShippingAddress: ShippingAddress{
 			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
 		},
@@ -347,8 +370,29 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	}
 	adminOrder, err := db.GetAdminOrder(ctx, seed.ShopID, order.ID)
 	if err != nil || adminOrder.Email != "checkout@example.com" || adminOrder.Name != "Checkout test" ||
-		adminOrder.ShippingAddress.Country != "FR" || len(adminOrder.Items) != 1 || adminOrder.Items[0].SKU != "CABAS-LIN-NAT" {
+		adminOrder.ShippingAddress.Country != "FR" || adminOrder.ShippingCarrierCode != "colissimo" ||
+		adminOrder.ShippingCarrierName != "Colissimo" || adminOrder.ShippingZoneName != "France et Union européenne" ||
+		adminOrder.ShippingTotal != "6.9000" || adminOrder.GrandTotal != "184.9000" ||
+		len(adminOrder.Items) != 1 || adminOrder.Items[0].SKU != "CABAS-LIN-NAT" {
 		t.Fatalf("read admin order = %+v, error = %v", adminOrder, err)
+	}
+	shippingConfig, err = db.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("read shipping config before tariff change: %v", err)
+	}
+	for index := range shippingConfig.Carriers {
+		if shippingConfig.Carriers[index].Code == "colissimo" {
+			shippingConfig.Carriers[index].Name = "Colissimo modifié"
+		}
+	}
+	shippingConfig.Rates[0].Amount = "9.99"
+	if err := db.ReplaceShippingConfig(ctx, seed.ShopID, *shippingConfig); err != nil {
+		t.Fatalf("change shipping rate after order: %v", err)
+	}
+	snapshottedOrder, err := db.GetAdminOrder(ctx, seed.ShopID, order.ID)
+	if err != nil || snapshottedOrder.ShippingCarrierName != "Colissimo" ||
+		snapshottedOrder.ShippingTotal != "6.9000" || snapshottedOrder.GrandTotal != "184.9000" {
+		t.Fatalf("order shipping snapshot after tariff change = %+v, error = %v", snapshottedOrder, err)
 	}
 	adminOrderPage, err := db.ListAdminOrders(ctx, seed.ShopID, 1, 0)
 	if err != nil || len(adminOrderPage) != 1 {
@@ -403,8 +447,9 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		t.Fatalf("add payment-protected order line: %v", err)
 	}
 	paymentOrder, err := db.CheckoutCart(ctx, seed.ShopID, paymentCartToken[:], CheckoutDetails{
-		Email: "payment-protected@example.com",
-		Name:  "Payment protected",
+		Email:               "payment-protected@example.com",
+		Name:                "Payment protected",
+		ShippingCarrierCode: "colissimo",
 		ShippingAddress: ShippingAddress{
 			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
 		},
@@ -420,5 +465,76 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	}
 	if err := db.CancelAdminOrder(ctx, seed.ShopID, paymentOrder.ID); !errors.Is(err, ErrOrderTransition) {
 		t.Fatalf("cancel order with payment record error = %v, want %v", err, ErrOrderTransition)
+	}
+}
+
+func TestPostgresShippingConfiguration(t *testing.T) {
+	ctx := context.Background()
+	db := NewSQL(testdb.Start(t))
+	config, err := db.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("read seeded shipping configuration: %v", err)
+	}
+	if len(config.Carriers) != 4 || len(config.Zones) != 1 || len(config.Rates) != 0 {
+		t.Fatalf("seeded shipping configuration = %+v, want four carriers, one zone and no invented rates", config)
+	}
+
+	updated := ShippingConfig{
+		Carriers: []ShippingCarrier{
+			{Code: "colissimo", Name: "Colissimo", Active: true},
+			{Code: "custom-carrier", Name: "Transport personnalisé", Active: true},
+		},
+		Zones: []ShippingZone{{
+			Code: "france", Name: "France métropolitaine", CountryCodes: []string{"FR"}, Active: true,
+		}},
+		Rates: []ShippingRate{{
+			CarrierCode: "custom-carrier", ZoneCode: "france", Amount: "6.90", Currency: "EUR", Active: true,
+		}},
+	}
+	if err := db.ReplaceShippingConfig(ctx, seed.ShopID, updated); err != nil {
+		t.Fatalf("replace shipping configuration: %v", err)
+	}
+	saved, err := db.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("read replaced shipping configuration: %v", err)
+	}
+	if len(saved.Carriers) != 2 || len(saved.Zones) != 1 || len(saved.Rates) != 1 ||
+		saved.Rates[0].CarrierCode != "custom-carrier" || saved.Rates[0].Amount != "6.9000" {
+		t.Fatalf("saved shipping configuration = %+v", saved)
+	}
+	franceOptions, err := db.ListShippingOptions(ctx, seed.ShopID, "FR")
+	if err != nil || len(franceOptions) != 1 || franceOptions[0].CarrierCode != "custom-carrier" ||
+		franceOptions[0].Amount != "6.9000" {
+		t.Fatalf("France shipping options = %+v, error = %v", franceOptions, err)
+	}
+	canadaOptions, err := db.ListShippingOptions(ctx, seed.ShopID, "CA")
+	if err != nil || len(canadaOptions) != 0 {
+		t.Fatalf("Canada shipping options = %+v, error = %v; want no options", canadaOptions, err)
+	}
+	rejectedToken := sha256.Sum256([]byte("unsupported destination checkout"))
+	if err := db.CreateCart(ctx, seed.ShopID, rejectedToken[:]); err != nil {
+		t.Fatalf("create cart for unsupported destination: %v", err)
+	}
+	defer func() {
+		_, _ = db.SQL.ExecContext(context.Background(), "DELETE FROM carts WHERE access_token_hash = $1", rejectedToken[:])
+	}()
+	if _, err := db.AddCartLine(ctx, seed.ShopID, rejectedToken[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add item for unsupported destination: %v", err)
+	}
+	if _, err := db.CheckoutCart(ctx, seed.ShopID, rejectedToken[:], CheckoutDetails{
+		Email: "unsupported-destination@example.com", Name: "Unsupported destination",
+		ShippingCarrierCode: "custom-carrier",
+		ShippingAddress: ShippingAddress{
+			Line1: "1 rue du Test", City: "Toronto", PostalCode: "M5V 2T6", Country: "CA",
+		},
+	}); !errors.Is(err, ErrShippingUnavailable) {
+		t.Fatalf("checkout with unsupported destination error = %v, want %v", err, ErrShippingUnavailable)
+	}
+	otherShop, err := db.GetShippingConfig(ctx, "e0e00000-0001-4000-8000-000000000099")
+	if err != nil {
+		t.Fatalf("read other shop shipping configuration: %v", err)
+	}
+	if len(otherShop.Carriers) != 0 || len(otherShop.Zones) != 0 || len(otherShop.Rates) != 0 {
+		t.Fatalf("other shop received shipping configuration: %+v", otherShop)
 	}
 }

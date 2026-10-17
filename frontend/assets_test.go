@@ -2,6 +2,7 @@ package frontend
 
 import (
 	"io/fs"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +22,7 @@ func TestEmbeddedStorefrontAndAdminAssets(t *testing.T) {
 		{name: "admin page", fsys: AdminAssets, path: "admin/index.html"},
 		{name: "admin script", fsys: AdminAssets, path: "admin/admin.js"},
 	}
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			info, err := fs.Stat(test.fsys, test.path)
@@ -31,5 +33,36 @@ func TestEmbeddedStorefrontAndAdminAssets(t *testing.T) {
 				t.Errorf("embedded asset %q must be a non-empty file", test.path)
 			}
 		})
+	}
+}
+
+func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
+	catalog, err := fs.ReadFile(Assets, "euromni-catalog.js")
+	if err != nil {
+		t.Fatalf("read storefront component: %v", err)
+	}
+	for _, feature := range []string{
+		"/v1/shipping-options",
+		"shipping_carrier_code",
+		"checkout-estimate",
+		"shipping method unavailable for this destination",
+	} {
+		if !strings.Contains(string(catalog), feature) {
+			t.Errorf("storefront component is missing shipping checkout feature %q", feature)
+		}
+	}
+	admin, err := fs.ReadFile(AdminAssets, "admin/admin.js")
+	if err != nil {
+		t.Fatalf("read admin script: %v", err)
+	}
+	for _, feature := range []string{
+		"/v1/admin/shipping",
+		"Configuration transport enregistrée.",
+		"country_codes",
+		"carrier_code",
+	} {
+		if !strings.Contains(string(admin), feature) {
+			t.Errorf("admin script is missing shipping configuration feature %q", feature)
+		}
 	}
 }

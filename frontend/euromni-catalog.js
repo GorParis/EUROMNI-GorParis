@@ -368,7 +368,7 @@ template.innerHTML = `
       <p class="cart-total-row" hidden><span>Total</span><span class="cart-total"></span></p>
       <form class="checkout-form" hidden>
         <h3>Coordonnées de livraison</h3>
-        <p class="checkout-note">Démo de commande : aucun paiement, frais de livraison ou taxes ne sont calculés. Le stock est déduit à la confirmation.</p>
+        <p class="checkout-note">Les frais sont calculés selon la destination et le transporteur sélectionné. Le paiement et les taxes ne sont pas encore calculés ; le stock est déduit à la confirmation.</p>
         <label>Nom complet<input name="name" autocomplete="name" maxlength="120" required /></label>
         <label>Adresse e-mail<input name="email" type="email" autocomplete="email" maxlength="320" required /></label>
         <label>Adresse<input name="line1" autocomplete="address-line1" maxlength="200" required /></label>
@@ -381,6 +381,13 @@ template.innerHTML = `
           <label>Région<input name="region" autocomplete="address-level1" maxlength="100" /></label>
           <label>Pays (code ISO)<input name="country" autocomplete="country" maxlength="2" pattern="[A-Za-z]{2}" required /></label>
         </div>
+        <label>Mode de livraison
+          <select name="shipping_carrier_code" required disabled>
+            <option value="">Saisissez un pays pour voir les modes disponibles</option>
+          </select>
+        </label>
+        <p class="checkout-note shipping-options-status" role="status" aria-live="polite"></p>
+        <p class="checkout-note checkout-estimate" hidden></p>
         <button class="checkout-submit" type="submit">Confirmer la commande</button>
       </form>
     </div>
@@ -437,9 +444,21 @@ function formatPrice(amount, currency, locale) {
   }
 }
 
+function addDecimalAmounts(left, right) {
+  const parse = (value) => {
+    const match = /^([0-9]+)(?:\.([0-9]{1,4}))?$/.exec(String(value));
+    if (!match) {
+      throw new Error("Invalid decimal amount");
+    }
+    return BigInt(match[1]) * 10000n + BigInt((match[2] || "").padEnd(4, "0"));
+  };
+  const units = parse(left) + parse(right);
+  return `${units / 10000n}.${String(units % 10000n).padStart(4, "0")}`;
+}
+
 class EuromniCatalog extends HTMLElement {
   static get observedAttributes() {
-    return ["locale", "src", "cart-src", "checkout-src"];
+    return ["locale", "src", "cart-src", "checkout-src", "shipping-src"];
   }
 
   constructor() {
@@ -451,6 +470,8 @@ class EuromniCatalog extends HTMLElement {
     this.cartToken = null;
     this.cartBusy = false;
     this.currentCart = null;
+    this.shippingOptions = [];
+    this.shippingController = null;
     this.detailController = null;
     this.categories = [];
     this.categoryFilter = "";
@@ -462,6 +483,12 @@ class EuromniCatalog extends HTMLElement {
     this.shadowRoot.querySelector(".checkout-form").addEventListener("submit", (event) => {
       event.preventDefault();
       this.submitCheckout(event.currentTarget);
+    });
+    this.shadowRoot.querySelector('[name="country"]').addEventListener("change", (event) => {
+      this.loadShippingOptions(event.currentTarget.value);
+    });
+    this.shadowRoot.querySelector('[name="shipping_carrier_code"]').addEventListener("change", () => {
+      this.updateCheckoutEstimate();
     });
     window.addEventListener("popstate", this.onPopState);
     const params = new URLSearchParams(window.location.search);
@@ -476,12 +503,17 @@ class EuromniCatalog extends HTMLElement {
   disconnectedCallback() {
     this.requestController?.abort();
     this.detailController?.abort();
+    this.shippingController?.abort();
     window.removeEventListener("popstate", this.onPopState);
   }
 
-  attributeChangedCallback() {
+  attributeChangedCallback(name) {
     if (this.isConnected) {
-      this.load();
+      if (name === "shipping-src") {
+        this.loadShippingOptions(this.shadowRoot.querySelector('[name="country"]').value);
+      } else {
+        this.load();
+      }
     }
   }
 
@@ -499,6 +531,96 @@ class EuromniCatalog extends HTMLElement {
 
   get checkoutSrc() {
     return this.getAttribute("checkout-src") || "/v1/checkout";
+  }
+
+  get shippingSrc() {
+    return this.getAttribute("shipping-src") || "/v1/shipping-options";
+  }
+
+  async loadShippingOptions(countryValue) {
+    const country = String(countryValue || "").trim().toUpperCase();
+    const select = this.shadowRoot.querySelector('[name="shipping_carrier_code"]');
+    const status = this.shadowRoot.querySelector(".shipping-options-status");
+    this.shippingController?.abort();
+    this.shippingOptions = [];
+    select.replaceChildren();
+    select.disabled = true;
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Chargement des modes de livraison…";
+    select.append(placeholder);
+    this.updateCheckoutEstimate();
+    if (!/^[A-Z]{2}$/.test(country)) {
+      placeholder.textContent = "Saisissez un pays valide pour afficher les modes disponibles";
+      status.textContent = "";
+      return;
+    }
+
+    const controller = new AbortController();
+    this.shippingController = controller;
+    status.textContent = "";
+    try {
+      const endpoint = new URL(this.shippingSrc, window.location.href);
+      endpoint.searchParams.set("country", country);
+      const response = await fetch(endpoint, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body?.error || "Les modes de livraison sont indisponibles.");
+      }
+      if (controller.signal.aborted) return;
+      this.shippingOptions = Array.isArray(body.data) ? body.data : [];
+      select.replaceChildren();
+      const prompt = document.createElement("option");
+      prompt.value = "";
+      prompt.textContent = this.shippingOptions.length
+        ? "Choisissez un mode de livraison"
+        : "Aucun mode de livraison configuré pour cette destination";
+      select.append(prompt);
+      for (const option of this.shippingOptions) {
+        const item = document.createElement("option");
+        item.value = option.carrier_code;
+        item.textContent =
+          `${option.carrier_name} — ${formatPrice(option.amount, option.currency, this.locale)}`;
+        select.append(item);
+      }
+      select.disabled = this.shippingOptions.length === 0;
+      status.textContent = this.shippingOptions.length
+        ? ""
+        : "La boutique ne livre pas encore cette destination.";
+      this.updateCheckoutEstimate();
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      select.replaceChildren();
+      const failed = document.createElement("option");
+      failed.value = "";
+      failed.textContent = "Modes de livraison indisponibles";
+      select.append(failed);
+      status.textContent = error.message || "Impossible de charger les modes de livraison.";
+    } finally {
+      if (this.shippingController === controller) this.shippingController = null;
+    }
+  }
+
+  updateCheckoutEstimate() {
+    const estimate = this.shadowRoot.querySelector(".checkout-estimate");
+    const carrierCode = this.shadowRoot.querySelector('[name="shipping_carrier_code"]').value;
+    const option = this.shippingOptions.find((entry) => entry.carrier_code === carrierCode);
+    const cartAmount = this.currentCart?.total?.amount;
+    const currency = this.currentCart?.total?.currency || option?.currency;
+    if (!option || !currency || !Number.isFinite(Number(cartAmount))) {
+      estimate.hidden = true;
+      estimate.textContent = "";
+      return;
+    }
+    const grandTotal = addDecimalAmounts(cartAmount, option.amount);
+    estimate.hidden = false;
+    estimate.textContent =
+      `Sous-total ${formatPrice(cartAmount, currency, this.locale)} + livraison ` +
+      `${formatPrice(option.amount, option.currency, this.locale)} = ` +
+      `${formatPrice(grandTotal, currency, this.locale)} (hors taxes).`;
   }
 
   async restoreCart() {
@@ -730,6 +852,8 @@ class EuromniCatalog extends HTMLElement {
           ? "Votre panier est vide."
           : body && body.error === "insufficient inventory"
             ? "Le stock ne permet plus cette commande."
+            : body && body.error === "shipping method unavailable for this destination"
+              ? "Ce mode de livraison n’est plus disponible pour cette destination. Choisissez-en un autre."
             : "Cette commande ne peut pas être finalisée.");
       }
       if (response.status === 401 && this.cartToken) {
@@ -829,6 +953,7 @@ class EuromniCatalog extends HTMLElement {
     const details = {
       email: values.email,
       name: values.name,
+      shipping_carrier_code: values.shipping_carrier_code,
       shipping_address: {
         line1: values.line1,
         line2: values.line2,
@@ -846,7 +971,14 @@ class EuromniCatalog extends HTMLElement {
       });
       this.renderCart({ items: [], total: { amount: "0.0000", currency: order.currency } });
       form.reset();
-      this.setCartStatus(`Commande ${order.number} enregistrée en attente de paiement.`, false);
+      this.shippingOptions = [];
+      this.shadowRoot.querySelector('[name="shipping_carrier_code"]').replaceChildren();
+      this.shadowRoot.querySelector('[name="shipping_carrier_code"]').disabled = true;
+      this.setCartStatus(
+        `Commande ${order.number} enregistrée en attente de paiement. Total : ` +
+        `${formatPrice(order.grand_total, order.currency, this.locale)} (hors taxes).`,
+        false,
+      );
     } catch (error) {
       this.setCartStatus(error.message, true);
     } finally {
@@ -883,6 +1015,7 @@ class EuromniCatalog extends HTMLElement {
     totalRow.hidden = !hasItems;
     checkoutForm.hidden = !hasItems;
     total.textContent = formatPrice(cart.total.amount, cart.total.currency, this.locale);
+    this.updateCheckoutEstimate();
     if (!hasItems) {
       this.setCartStatus("Votre panier est vide.");
     }

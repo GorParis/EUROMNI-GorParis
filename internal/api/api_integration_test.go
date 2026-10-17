@@ -19,6 +19,22 @@ import (
 
 func TestPostgresAPIEndToEnd(t *testing.T) {
 	db := store.NewSQL(testdb.Start(t))
+	shippingConfig, err := db.GetShippingConfig(context.Background(), seed.ShopID)
+	if err != nil {
+		t.Fatalf("read default shipping configuration: %v", err)
+	}
+	for index := range shippingConfig.Carriers {
+		if shippingConfig.Carriers[index].Code == "colissimo" {
+			shippingConfig.Carriers[index].Active = true
+		}
+	}
+	shippingConfig.Rates = []store.ShippingRate{{
+		CarrierCode: "colissimo", ZoneCode: shippingConfig.Zones[0].Code,
+		Amount: "6.90", Currency: "EUR", Active: true,
+	}}
+	if err := db.ReplaceShippingConfig(context.Background(), seed.ShopID, *shippingConfig); err != nil {
+		t.Fatalf("configure shipping for checkout: %v", err)
+	}
 	originalReader := productReader
 	SetProductReader(db)
 	t.Cleanup(func() {
@@ -67,6 +83,12 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	if addResponse.Code != http.StatusOK || !strings.Contains(addResponse.Body.String(), `"amount":"178.0000"`) {
 		t.Fatalf("REST cart add status/body = %d/%s", addResponse.Code, addResponse.Body)
 	}
+	shippingOptions := performAPIRequest(mux, http.MethodGet, "/v1/shipping-options?country=FR", "", "")
+	if shippingOptions.Code != http.StatusOK ||
+		!strings.Contains(shippingOptions.Body.String(), `"carrier_code":"colissimo"`) ||
+		!strings.Contains(shippingOptions.Body.String(), `"amount":"6.9000"`) {
+		t.Fatalf("shipping options status/body = %d/%s", shippingOptions.Code, shippingOptions.Body)
+	}
 
 	queryBody := `{"query":"{ products { slug } product(id: \"` + seed.ProductID + `\") { slug variants { prices { amount } } } categories { slug } cart { total { amount currency } } }"}`
 	graphqlResponse := performAPIRequest(mux, http.MethodPost, "/graphql", "Bearer "+created.Data.Token, queryBody)
@@ -74,9 +96,12 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		t.Fatalf("GraphQL status/body = %d/%s", graphqlResponse.Code, graphqlResponse.Body)
 	}
 
-	checkoutBody := `{"email":"checkout@example.com","name":"Checkout integration","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
+	checkoutBody := `{"email":"checkout@example.com","name":"Checkout integration","shipping_carrier_code":"colissimo","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
 	checkoutResponse := performAPIRequest(mux, http.MethodPost, "/v1/checkout", "Bearer "+created.Data.Token, checkoutBody)
-	if checkoutResponse.Code != http.StatusCreated || !strings.Contains(checkoutResponse.Body.String(), `"grand_total":"178.0000"`) {
+	if checkoutResponse.Code != http.StatusCreated ||
+		!strings.Contains(checkoutResponse.Body.String(), `"shipping_total":"6.9000"`) ||
+		!strings.Contains(checkoutResponse.Body.String(), `"grand_total":"184.9000"`) ||
+		!strings.Contains(checkoutResponse.Body.String(), `"shipping_carrier_name":"Colissimo"`) {
 		t.Fatalf("REST checkout status/body = %d/%s", checkoutResponse.Code, checkoutResponse.Body)
 	}
 	var createdOrder struct {
@@ -136,8 +161,21 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	}
 	orderDetail := performAPIRequest(mux, http.MethodGet, "/v1/admin/orders/"+createdOrder.Data.ID, staffAuthorization, "")
 	if orderDetail.Code != http.StatusOK || !strings.Contains(orderDetail.Body.String(), `"email":"checkout@example.com"`) ||
-		!strings.Contains(orderDetail.Body.String(), `"sku":"CABAS-LIN-NAT"`) {
-		t.Fatalf("admin order detail status/body = %d/%s; want customer and line snapshots", orderDetail.Code, orderDetail.Body)
+		!strings.Contains(orderDetail.Body.String(), `"sku":"CABAS-LIN-NAT"`) ||
+		!strings.Contains(orderDetail.Body.String(), `"shipping_carrier_name":"Colissimo"`) ||
+		!strings.Contains(orderDetail.Body.String(), `"shipping_zone_name":"France et Union européenne"`) {
+		t.Fatalf("admin order detail status/body = %d/%s; want customer, line and shipping snapshots", orderDetail.Code, orderDetail.Body)
+	}
+	shippingConfigResponse := performAPIRequest(mux, http.MethodGet, "/v1/admin/shipping", staffAuthorization, "")
+	if shippingConfigResponse.Code != http.StatusOK ||
+		!strings.Contains(shippingConfigResponse.Body.String(), `"code":"colissimo"`) ||
+		!strings.Contains(shippingConfigResponse.Body.String(), `"amount":"6.9000"`) {
+		t.Fatalf("admin shipping config status/body = %d/%s", shippingConfigResponse.Code, shippingConfigResponse.Body)
+	}
+	replaceShipping := performAPIRequest(mux, http.MethodPut, "/v1/admin/shipping", staffAuthorization,
+		`{"carriers":[{"code":"colissimo","name":"Colissimo","active":true}],"zones":[{"code":"france-ue","name":"France et Union européenne","country_codes":["FR"],"active":true}],"rates":[{"carrier_code":"colissimo","zone_code":"france-ue","amount":"6.90","currency":"EUR","active":true}]}`)
+	if replaceShipping.Code != http.StatusOK || !strings.Contains(replaceShipping.Body.String(), `"amount":"6.90"`) {
+		t.Fatalf("admin shipping update status/body = %d/%s; want saved tariff", replaceShipping.Code, replaceShipping.Body)
 	}
 
 	adminCategory := performAPIRequest(mux, http.MethodPost, "/v1/admin/categories", staffAuthorization,
@@ -182,6 +220,10 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	if editorOrderAccess.Code != http.StatusForbidden {
 		t.Fatalf("editor order-list status/body = %d/%s; want 403", editorOrderAccess.Code, editorOrderAccess.Body)
 	}
+	editorShippingWrite := performAPIRequest(mux, http.MethodPut, "/v1/admin/shipping", "Bearer "+editorSession.Data.Token, `{}`)
+	if editorShippingWrite.Code != http.StatusForbidden {
+		t.Fatalf("editor shipping-write status/body = %d/%s; want 403", editorShippingWrite.Code, editorShippingWrite.Body)
+	}
 	staffList := performAPIRequest(mux, http.MethodGet, "/v1/admin/staff", staffAuthorization, "")
 	if staffList.Code != http.StatusOK || !strings.Contains(staffList.Body.String(), "integration-editor@example.com") {
 		t.Fatalf("staff list status/body = %d/%s; want new editor", staffList.Code, staffList.Body)
@@ -216,6 +258,10 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		"Bearer "+supportSession.Data.Token, `{"status":"cancelled"}`)
 	if supportCancel.Code != http.StatusForbidden {
 		t.Fatalf("support cancellation status/body = %d/%s; want 403", supportCancel.Code, supportCancel.Body)
+	}
+	supportShippingWrite := performAPIRequest(mux, http.MethodPut, "/v1/admin/shipping", "Bearer "+supportSession.Data.Token, `{}`)
+	if supportShippingWrite.Code != http.StatusForbidden {
+		t.Fatalf("support shipping-write status/body = %d/%s; want 403", supportShippingWrite.Code, supportShippingWrite.Body)
 	}
 	cancelOrder := performAPIRequest(mux, http.MethodPatch, "/v1/admin/orders/"+createdOrder.Data.ID+"/status",
 		staffAuthorization, `{"status":"cancelled"}`)
