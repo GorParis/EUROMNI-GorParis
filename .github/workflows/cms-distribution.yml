@@ -67,6 +67,42 @@ jobs:
           } > "dist/$bundle/BUILD-INFO.txt"
           tar -czf "dist/$bundle.tar.gz" -C dist "$bundle"
 
+      - name: Smoke test extracted Linux distribution
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="euromni-cms-${{ matrix.target }}"
+          smoke_dir="$(mktemp -d)"
+          trap 'if [[ -n "${cms_pid:-}" ]]; then kill "$cms_pid" 2>/dev/null || true; wait "$cms_pid" 2>/dev/null || true; fi; rm -rf "$smoke_dir"' EXIT
+          tar -xzf "dist/$bundle.tar.gz" -C "$smoke_dir"
+          LISTEN_ADDR=127.0.0.1:18081 "$smoke_dir/$bundle/euromni-cms" >"$smoke_dir/cms.log" 2>&1 &
+          cms_pid=$!
+          ready=false
+          for _ in {1..50}; do
+            if curl --fail --silent http://127.0.0.1:18081/health >/dev/null; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$cms_pid" 2>/dev/null; then
+              cat "$smoke_dir/cms.log"
+              exit 1
+            fi
+            sleep 0.2
+          done
+          if [[ "$ready" != true ]]; then
+            cat "$smoke_dir/cms.log"
+            echo "Packaged Linux CMS did not become healthy" >&2
+            exit 1
+          fi
+          for path in admin/ v1/products; do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:18081/$path")"
+            if [[ "$status" != 200 ]]; then
+              echo "Packaged Linux CMS returned HTTP $status for /$path" >&2
+              exit 1
+            fi
+          done
+
       - name: Build and archive Windows distribution
         if: runner.os == 'Windows'
         shell: pwsh
@@ -88,6 +124,53 @@ jobs:
             (go env GOOS GOARCH CGO_ENABLED)
           ) | Set-Content -Encoding ascii (Join-Path $bundlePath "BUILD-INFO.txt")
           Compress-Archive -Path $bundlePath -DestinationPath (Join-Path "dist" "$bundle.zip")
+
+      - name: Smoke test extracted Windows distribution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundle = "euromni-cms-${{ matrix.target }}"
+          $smokePath = Join-Path $env:RUNNER_TEMP "euromni-cms-smoke"
+          Expand-Archive -LiteralPath (Join-Path "dist" "$bundle.zip") -DestinationPath $smokePath
+          $cmsPath = Join-Path $smokePath "$bundle\euromni-cms.exe"
+          $env:LISTEN_ADDR = "127.0.0.1:18081"
+          $process = Start-Process -FilePath $cmsPath -PassThru `
+            -RedirectStandardOutput (Join-Path $smokePath "cms.out.log") `
+            -RedirectStandardError (Join-Path $smokePath "cms.err.log")
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 50; $attempt++) {
+              if ($process.HasExited) {
+                Get-Content (Join-Path $smokePath "cms.err.log")
+                throw "Packaged Windows CMS exited with code $($process.ExitCode)"
+              }
+              try {
+                $null = Invoke-WebRequest -Uri "http://127.0.0.1:18081/health" -TimeoutSec 2
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Milliseconds 200
+              }
+            }
+            if (-not $ready) {
+              Get-Content (Join-Path $smokePath "cms.err.log")
+              throw "Packaged Windows CMS did not become healthy"
+            }
+            foreach ($path in @("admin/", "v1/products")) {
+              $response = Invoke-WebRequest -Uri "http://127.0.0.1:18081/$path" -TimeoutSec 5
+              if ($response.StatusCode -ne 200) {
+                throw "Packaged Windows CMS returned HTTP $($response.StatusCode) for /$path"
+              }
+            }
+          } finally {
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id
+              $process.WaitForExit()
+            }
+            Remove-Item -LiteralPath $smokePath -Recurse -Force
+            Remove-Item Env:LISTEN_ADDR -ErrorAction SilentlyContinue
+          }
 
       - name: Upload distribution archive
         uses: actions/upload-artifact@v4
