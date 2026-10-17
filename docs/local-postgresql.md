@@ -73,6 +73,12 @@ owner de démonstration, un produit et une commande ont été créés via l’AP
 L’authentification, le produit, le client et le snapshot de ligne de commande
 ont été vérifiés après redémarrage du CMS.
 
+Séparément, l’archive Windows publiée par le workflow GitHub Actions
+[#39015220199](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39015220199)
+a été téléchargée, extraite et installée sur un cluster PostgreSQL 16.15
+temporaire. Le binaire empaqueté a appliqué les migrations, permis le bootstrap
+du owner et servi le catalogue ; l’authentification staff PostgreSQL a réussi.
+
 La base a ensuite été sauvegardée avec `pg_dump` au format custom (`-Fc`,
 `--no-owner`, `--no-acl`) et restaurée avec `pg_restore` dans une base distincte
 du même cluster temporaire. Des requêtes SQL ont confirmé la présence du

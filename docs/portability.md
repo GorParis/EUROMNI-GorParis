@@ -39,7 +39,7 @@ support :
 |---|---|---|---|
 | Linux / amd64 | A tester avec CGo actif | A tester | Non valide |
 | Linux / arm64 | A tester avec CGo actif | A tester | Non valide |
-| Windows / amd64 | Tests Go, Wasmtime, integration PostgreSQL et build natif passes avec CGo actif | Tests FileStore passes avec DACL prive | Valide localement le 2026-10-17 ; choix des cibles de production et validation du paquet distribue restent ouverts |
+| Windows / amd64 | Tests Go, Wasmtime, integration PostgreSQL et build natif passes avec CGo actif | Tests FileStore passes avec DACL prive | Runtime local et paquet distribue valides le 2026-10-17 ; choix des cibles de production reste ouvert |
 | macOS / amd64 et arm64 | A tester avec CGo actif | A tester | Non valide |
 
 ### Preuves executees le 2026-10-17
@@ -58,10 +58,15 @@ Environnement local : Go 1.27.2, `GOOS=windows`, `GOARCH=amd64`,
   passe ; le guest minimal n'importe que `euromni.call` et n'obtient pas la
   donnee du catalogue sans la capability `catalog`.
 
-Ces preuves valident l'environnement local Windows/amd64 et ses tests, pas une
-installation distribuee ni une cible de production approuvee. Linux/macOS et
-les autres architectures restent non valides. QP-10 reste donc en cours jusqu'a
-la decision des cibles de production et la validation du paquet sur celles-ci.
+Le run natif [CMS standalone distribution #39017221737](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39017221737)
+a egalement extrait et lance les paquets CMS amd64 sur Ubuntu 22.04 et Windows
+Server 2022 ; `/health`, `/admin/` et `/v1/products` ont repondu HTTP 200. Le
+paquet Windows du run initial a ete installe contre PostgreSQL 16.15. Ces
+resultats valident les distributions CMS, mais le smoke test sans base ne
+constitue pas un test du runtime Wasmtime natif sur Linux ni du FileStore Linux.
+Linux/macOS et les autres architectures restent non valides pour ces surfaces.
+QP-10 reste en cours jusqu'a la decision des cibles de production et la
+validation de chaque surface native retenue.
 
 Le responsable produit/technique doit choisir les cibles de deploiement avant
 que cette matrice puisse etre reduite a une liste de support. Les cibles non

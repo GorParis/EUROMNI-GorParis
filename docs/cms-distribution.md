@@ -34,16 +34,27 @@ a été restauré dans une autre base ; le produit, le compte owner et les
 snapshots de commande ont tous été retrouvés. L'instance et les fichiers
 temporaires ont été supprimés après le test.
 
-Le workflow natif Windows/Linux a ensuite réussi sur le commit
+Le premier workflow natif Windows/Linux a réussi sur le commit
 [`604b272`](https://github.com/GorParis/EUROMNI-GorParis/commit/604b2723aba9fd6ea464e0fbbfaf025e866fd19c)
 le 17 octobre 2026. Ses deux archives sont disponibles comme artifacts dans
 [l'exécution GitHub Actions](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39015220199)
 jusqu'au 16 novembre 2026. Le runner Linux valide la compilation et le paquet
 Linux amd64 ; le runner Windows valide la compilation et le paquet Windows
-amd64. L'installation PostgreSQL ci-dessus a été faite avec les exécutables
-Windows construits localement, pas avec l'archive téléchargée depuis le run
-GitHub. Aucun artifact téléchargé du run n'a encore été extrait et exécuté
-contre PostgreSQL ; l'archive Linux n'a pas encore été lancée.
+amd64.
+
+Le workflow a ensuite été renforcé pour extraire et démarrer les binaires
+contenus dans chaque archive sur leur runner natif. Le run
+[`#39017221737`](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39017221737),
+sur le commit [`35ff3c6`](https://github.com/GorParis/EUROMNI-GorParis/commit/35ff3c66eb301da5e6038979647a434214f7d34f),
+a réussi sur Ubuntu 22.04 et Windows Server 2022 : `/health`, `/admin/` et
+`/v1/products` ont répondu HTTP 200 sur les deux binaires extraits. Les
+artifacts Windows et Linux de ce run sont disponibles jusqu'au 16 novembre
+2026 dans [l'exécution GitHub Actions](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39017221737).
+Le paquet Windows téléchargé depuis le premier run a également été installé
+contre PostgreSQL 16.15 isolé : migrations, bootstrap, catalogue HTTP et
+authentification owner ont réussi. L'exercice de persistance et de
+restauration PostgreSQL est consigné dans
+[`local-postgresql.md`](./local-postgresql.md).
 
 ## Installation
 
@@ -123,6 +134,5 @@ utilisé par le processus qui publie les artefacts. Les permissions de ce
 répertoire doivent respecter les exigences de sécurité de la plateforme.
 
 Cette documentation décrit le paquet autonome, mais l'installation comme
-service Windows ou unité systemd, la rotation des secrets, l'usage de l'archive
-Linux et une politique de sauvegarde protégée restent à valider avant un usage
-client.
+service Windows ou unité systemd, la rotation des secrets et une politique de
+sauvegarde protégée restent à valider avant un usage client.
