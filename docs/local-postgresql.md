@@ -59,11 +59,90 @@ projet. `stop` et `down` retirent ou arrêtent les conteneurs mais conservent ce
 volume. **Ne pas utiliser `down -v`** pour une base qui contient des commandes
 ou des preuves de transaction : cette option supprime les données.
 
+### Sauvegarde locale de développement
+
+`cmd/db-backup` crée un dump PostgreSQL au format custom et une archive du
+FileStore, puis écrit un manifeste contenant leurs tailles et empreintes
+SHA-256. La sauvegarde n'est publiée qu'après la réussite des deux exports.
+`-verify` contrôle les empreintes avant une restauration ; il ne remplace pas
+un essai de restauration PostgreSQL.
+
+Lancer la commande une fois par jour avec l'ordonnanceur local, en surveillant
+son code de sortie et l'espace disque. Le dossier de destination est protégé
+pour le compte Windows courant (avec SYSTEM et Administrateurs) ou en
+permissions POSIX privées ; il doit être distinct du FileStore. Le dump ne
+contient pas le secret de connexion `DATABASE_URL`, mais les données métier
+sauvegardées restent sensibles.
+
+Exemple PowerShell, après avoir configuré `DATABASE_URL` comme pour les autres
+commandes du CMS :
+
+```powershell
+$env:EUROMNI_ARTIFACT_DIR = "C:\EUROMNI\data\artifacts"
+$env:EUROMNI_BACKUP_DIR = "D:\EUROMNI\backups"
+go run ./cmd/db-backup
+$latest = Get-ChildItem $env:EUROMNI_BACKUP_DIR -Directory |
+  Sort-Object Name -Descending | Select-Object -First 1
+go run ./cmd/db-backup -verify $latest.FullName
+```
+
+Dans une archive autonome, remplacer `go run ./cmd/db-backup` par
+`.\euromni-db-backup.exe`.
+
+`pg_dump` doit être disponible dans le `PATH` et être de la même version
+majeure ou plus récente que le serveur PostgreSQL. Le programme refuse les
+paramètres de connexion qu'il ne sait pas transmettre explicitement au client.
+La restauration PostgreSQL requiert aussi `pg_restore` dans le `PATH`.
+L'ordonnanceur doit exécuter le programme au moins une fois toutes les 24 h et
+signaler tout échec pour respecter le RPO provisoire de 24 h.
+
+Après chaque sauvegarde réussie, la rotation garde jusqu'à 14 sauvegardes
+quotidiennes, 8 hebdomadaires et 12 mensuelles (au plus 34, avec chevauchements
+dédupliqués). Une entrée de sauvegarde invalide bloque la purge et produit une
+erreur visible au lieu d'être supprimée silencieusement. `-verify` contrôle les
+empreintes des payloads ; la purge valide les noms, répertoires et manifestes.
+
+Cette première étape ne chiffre pas les sauvegardes et un autre dossier ou
+disque de la même machine ne protège pas contre la perte de celle-ci. Pour le
+développement, utiliser un volume chiffré si les données sont sensibles. Le
+stockage distant/hors machine reste à comparer et à décider avant tout usage
+client. Le RTO n'est pas fixé : il sera mesuré lors d'un exercice complet de
+restauration.
+
+Pour restaurer, travailler sur une nouvelle base vide et un FileStore vide,
+jamais sur les données actives :
+
+```powershell
+$backup = "D:\EUROMNI\backups\<nom-de-la-sauvegarde>"
+go run ./cmd/db-backup -verify $backup
+pg_restore --no-owner --no-acl --dbname=euromni_restore "$backup\database.dump"
+go run ./cmd/db-backup -restore-artifacts $backup `
+  -artifact-dir "C:\EUROMNI\restore\artifacts"
+```
+
+Dans une archive autonome, remplacer `go run ./cmd/db-backup` par
+`.\euromni-db-backup.exe`.
+
+Configurer les variables PostgreSQL attendues par `pg_restore` dans
+l'environnement du processus sans mettre le mot de passe dans les arguments.
+La restauration FileStore revérifie l'archive, valide chaque chemin et chaque
+SHA-256, et refuse un répertoire de destination déjà existant.
+Après restauration, vérifier migrations, artefacts référencés, commandes et
+snapshots avant toute bascule.
+
+Le test d'intégration utilise `pg_dump`/`pg_restore` réels et une instance
+PostgreSQL 16 isolée ; il vérifie le dump et le FileStore restaurés :
+
+```powershell
+go test -tags integration ./internal/backup -run TestBackupAndRestorePostgreSQL -count=1
+```
+
+Il ne fixe pas le RTO de production : le temps de restauration d'un volume de
+données représentatif et les vérifications fonctionnelles restent à mesurer
+avant une bascule.
+
 Un volume local ou un disque de machine protège contre certaines pannes, mais
-ne constitue pas une sauvegarde. Une exploitation client exige une politique de
-sauvegardes vérifiées et hors machine, une procédure de restauration testée,
-ainsi que la conservation des snapshots de commande et de l’historique des
-migrations.
+ne constitue pas une sauvegarde hors machine.
 
 ## Exercice de restauration CMS-05d
 
@@ -85,8 +164,9 @@ du même cluster temporaire. Des requêtes SQL ont confirmé la présence du
 produit créé, du compte owner et de la commande avec son client et son SKU
 snapshot. Le cluster et le dump de test ont été supprimés après vérification.
 Cet exercice valide la procédure technique, pas une sauvegarde de production :
-la fréquence de rétention, le stockage protégé hors machine et les contrôles
-périodiques de restauration restent à définir.
+la rétention locale et le RPO de 24 h sont maintenant définis et la commande est
+disponible. Le stockage protégé hors machine, le chiffrement et les contrôles
+périodiques de restauration restent à définir avant un usage client.
 
 Sur une base neuve issue des migrations actuelles, la boutique `atelier-demo`
 et son owner sans mot de passe `owner@atelier-demo.example` sont précréés. Le

@@ -82,4 +82,4 @@ gère la transaction et inscrit lui-même le nom dans `schema_migrations`. Ne pa
 ajouter de `BEGIN`, `COMMIT` ni d’insertion manuelle dans le registre ; cela
 permet au migrateur de revenir en arrière sur toute la migration en cas d’échec.
 
-Ces migrations contiennent le schéma et le seed d’exemple, pas une sauvegarde des données clients ou des transactions. Les données doivent être sauvegardées séparément avec `pg_dump`, conservées hors machine et restaurées/testées séparément. Cette procédure opérationnelle reste à mettre en place avant tout usage client.
+Ces migrations contiennent le schéma et le seed d’exemple, pas une sauvegarde des données clients ou des transactions. La commande [`db-backup`](local-postgresql.md#sauvegarde-locale-de-développement) sauvegarde la base et le FileStore localement. Avant tout usage client, il faut encore décider le stockage protégé hors machine et le chiffrement, puis mesurer et répéter la restauration sur des données représentatives.

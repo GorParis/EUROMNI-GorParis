@@ -13,6 +13,7 @@ Le paquet `euromni-cms-<OS>-<architecture>` contient :
 |---|---|
 | `euromni-cms` | Serveur CMS et storefront |
 | `euromni-db-migrate` | Installation ou mise à niveau du schéma PostgreSQL |
+| `euromni-db-backup` | Sauvegarde PostgreSQL/FileStore, vérification et restauration du FileStore |
 | `euromni-staff-bootstrap` | Création initiale du compte owner |
 | `euromni-artifact-reconciler` | Réconciliation planifiée du FileStore Wasm |
 
@@ -117,16 +118,17 @@ Ne pas exposer directement le serveur HTTP sur Internet.
 
 Les assets et migrations sont embarqués dans les exécutables. Les données
 commerciales résident dans PostgreSQL, qui doit utiliser son propre stockage
-persistant et sa politique de sauvegarde. Remplacer les exécutables lors d’une
-mise à jour ne modifie ni n’efface les données ; lancer le migrateur avant le
-redémarrage du serveur. Tester les sauvegardes et la restauration séparément,
-conformément à [la documentation PostgreSQL](./local-postgresql.md).
+persistant et sa politique de sauvegarde. Le paquet inclut
+`euromni-db-backup` ; la création d'un dump requiert aussi `pg_dump` dans le
+`PATH`. Remplacer les exécutables lors d’une mise à jour ne modifie ni n’efface
+les données ; lancer le migrateur avant le redémarrage du serveur. Les limites,
+la rétention et les commandes de vérification/restauration sont décrites dans
+[la documentation PostgreSQL](./local-postgresql.md).
 
 L'exercice de sauvegarde/restauration PostgreSQL est documenté dans
-[`local-postgresql.md`](./local-postgresql.md). Il valide la mécanique sur une
-instance temporaire, mais ne définit pas une fréquence de rétention ni un
-emplacement de sauvegarde hors machine ; ces choix restent à établir avant
-l'exploitation.
+[`local-postgresql.md`](./local-postgresql.md). La rétention locale est définie
+et automatisable par un ordonnanceur externe ; chiffrement et stockage hors
+machine restent à choisir avant l'exploitation.
 
 Le FileStore des artefacts est un stockage distinct : le réconciliateur exige
 `EUROMNI_ARTIFACT_DIR`, qui doit désigner le même répertoire privé que celui

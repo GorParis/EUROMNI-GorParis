@@ -55,7 +55,7 @@ jobs:
           set -euo pipefail
           bundle="euromni-cms-${{ matrix.target }}"
           mkdir -p "dist/$bundle/docs"
-          for command in cms db-migrate staff-bootstrap artifact-reconciler; do
+          for command in cms db-migrate db-backup staff-bootstrap artifact-reconciler; do
             go build -trimpath -o "dist/$bundle/euromni-$command" "./cmd/$command"
           done
           cp docs/cms-distribution.md docs/database.md docs/local-postgresql.md "dist/$bundle/docs/"
@@ -76,6 +76,7 @@ jobs:
           smoke_dir="$(mktemp -d)"
           trap 'if [[ -n "${cms_pid:-}" ]]; then kill "$cms_pid" 2>/dev/null || true; wait "$cms_pid" 2>/dev/null || true; fi; rm -rf "$smoke_dir"' EXIT
           tar -xzf "dist/$bundle.tar.gz" -C "$smoke_dir"
+          test -x "$smoke_dir/$bundle/euromni-db-backup"
           LISTEN_ADDR=127.0.0.1:18081 "$smoke_dir/$bundle/euromni-cms" >"$smoke_dir/cms.log" 2>&1 &
           cms_pid=$!
           ready=false
@@ -112,7 +113,7 @@ jobs:
           $bundlePath = Join-Path "dist" $bundle
           $docsPath = Join-Path $bundlePath "docs"
           New-Item -ItemType Directory -Force -Path $docsPath | Out-Null
-          foreach ($command in @("cms", "db-migrate", "staff-bootstrap", "artifact-reconciler")) {
+          foreach ($command in @("cms", "db-migrate", "db-backup", "staff-bootstrap", "artifact-reconciler")) {
             go build -trimpath -o (Join-Path $bundlePath "euromni-$command.exe") "./cmd/$command"
             if ($LASTEXITCODE -ne 0) { throw "Build failed for $command" }
           }
@@ -133,6 +134,9 @@ jobs:
           $bundle = "euromni-cms-${{ matrix.target }}"
           $smokePath = Join-Path $env:RUNNER_TEMP "euromni-cms-smoke"
           Expand-Archive -LiteralPath (Join-Path "dist" "$bundle.zip") -DestinationPath $smokePath
+          if (-not (Test-Path -LiteralPath (Join-Path $smokePath "$bundle\euromni-db-backup.exe") -PathType Leaf)) {
+            throw "Packaged Windows db-backup command is missing"
+          }
           $cmsPath = Join-Path $smokePath "$bundle\euromni-cms.exe"
           $env:LISTEN_ADDR = "127.0.0.1:18081"
           $process = Start-Process -FilePath $cmsPath -PassThru `
