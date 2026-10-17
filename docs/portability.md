@@ -39,8 +39,29 @@ support :
 |---|---|---|---|
 | Linux / amd64 | A tester avec CGo actif | A tester | Non valide |
 | Linux / arm64 | A tester avec CGo actif | A tester | Non valide |
-| Windows / amd64 | `go test ./internal/wasm` passe avec CGo actif | Tests FileStore passes avec DACL prive | Tests unitaires passes ; integration et choix de production restent ouverts |
+| Windows / amd64 | Tests Go, Wasmtime, integration PostgreSQL et build natif passes avec CGo actif | Tests FileStore passes avec DACL prive | Valide localement le 2026-10-17 ; choix des cibles de production et validation du paquet distribue restent ouverts |
 | macOS / amd64 et arm64 | A tester avec CGo actif | A tester | Non valide |
+
+### Preuves executees le 2026-10-17
+
+Environnement local : Go 1.27.2, `GOOS=windows`, `GOARCH=amd64`,
+`CGO_ENABLED=1`, compilateur C `gcc`.
+
+- `go test ./...` : passe.
+- `go vet ./...` : passe.
+- `go test -tags=integration ./...` : passe avec PostgreSQL 16 embarque pour
+  les suites d'integration.
+- `go build ./cmd/...` : passe ; les commandes natives se compilent avec CGo.
+- `go test ./internal/pipeline` : passe apres ajout de l'inspection des
+  imports des artefacts Wasm statique et dynamique generes depuis l'IR.
+- `go test -tags=wasmtoolchain ./internal/wasm -run 'TestMinimalCatalogGuest(RequiresOnlyEuromniCall|RuntimeExecution)$'` :
+  passe ; le guest minimal n'importe que `euromni.call` et n'obtient pas la
+  donnee du catalogue sans la capability `catalog`.
+
+Ces preuves valident l'environnement local Windows/amd64 et ses tests, pas une
+installation distribuee ni une cible de production approuvee. Linux/macOS et
+les autres architectures restent non valides. QP-10 reste donc en cours jusqu'a
+la decision des cibles de production et la validation du paquet sur celles-ci.
 
 Le responsable produit/technique doit choisir les cibles de deploiement avant
 que cette matrice puisse etre reduite a une liste de support. Les cibles non

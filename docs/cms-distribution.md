@@ -23,6 +23,28 @@ garder une base glibc LTS ; le runner Windows est Windows Server 2022. Chaque
 archive est publiée comme artifact de workflow. Cette première tranche ne
 déclare pas les autres OS ou architectures supportés.
 
+La validation locale du 17 octobre 2026 a d'abord démarré le binaire Windows
+sans `DATABASE_URL` : `/health`, `/admin/` et `/v1/products` ont répondu HTTP
+200. Une validation distincte a ensuite construit les exécutables Windows,
+appliqué les migrations sur PostgreSQL 16.15 isolé, configuré le owner de la
+boutique exemple, puis créé un produit et une commande via l'API. Après
+redémarrage du CMS, l'authentification, le produit, le client et la ligne de
+commande étaient toujours présents. Enfin, un dump PostgreSQL au format custom
+a été restauré dans une autre base ; le produit, le compte owner et les
+snapshots de commande ont tous été retrouvés. L'instance et les fichiers
+temporaires ont été supprimés après le test.
+
+Le workflow natif Windows/Linux a ensuite réussi sur le commit
+[`604b272`](https://github.com/GorParis/EUROMNI-GorParis/commit/604b2723aba9fd6ea464e0fbbfaf025e866fd19c)
+le 17 octobre 2026. Ses deux archives sont disponibles comme artifacts dans
+[l'exécution GitHub Actions](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39015220199)
+jusqu'au 16 novembre 2026. Le runner Linux valide la compilation et le paquet
+Linux amd64 ; le runner Windows valide la compilation et le paquet Windows
+amd64. L'installation PostgreSQL ci-dessus a été faite avec les exécutables
+Windows construits localement, pas avec l'archive téléchargée depuis le run
+GitHub. Aucun artifact téléchargé du run n'a encore été extrait et exécuté
+contre PostgreSQL ; l'archive Linux n'a pas encore été lancée.
+
 ## Installation
 
 1. Extraire l’archive dans un répertoire d’application dédié. Garder les
@@ -33,7 +55,12 @@ déclare pas les autres OS ou architectures supportés.
    dans le dépôt ou la ligne de commande, puis exécuter
    `euromni-db-migrate` une première fois et après chaque mise à jour.
 4. Créer le premier owner avec `euromni-staff-bootstrap`, en transmettant le
-   mot de passe sur stdin. Ne pas passer le secret en argument.
+   mot de passe sur stdin. Ne pas passer le secret en argument. Sur une base
+   fraîche, les migrations créent la boutique exemple `atelier-demo` et son
+   owner `owner@atelier-demo.example` sans mot de passe ; le bootstrap doit
+   recevoir cet identifiant de boutique et cette adresse. Il ne peut pas
+   remplacer un owner déjà initialisé ni ajouter un autre owner initial à cette
+   boutique.
 5. Définir `LISTEN_ADDR` si nécessaire, puis lancer `euromni-cms`. Sans cette
    variable, le service écoute sur `127.0.0.1:8081`.
 
@@ -44,7 +71,8 @@ export DATABASE_URL='postgres://euromni:<mot-de-passe>@127.0.0.1:5432/euromni?ss
 ./euromni-db-migrate
 read -rsp 'Mot de passe owner: ' OWNER_PASSWORD; printf '\n'
 printf '%s\n' "$OWNER_PASSWORD" | ./euromni-staff-bootstrap \
-  --shop '<shop-id>' --email '<owner-email>' --name '<owner-name>' --password-stdin
+  --shop 'e0e00000-0001-4000-8000-000000000001' \
+  --email 'owner@atelier-demo.example' --name 'Owner Atelier Demo' --password-stdin
 unset OWNER_PASSWORD
 ./euromni-cms
 ```
@@ -60,7 +88,8 @@ $previousOutputEncoding = $OutputEncoding
 $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 try {
   [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer) |
-    .\euromni-staff-bootstrap.exe --shop "<shop-id>" --email "<owner-email>" --name "<owner-name>" --password-stdin
+    .\euromni-staff-bootstrap.exe --shop "e0e00000-0001-4000-8000-000000000001" `
+      --email "owner@atelier-demo.example" --name "Owner Atelier Demo" --password-stdin
 } finally {
   $OutputEncoding = $previousOutputEncoding
   [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
@@ -82,11 +111,18 @@ mise à jour ne modifie ni n’efface les données ; lancer le migrateur avant l
 redémarrage du serveur. Tester les sauvegardes et la restauration séparément,
 conformément à [la documentation PostgreSQL](./local-postgresql.md).
 
+L'exercice de sauvegarde/restauration PostgreSQL est documenté dans
+[`local-postgresql.md`](./local-postgresql.md). Il valide la mécanique sur une
+instance temporaire, mais ne définit pas une fréquence de rétention ni un
+emplacement de sauvegarde hors machine ; ces choix restent à établir avant
+l'exploitation.
+
 Le FileStore des artefacts est un stockage distinct : le réconciliateur exige
 `EUROMNI_ARTIFACT_DIR`, qui doit désigner le même répertoire privé que celui
 utilisé par le processus qui publie les artefacts. Les permissions de ce
 répertoire doivent respecter les exigences de sécurité de la plateforme.
 
-Cette documentation décrit le paquet autonome, mais l’installation comme
-service Windows ou unité systemd, la rotation des secrets et l’exercice de
-restauration restent à valider avant un usage client.
+Cette documentation décrit le paquet autonome, mais l'installation comme
+service Windows ou unité systemd, la rotation des secrets, l'usage de l'archive
+Linux et une politique de sauvegarde protégée restent à valider avant un usage
+client.

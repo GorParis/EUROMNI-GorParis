@@ -3,9 +3,9 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 2.1 |
+| Version | 2.5 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
-| Date de révision | 2026-10-15 |
+| Date de révision | 2026-10-17 |
 | Responsable du document | Responsable produit/technique, à désigner |
 | Périmètre | Architecture, pipeline PHP→Wasm, ABI, artefacts et validation du cœur EUROMNI |
 | Exigence de portabilité | Artefacts Wasm indépendants de l’hôte de build ; plateformes runtime déclarées et testées |
@@ -76,7 +76,7 @@ la documentation du projet.
 | QP-07 | P1 | Valider Wasm avant publication et enregistrer l’artefact. | Imports, export mémoire/entrée, ABI, hash, taille, mémoire et fuel conformes ; publication atomique ; artefact corrompu ou non conforme rejeté. | Tests d’imports interdits, hash, limites, rollback et rechargement. | À faire |
 | QP-08 | P2 | Exécuter deux pilotes autorisés, un WooCommerce et un PrestaShop, sur une fonction catalogue ou hook simple. | Les deux passent par la même ABI sans SQL/réseau/filesystem côté guest et leurs sorties correspondent à un oracle documenté. | Licence/source autorisée, fixtures, résultats de tests et écarts consignés. | À faire |
 | QP-09 | P2 | Définir rétention, sauvegarde, restauration et suppression des sources/artefacts. | Règles par type d’artefact, stockage hors machine, restauration vérifiée, purge traçable. | Procédure et exercice de restauration/purge. | À faire |
-| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) consigne les validations unitaires Windows/amd64 (CGo, Wasmtime et DACL du FileStore) ; test d’intégration et choix de production restent à faire. | En cours |
+| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) consigne les tests complets, `go vet`, intégrations PostgreSQL 16 et build natif Windows/amd64 avec CGo ; choix de production et validation du paquet distribué restent à faire. | En cours |
 
 Ordre de reprise recommandé : traiter **QP-01 et QP-10 ensemble**. Le poste de
 développement n’est pas la cible d’architecture ; un worker de build épinglé
@@ -139,8 +139,8 @@ standard. Docker et tout hébergeur cloud restent optionnels.
 |---|---|---|---|
 | CMS-05a | Fiabiliser le démarrage et la configuration portable. | Le défaut d’écoute est limité à `127.0.0.1`; `LISTEN_ADDR` permet un bind explicite ; un `DATABASE_URL` invalide fait échouer le démarrage plutôt qu’un repli silencieux en mémoire. Tests unitaires, documentation et configuration Compose alignés. | Terminé |
 | CMS-05b | Fournir un outil de migration de schéma utilisable sans Docker. Dépend de CMS-05a. | `cmd/db-migrate` applique les migrations embarquées dans l’ordre sous verrou PostgreSQL ; un bootstrap vierge est atomique, chaque mise à jour et son entrée de registre sont atomiques, et le ledger non contigu ou un schéma non géré sont refusés. Intégrations PostgreSQL vérifient le bootstrap utilisé par les suites, l’idempotence, l’échec/rollback et la réutilisation de la connexion. `go test ./...` et `go vet ./...` réussis. La validation Compose reste à faire sur une machine équipée de Docker. | Terminé |
-| CMS-05c | Construire et lancer une distribution autonome sur les cibles retenues. Dépend de CMS-05b. | Binaires natifs et workflow de paquetage Windows/Linux amd64 ajoutés ; les assets admin/storefront et migrations sont embarqués. Les binaires Windows ont été construits et le CMS a servi `/admin/` depuis le paquet hors du dépôt. Exécution du workflow Linux/Windows et démonstration d’installation complète restent à valider ; PostgreSQL reste un service standard séparé. | En cours |
-| CMS-05d | Vérifier persistance, sauvegarde et restauration locales. Dépend de CMS-05c. | Créer/modifier des données CMS, redémarrer le serveur et constater leur persistance ; produire une sauvegarde PostgreSQL, la restaurer dans une base isolée et vérifier catalogue, comptes et snapshots de commandes. Documenter rétention, emplacement protégé et procédure testée. | À faire |
+| CMS-05c | Construire et lancer une distribution autonome sur les cibles retenues. Dépend de CMS-05b. | Workflow natif Windows/Linux amd64 validé le 2026-10-17 : vet, tests unitaires, builds et envoi des artifacts réussis ([exécution #39015220199](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39015220199), commit `604b272`). Exécutables Windows construits localement et lancés contre PostgreSQL 16.15 isolé ; le paquet Linux et l'archive réellement publiée restent à extraire et lancer. PostgreSQL demeure un service séparé. | En cours |
+| CMS-05d | Vérifier persistance, sauvegarde et restauration locales. Dépend de CMS-05c. | Exercice réussi le 2026-10-17 sur PostgreSQL 16.15 isolé : création catalogue/commande via l'API, vérification après redémarrage, dump custom puis restauration dans une base isolée ; contrôles SQL positifs pour le produit, le owner et les snapshots client/ligne. Détails et limites dans [`local-postgresql.md`](local-postgresql.md). Politique de rétention et stockage protégé hors machine restent à définir. | En cours |
 
 Le périmètre média initial accepte les URI gérées par le propriétaire (par
 exemple un CDN) ; l’upload binaire et l’intégration à un fournisseur d’objets
@@ -166,3 +166,7 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 1.9 | 2026-10-15 | Décomposition de CMS-05 en démarrage sûr, outil de migrations, distribution Windows/Linux et exercice de sauvegarde/restauration ; IONOS isolé en étape facultative CMS-06. | En attente du responsable produit/qualité |
 | 2.0 | 2026-10-15 | CMS-05b terminé : commande Go de migration embarquée, bootstrap et mises à jour atomiques, registre contrôlé, documentation autonome mise à jour et intégrations PostgreSQL réussies. | En attente du responsable produit/qualité |
 | 2.1 | 2026-10-15 | CMS-05c démarré : paquetage autonome Go et workflow de build natif Windows/Linux amd64 ; build et démarrage avec assets embarqués vérifiés localement sous Windows, validation des runners encore attendue. | En attente du responsable produit/qualité |
+| 2.2 | 2026-10-17 | QP-10 : tests Go, vet, intégrations PostgreSQL 16 et build natif Windows/amd64 exécutés ; les tests IR inspectent désormais les imports du Wasm généré. Décision de cibles de production encore ouverte. | En attente du responsable produit/qualité |
+| 2.3 | 2026-10-17 | CMS-05c : archive Windows autonome construite et extraite ; health, interface admin et catalogue du binaire empaqueté vérifiés en HTTP hors dépôt. Runners GitHub et installation PostgreSQL restent à valider. | En attente du responsable produit/qualité |
+| 2.4 | 2026-10-17 | CMS-05c : workflow natif GitHub Actions réussi sur Windows/Linux amd64 ; tests, builds et deux artifacts confirmés. Exécution du paquet Linux et installation avec PostgreSQL standard restent ouvertes. | En attente du responsable produit/qualité |
+| 2.5 | 2026-10-17 | CMS-05c : installation des exécutables Windows construits localement contre PostgreSQL 16.15 isolé. CMS-05d : persistance après redémarrage et sauvegarde/restauration vérifiées ; politique de rétention/hors machine et lancement de l'archive Linux restent ouverts. | En attente du responsable produit/qualité |

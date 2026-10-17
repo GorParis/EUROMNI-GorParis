@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"euromni/internal/abi"
+
+	"github.com/bytecodealliance/wasmtime-go/v36"
 )
 
 func TestValidateIRDerivesCapabilitiesFromHostMapping(t *testing.T) {
@@ -172,6 +174,7 @@ func TestCompileIRToWasmIsDeterministic(t *testing.T) {
 	if len(first) < 4 || !bytes.Equal(first[:4], []byte{0, 'a', 's', 'm'}) {
 		t.Fatalf("compiled bytes do not have the Wasm magic header: %x", first[:min(4, len(first))])
 	}
+	assertOnlyEUROMNICallImport(t, first)
 
 	wat, err := CompileIRToWAT(ir)
 	if err != nil {
@@ -263,8 +266,39 @@ func TestCompileDynamicIRToWasmAcceptsRuntimePayload(t *testing.T) {
 	if len(wasmBytes) < 4 || !bytes.Equal(wasmBytes[:4], []byte{0, 'a', 's', 'm'}) {
 		t.Fatalf("compiled bytes do not have the Wasm magic header: %x", wasmBytes[:min(4, len(wasmBytes))])
 	}
+	assertOnlyEUROMNICallImport(t, wasmBytes)
 	if !strings.Contains(wat, `(param $input_ptr i32) (param $input_len i32)`) || strings.Contains(wat, "e0e00000") {
 		t.Fatalf("dynamic Wasm should accept runtime input without embedding its value: %s", wat)
+	}
+}
+
+func assertOnlyEUROMNICallImport(t *testing.T, wasmBytes []byte) {
+	t.Helper()
+
+	engine := wasmtime.NewEngine()
+	defer engine.Close()
+	module, err := wasmtime.NewModule(engine, wasmBytes)
+	if err != nil {
+		t.Fatalf("inspect compiled Wasm imports: %v", err)
+	}
+	defer module.Close()
+
+	imports := module.Imports()
+	defer func() {
+		for _, imported := range imports {
+			imported.Close()
+		}
+	}()
+	if len(imports) != 1 {
+		t.Fatalf("compiled Wasm has %d imports, want only euromni.call", len(imports))
+	}
+	name := imports[0].Name()
+	if imports[0].Module() != "euromni" || name == nil || *name != "call" {
+		importName := "<nil>"
+		if name != nil {
+			importName = *name
+		}
+		t.Fatalf("compiled Wasm import is %s.%s, want euromni.call", imports[0].Module(), importName)
 	}
 }
 

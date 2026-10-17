@@ -65,4 +65,26 @@ sauvegardes vérifiées et hors machine, une procédure de restauration testée,
 ainsi que la conservation des snapshots de commande et de l’historique des
 migrations.
 
+## Exercice de restauration CMS-05d
+
+Le 17 octobre 2026, les binaires Windows du CMS ont été lancés contre un
+PostgreSQL 16.15 temporaire et isolé. Après les migrations et le bootstrap du
+owner de démonstration, un produit et une commande ont été créés via l’API.
+L’authentification, le produit, le client et le snapshot de ligne de commande
+ont été vérifiés après redémarrage du CMS.
+
+La base a ensuite été sauvegardée avec `pg_dump` au format custom (`-Fc`,
+`--no-owner`, `--no-acl`) et restaurée avec `pg_restore` dans une base distincte
+du même cluster temporaire. Des requêtes SQL ont confirmé la présence du
+produit créé, du compte owner et de la commande avec son client et son SKU
+snapshot. Le cluster et le dump de test ont été supprimés après vérification.
+Cet exercice valide la procédure technique, pas une sauvegarde de production :
+la fréquence de rétention, le stockage protégé hors machine et les contrôles
+périodiques de restauration restent à définir.
+
+Sur une base neuve issue des migrations actuelles, la boutique `atelier-demo`
+et son owner sans mot de passe `owner@atelier-demo.example` sont précréés. Le
+bootstrap initial doit cibler cette boutique et cette adresse ; un owner déjà
+initialisé ou une adresse différente est refusé.
+
 Les tests d’intégration utilisent une instance PostgreSQL embarquée dans le processus de test et confinée sous `.tmp/embedded-postgres`. Ils n’utilisent jamais le volume `postgres-data` du CMS.
