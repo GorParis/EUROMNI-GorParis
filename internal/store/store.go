@@ -7,21 +7,27 @@ import (
 	"strings"
 	"time"
 
+	"euromni/internal/dbdialect"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// Store is the PostgreSQL access layer. Hosting is unspecified; the schema is portable.
+// Store holds the active database connection and SQL dialect.
 type Store struct {
-	DSN string
-	SQL *sql.DB
+	DSN     string
+	SQL     *sql.DB
+	Dialect dbdialect.Dialect
 }
 
 func New(dsn string) *Store {
-	return &Store{DSN: dsn}
+	return &Store{DSN: dsn, Dialect: dbdialect.PostgreSQL}
 }
 
 func NewSQL(db *sql.DB) *Store {
-	return &Store{SQL: db}
+	return &Store{SQL: db, Dialect: dbdialect.PostgreSQL}
+}
+
+func NewSQLWithDialect(db *sql.DB, dialect dbdialect.Dialect) *Store {
+	return &Store{SQL: db, Dialect: dialect}
 }
 
 func Open(dsn string) (*Store, error) {
@@ -29,7 +35,11 @@ func Open(dsn string) (*Store, error) {
 		return &Store{}, nil
 	}
 
-	db, err := sql.Open("pgx", dsn)
+	driverName, driverDSN, dialect, err := dbdialect.Resolve(dsn)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open(driverName, driverDSN)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +51,7 @@ func Open(dsn string) (*Store, error) {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(5 * time.Minute)
-	return &Store{DSN: dsn, SQL: db}, nil
+	return &Store{DSN: dsn, SQL: db, Dialect: dialect}, nil
 }
 
 func NewFromEnv() *Store {
