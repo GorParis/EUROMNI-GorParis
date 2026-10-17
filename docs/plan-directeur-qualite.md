@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 2.7 |
+| Version | 2.8 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-17 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -76,7 +76,7 @@ la documentation du projet.
 | QP-07 | P1 | Valider Wasm avant publication et enregistrer l’artefact. | Imports, export mémoire/entrée, ABI, hash, taille, mémoire et fuel conformes ; publication atomique ; artefact corrompu ou non conforme rejeté. | Tests d’imports interdits, hash, limites, rollback et rechargement. | À faire |
 | QP-08 | P2 | Exécuter deux pilotes autorisés, un WooCommerce et un PrestaShop, sur une fonction catalogue ou hook simple. | Les deux passent par la même ABI sans SQL/réseau/filesystem côté guest et leurs sorties correspondent à un oracle documenté. | Licence/source autorisée, fixtures, résultats de tests et écarts consignés. | À faire |
 | QP-09 | P2 | Définir rétention, sauvegarde, restauration et suppression des sources/artefacts. | Règles par type d’artefact, stockage hors machine, restauration vérifiée, purge traçable. | Procédure et exercice de restauration/purge. | À faire |
-| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) consigne les tests complets, `go vet`, intégrations PostgreSQL 16 et build natif Windows/amd64 avec CGo ; choix de production et validation du paquet distribué restent à faire. | En cours |
+| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) : Windows/amd64 et Linux/amd64 retenus ; le workflow de distribution exécute tests natifs, intégrations PostgreSQL 16 et build CGo sur les deux runners. Les deux résultats d’intégration restent à confirmer avant déclaration de support. | En cours |
 
 Ordre de reprise recommandé : traiter **QP-01 et QP-10 ensemble**. Le poste de
 développement n’est pas la cible d’architecture ; un worker de build épinglé
@@ -172,3 +172,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 2.5 | 2026-10-17 | CMS-05c : installation des exécutables Windows construits localement contre PostgreSQL 16.15 isolé. CMS-05d : persistance après redémarrage et sauvegarde/restauration vérifiées ; politique de rétention/hors machine et lancement de l'archive Linux restent ouverts. | En attente du responsable produit/qualité |
 | 2.6 | 2026-10-17 | CMS-05c terminé : distributions Windows/Linux extraites et lancées sur runners natifs ; archive Windows publiée installée contre PostgreSQL 16.15. CMS-05d reste en cours, car rétention et stockage protégé hors machine sont à décider. | En attente du responsable produit/qualité |
 | 2.7 | 2026-10-17 | CMS-05d : rétention locale, RPO de 24 h et stockage protégé de développement cadrés ; commande de sauvegarde/restauration PostgreSQL/FileStore et intégration réelle validées. Stockage hors machine, chiffrement et mesure du RTO restent ouverts. | En attente du responsable produit/qualité |
+| 2.8 | 2026-10-17 | QP-10 : Windows/amd64 et Linux/amd64 retenus par le responsable produit ; le workflow natif de distribution exécute désormais la suite d’intégration PostgreSQL sur les deux runners. Support non déclaré avant réussite du workflow sur les deux cibles. | En attente du responsable qualité |

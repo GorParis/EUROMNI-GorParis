@@ -37,9 +37,9 @@ support :
 
 | OS / architecture | Runtime Wasmtime natif | FileStore | Statut |
 |---|---|---|---|
-| Linux / amd64 | A tester avec CGo actif | A tester | Non valide |
+| Linux / amd64 | Tests natifs, Wasmtime et PostgreSQL integres au workflow de distribution ; premiere execution a confirmer | Integration et FileStore executes par le meme workflow | En validation |
 | Linux / arm64 | A tester avec CGo actif | A tester | Non valide |
-| Windows / amd64 | Tests Go, Wasmtime, integration PostgreSQL et build natif passes avec CGo actif | Tests FileStore passes avec DACL prive | Runtime local et paquet distribue valides le 2026-10-17 ; choix des cibles de production reste ouvert |
+| Windows / amd64 | Tests Go, Wasmtime, integration PostgreSQL et build natif passes avec CGo actif | Tests FileStore passes avec DACL prive | Runtime local et paquet distribue valides le 2026-10-17 ; cible de production retenue, execution CI d'integration a confirmer |
 | macOS / amd64 et arm64 | A tester avec CGo actif | A tester | Non valide |
 
 ### Preuves executees le 2026-10-17
@@ -68,10 +68,12 @@ Linux/macOS et les autres architectures restent non valides pour ces surfaces.
 QP-10 reste en cours jusqu'a la decision des cibles de production et la
 validation de chaque surface native retenue.
 
-Le responsable produit/technique doit choisir les cibles de deploiement avant
-que cette matrice puisse etre reduite a une liste de support. Les cibles non
-choisies peuvent etre retirees du perimetre ; aucune n'est implicitement
-supportee.
+Le responsable produit a retenu Windows/amd64 et Linux/amd64 comme cibles a
+qualifier. Le workflow `cms-distribution.yml` execute desormais la suite
+d'integration PostgreSQL sur les deux runners natifs, en plus du build et du
+smoke test des archives. Les deux cibles restent en validation jusqu'a la
+reussite effective de ce workflow ; aucun support de production n'est declare
+par cette seule decision.
 
 Sur Windows, les bits de permission POSIX exposes par `os.FileMode` ne
 representent pas l'ACL NTFS et `os.Chmod(0600)` ne protege pas les artefacts.
