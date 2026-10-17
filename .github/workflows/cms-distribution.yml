@@ -54,8 +54,15 @@ jobs:
       - name: Unit tests
         run: go test -count=1 ./...
 
+      - name: Install PostgreSQL 16 client
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-16
+
       - name: PostgreSQL integration tests
-        run: go test -tags=integration -count=1 ./...
+        run: go test -p 1 -tags=integration -count=1 ./...
 
       - name: Build and archive Linux distribution
         if: runner.os == 'Linux'

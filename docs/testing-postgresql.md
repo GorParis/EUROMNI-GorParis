@@ -10,7 +10,7 @@ go test -tags=integration -count=1 ./...
 
 L’archive partagée et les binaires extraits, runtime et données propres à chaque instance résident dans `.tmp/embedded-postgres`, sous le dépôt ; `.tmp` est ignoré par Git.
 
-La CI GitHub exécute `go vet ./...` et les tests sans tag sur un runner Linux à chaque push sur `main` et pull request vers `main`. Le workflow manuel/de publication des distributions (`.github/workflows/cms-distribution.yml`) exécute également cette commande d'intégration sur ses runners natifs Linux amd64 et Windows amd64, avant de construire les archives.
+La CI GitHub exécute `go vet ./...` et les tests sans tag sur un runner Linux à chaque push sur `main` et pull request vers `main`. Le workflow manuel/de publication des distributions (`.github/workflows/cms-distribution.yml`) exécute aussi les intégrations sur ses runners natifs Linux amd64 et Windows amd64 avant de construire les archives. Il installe le client `pg_dump` 16 sur Linux et sérialise les packages (`-p 1`) pour éviter les courses sur le cache partagé de l'archive PostgreSQL embarquée.
 
 Pour exécuter les tests dans un runner Linux conteneurisé, Docker reste une option :
 

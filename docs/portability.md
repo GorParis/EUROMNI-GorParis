@@ -120,12 +120,19 @@ $env:RUSTUP_TOOLCHAIN = "1.99.1"
 go test -tags=wasmtoolchain -count=1 ./internal/wasm -run '^TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes$'
 ```
 
-La CI générale répète le test sur Linux ; le workflow natif de distribution le
-répète aussi sur ses runners Linux amd64 et Windows amd64. Ces résultats
-distants restent à confirmer après le push. Ce spike valide un guest Rust
-`no_std` minimal et la reproductibilité locale de cette fixture uniquement ; il
-ne démontre ni une traduction PHP ni un processus de build/promotion complet et
-approuvé. QP-01 reste en cours jusqu'à la réussite des deux runners et à
+La CI générale a réussi sur Linux amd64 (run
+[39030961826](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39030961826)).
+Le premier run matriciel
+[39031153173](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39031153173)
+a exécuté avec succès le test Rust sur les deux runners, mais les intégrations
+complètes ont révélé deux problèmes de runner : `pg_dump` 14 face au PostgreSQL
+16 embarqué sous Ubuntu, et une course de première extraction du cache PostgreSQL
+sur Windows quand plusieurs packages s'exécutent en parallèle. Le workflow
+installe maintenant `postgresql-client-16` sous Linux et utilise `go test -p 1`
+pour les intégrations. Le run corrigé sur les deux OS reste à confirmer. Ce spike
+valide un guest Rust `no_std` minimal et la reproductibilité de cette fixture ;
+il ne démontre ni une traduction PHP ni un processus de build/promotion complet
+et approuvé. QP-01 reste en cours jusqu'à la réussite du nouveau run et à
 l'évaluation du cycle complet de build/promotion.
 
 ## Criteres de validation d'une cible hote
