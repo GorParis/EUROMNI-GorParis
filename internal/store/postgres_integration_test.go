@@ -466,6 +466,65 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err := db.CancelAdminOrder(ctx, seed.ShopID, paymentOrder.ID); !errors.Is(err, ErrOrderTransition) {
 		t.Fatalf("cancel order with payment record error = %v, want %v", err, ErrOrderTransition)
 	}
+
+	fulfillmentCartToken := sha256.Sum256([]byte("manual payment fulfillment cart"))
+	if err := db.CreateCart(ctx, seed.ShopID, fulfillmentCartToken[:]); err != nil {
+		t.Fatalf("create manual-payment cart: %v", err)
+	}
+	defer func() {
+		_, _ = db.SQL.ExecContext(context.Background(), "DELETE FROM carts WHERE access_token_hash = $1", fulfillmentCartToken[:])
+	}()
+	if _, err := db.AddCartLine(ctx, seed.ShopID, fulfillmentCartToken[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add manual-payment cart line: %v", err)
+	}
+	fulfillmentOrder, err := db.CheckoutCart(ctx, seed.ShopID, fulfillmentCartToken[:], CheckoutDetails{
+		Email:               "manual-payment@example.com",
+		Name:                "Manual payment",
+		ShippingCarrierCode: "colissimo",
+		ShippingAddress: ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create order for manual payment and fulfillment: %v", err)
+	}
+	if err := db.FulfillAdminOrder(ctx, seed.ShopID, fulfillmentOrder.ID, "TRACK-1"); !errors.Is(err, ErrOrderTransition) {
+		t.Fatalf("fulfill unpaid order error = %v, want %v", err, ErrOrderTransition)
+	}
+	if err := db.ConfirmManualOrderPayment(ctx, seed.ShopID, fulfillmentOrder.ID, "BANK-TRANSFER-1"); err != nil {
+		t.Fatalf("record verified manual payment: %v", err)
+	}
+	var paymentProvider, paymentStatus, paymentAmount, paymentCurrency, paymentReference string
+	if err := db.SQL.QueryRowContext(ctx, `
+		SELECT provider, status::text, amount::text, currency::text, provider_ref
+		FROM payments WHERE order_id = $1
+	`, fulfillmentOrder.ID).Scan(&paymentProvider, &paymentStatus, &paymentAmount, &paymentCurrency, &paymentReference); err != nil {
+		t.Fatalf("read manually confirmed payment: %v", err)
+	}
+	if paymentProvider != "manual" || paymentStatus != "captured" ||
+		paymentAmount != fulfillmentOrder.GrandTotal || paymentCurrency != fulfillmentOrder.Currency ||
+		paymentReference != "BANK-TRANSFER-1" {
+		t.Fatalf("manual payment snapshot = %s/%s %s %s ref=%q; want captured full-total payment", paymentProvider, paymentStatus, paymentAmount, paymentCurrency, paymentReference)
+	}
+	if err := db.ConfirmManualOrderPayment(ctx, seed.ShopID, fulfillmentOrder.ID, "BANK-TRANSFER-1"); !errors.Is(err, ErrOrderTransition) {
+		t.Fatalf("record duplicate manual payment error = %v, want %v", err, ErrOrderTransition)
+	}
+	if err := db.CancelAdminOrder(ctx, seed.ShopID, fulfillmentOrder.ID); !errors.Is(err, ErrOrderTransition) {
+		t.Fatalf("cancel manually paid order error = %v, want %v", err, ErrOrderTransition)
+	}
+	if err := db.FulfillAdminOrder(ctx, seed.ShopID, fulfillmentOrder.ID, "TRACK-1"); err != nil {
+		t.Fatalf("fulfill paid order: %v", err)
+	}
+	if err := db.FulfillAdminOrder(ctx, seed.ShopID, fulfillmentOrder.ID, "TRACK-1"); !errors.Is(err, ErrOrderTransition) {
+		t.Fatalf("fulfill order twice error = %v, want %v", err, ErrOrderTransition)
+	}
+	fulfilledOrder, err := db.GetAdminOrder(ctx, seed.ShopID, fulfillmentOrder.ID)
+	if err != nil {
+		t.Fatalf("read fulfilled order: %v", err)
+	}
+	if fulfilledOrder.Status != "fulfilled" || fulfilledOrder.ShipmentStatus != "shipped" || fulfilledOrder.Tracking != "TRACK-1" {
+		t.Fatalf("fulfilled order snapshot = %+v", fulfilledOrder)
+	}
 }
 
 func TestPostgresShippingConfiguration(t *testing.T) {

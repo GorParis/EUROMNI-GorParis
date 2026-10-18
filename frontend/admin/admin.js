@@ -74,6 +74,28 @@
     return french?.name || translations?.[0]?.name || "Sans nom";
   }
 
+  function orderStatusLabel(status) {
+    return ({
+      pending: "En attente de paiement",
+      awaiting_payment: "Paiement attendu",
+      paid: "Payée",
+      fulfilling: "En préparation",
+      fulfilled: "Expédiée",
+      cancelled: "Annulée",
+      refunded: "Remboursée",
+    })[status] || status;
+  }
+
+  function shipmentStatusLabel(status) {
+    return ({
+      pending: "En attente",
+      ready: "Prête",
+      shipped: "Expédiée",
+      delivered: "Livrée",
+      returned: "Retournée",
+    })[status] || status;
+  }
+
   function renderProducts(products) {
     productList.replaceChildren();
     for (const product of products) {
@@ -217,7 +239,7 @@
     orderDetail.replaceChildren();
     orderDetail.hidden = false;
     const heading = document.createElement("h3");
-    heading.textContent = `Commande ${order.number} · ${order.status}`;
+    heading.textContent = `Commande ${order.number} · ${orderStatusLabel(order.status)}`;
     const customer = document.createElement("p");
     customer.textContent = `${order.name} · ${order.email}`;
     const total = document.createElement("p");
@@ -226,6 +248,13 @@
     shipping.textContent = order.shipping_carrier_name
       ? `Livraison : ${order.shipping_carrier_name} · ${order.shipping_total} ${order.currency} · ${order.shipping_zone_name || ""}`
       : `Livraison : ${order.shipping_total} ${order.currency}`;
+    if (order.shipment_status) {
+      const shipment = document.createElement("p");
+      shipment.textContent = `Expédition : ${shipmentStatusLabel(order.shipment_status)}${order.tracking ? ` · Suivi ${order.tracking}` : ""}`;
+      orderDetail.append(heading, customer, shipping, shipment);
+    } else {
+      orderDetail.append(heading, customer, shipping);
+    }
     const items = document.createElement("ul");
     for (const item of order.items) {
       const row = document.createElement("li");
@@ -234,7 +263,7 @@
     }
     const address = document.createElement("p");
     address.textContent = `${order.shipping_address.line1 || ""} · ${order.shipping_address.postal_code || ""} ${order.shipping_address.city || ""} · ${order.shipping_address.country || ""}`;
-    orderDetail.append(heading, customer, shipping, total, items, address);
+    orderDetail.append(total, items, address);
   }
 
   function renderOrders(orders) {
@@ -244,7 +273,7 @@
       const card = document.createElement("article");
       card.className = "card";
       const title = document.createElement("h3");
-      title.textContent = `${order.number} · ${order.status}`;
+      title.textContent = `${order.number} · ${orderStatusLabel(order.status)}`;
       const summary = document.createElement("p");
       summary.className = "muted";
       summary.textContent = `${order.name} · ${order.email} · ${order.grand_total} ${order.currency}`;
@@ -263,6 +292,48 @@
 
       });
       actions.append(view);
+      if (order.status === "pending" && ["owner", "admin"].includes(currentIdentity?.role)) {
+        const payment = document.createElement("button");
+        payment.type = "button";
+        payment.textContent = "Confirmer le paiement reçu";
+        payment.addEventListener("click", async () => {
+          if (!confirm(`Confirmez-vous avoir reçu le paiement de ${order.grand_total} ${order.currency} pour ${order.number} ? Cette action n’effectue aucun débit.`)) return;
+          const providerReference = prompt("Référence du virement ou reçu (facultatif) :", "")?.trim();
+          if (providerReference === undefined) return;
+          try {
+            await request(`/v1/admin/orders/${encodeURIComponent(order.id)}/payments/manual`, {
+              method: "POST",
+              body: JSON.stringify({ provider_reference: providerReference }),
+            });
+            setStatus("Paiement manuel enregistré.");
+            await refresh();
+          } catch (error) {
+            setStatus(error.message, true);
+          }
+        });
+        actions.append(payment);
+      }
+      if (order.status === "paid" && ["owner", "admin"].includes(currentIdentity?.role)) {
+        const fulfill = document.createElement("button");
+        fulfill.type = "button";
+        fulfill.textContent = "Marquer comme expédiée";
+        fulfill.addEventListener("click", async () => {
+          if (!confirm(`Confirmez-vous la remise de la commande ${order.number} au transporteur ?`)) return;
+          const tracking = prompt("Numéro de suivi (facultatif) :", "")?.trim();
+          if (tracking === undefined) return;
+          try {
+            await request(`/v1/admin/orders/${encodeURIComponent(order.id)}/fulfill`, {
+              method: "POST",
+              body: JSON.stringify({ tracking }),
+            });
+            setStatus("Commande marquée comme expédiée.");
+            await refresh();
+          } catch (error) {
+            setStatus(error.message, true);
+          }
+        });
+        actions.append(fulfill);
+      }
       if (order.status === "pending" && ["owner", "admin"].includes(currentIdentity?.role)) {
         const cancel = document.createElement("button");
         cancel.type = "button";

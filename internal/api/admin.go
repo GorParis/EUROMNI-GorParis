@@ -342,12 +342,64 @@ func adminOrderStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func adminOrderManualPayment(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ProviderReference string `json:"provider_reference"`
+	}
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	input.ProviderReference = strings.TrimSpace(input.ProviderReference)
+	if len(input.ProviderReference) > 512 {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "payment reference must be at most 512 bytes"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.OrderAdminReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "order administration unavailable"})
+		return
+	}
+	if err := writer.ConfirmManualOrderPayment(r.Context(), session.ShopID, r.PathValue("id"), input.ProviderReference); err != nil {
+		writeOrderAdminError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func adminOrderFulfill(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Tracking string `json:"tracking"`
+	}
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	input.Tracking = strings.TrimSpace(input.Tracking)
+	if len(input.Tracking) > 512 {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "tracking reference must be at most 512 bytes"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.OrderAdminReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "order administration unavailable"})
+		return
+	}
+	if err := writer.FulfillAdminOrder(r.Context(), session.ShopID, r.PathValue("id"), input.Tracking); err != nil {
+		writeOrderAdminError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func writeOrderAdminError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "order not found"})
 	case errors.Is(err, store.ErrOrderTransition):
-		writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "order cannot be cancelled in its current state"})
+		writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "order cannot make this transition in its current state"})
 	default:
 		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
 	}

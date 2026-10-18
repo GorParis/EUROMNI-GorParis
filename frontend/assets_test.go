@@ -60,6 +60,11 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 		"Configuration transport enregistrée.",
 		"country_codes",
 		"carrier_code",
+		"/payments/manual",
+		"provider_reference",
+		"/fulfill",
+		"Confirmer le paiement reçu",
+		"Marquer comme expédiée",
 	} {
 		if !strings.Contains(string(admin), feature) {
 			t.Errorf("admin script is missing shipping configuration feature %q", feature)

@@ -63,6 +63,10 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 		       o.subtotal::text, o.tax_total::text, o.shipping_total::text, o.grand_total::text,
 		       COALESCE(o.shipping_carrier_code, ''), COALESCE(o.shipping_carrier_name, ''),
 		       COALESCE(o.shipping_zone_code, ''), COALESCE(o.shipping_zone_name, ''),
+		       COALESCE((SELECT shipment.status::text FROM shipments shipment
+		                 WHERE shipment.order_id = o.id ORDER BY shipment.created_at DESC, shipment.id DESC LIMIT 1), ''),
+		       COALESCE((SELECT shipment.tracking FROM shipments shipment
+		                 WHERE shipment.order_id = o.id ORDER BY shipment.created_at DESC, shipment.id DESC LIMIT 1), ''),
 		       COALESCE(c.email::text, ''), COALESCE(c.name, ''),
 		       o.shipping_address::text, o.created_at
 		FROM orders o
@@ -72,6 +76,7 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 		&order.ID, &order.Number, &order.Status, &order.Currency,
 		&order.Subtotal, &order.TaxTotal, &order.ShippingTotal, &order.GrandTotal,
 		&order.ShippingCarrierCode, &order.ShippingCarrierName, &order.ShippingZoneCode, &order.ShippingZoneName,
+		&order.ShipmentStatus, &order.Tracking,
 		&order.Email, &order.Name, &address, &order.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -111,6 +116,99 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 		return nil, err
 	}
 	return &order, nil
+}
+
+func (s *Store) ConfirmManualOrderPayment(ctx context.Context, shopID, orderID, providerReference string) error {
+	if s == nil || s.SQL == nil {
+		return errors.New("store not configured")
+	}
+	tx, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var status, currency string
+	var amount string
+	err = tx.QueryRowContext(ctx, `
+		SELECT status::text, grand_total::text, currency::text
+		FROM orders
+		WHERE shop_id = $1 AND id = $2
+		FOR UPDATE
+	`, shopID, orderID).Scan(&status, &amount, &currency)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status != "pending" {
+		return ErrOrderTransition
+	}
+	var paymentCount int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM payments WHERE order_id = $1`, orderID).Scan(&paymentCount); err != nil {
+		return err
+	}
+	if paymentCount != 0 {
+		return ErrOrderTransition
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO payments (order_id, provider, status, amount, currency, provider_ref)
+		VALUES ($1, 'manual', 'captured', $2, $3, NULLIF($4, ''))
+	`, orderID, amount, currency, providerReference); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE orders SET status = 'paid', updated_at = now()
+		WHERE shop_id = $1 AND id = $2
+	`, shopID, orderID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) FulfillAdminOrder(ctx context.Context, shopID, orderID, tracking string) error {
+	if s == nil || s.SQL == nil {
+		return errors.New("store not configured")
+	}
+	tx, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var status, carrier string
+	err = tx.QueryRowContext(ctx, `
+		SELECT status::text, COALESCE(shipping_carrier_name, '')
+		FROM orders
+		WHERE shop_id = $1 AND id = $2
+		FOR UPDATE
+	`, shopID, orderID).Scan(&status, &carrier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status != "paid" {
+		return ErrOrderTransition
+	}
+	if carrier == "" {
+		return ErrOrderTransition
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO shipments (order_id, status, carrier, tracking, shipped_at)
+		VALUES ($1, 'shipped', $2, NULLIF($3, ''), now())
+	`, orderID, carrier, tracking); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE orders SET status = 'fulfilled', updated_at = now()
+		WHERE shop_id = $1 AND id = $2
+	`, shopID, orderID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CancelAdminOrder(ctx context.Context, shopID, orderID string) error {

@@ -35,4 +35,10 @@ Le seed de démonstration présente cinq produits : cabas, ceinture et chemise
 avec plusieurs tailles au choix pour les deux derniers, plus une tasse et une
 bougie en format unique.
 
+L’administration est disponible sur `/admin/`. Dans le détail d’une commande,
+un membre `owner` ou `admin` peut enregistrer un paiement reçu et vérifié hors
+du CMS, puis confirmer l’expédition avec un numéro de suivi facultatif. Cette
+confirmation manuelle ne débite aucune carte et ne remplace pas l’intégration
+d’un prestataire de paiement.
+
 Consomme uniquement les APIs du cœur EUROMNI (REST / GraphQL). Pas de thème PHP.

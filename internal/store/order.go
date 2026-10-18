@@ -29,6 +29,8 @@ type OrderAdminReader interface {
 	ListAdminOrders(ctx context.Context, shopID string, limit, offset int) ([]AdminOrderView, error)
 	GetAdminOrder(ctx context.Context, shopID, orderID string) (*AdminOrderView, error)
 	CancelAdminOrder(ctx context.Context, shopID, orderID string) error
+	ConfirmManualOrderPayment(ctx context.Context, shopID, orderID, providerReference string) error
+	FulfillAdminOrder(ctx context.Context, shopID, orderID, tracking string) error
 }
 
 type CheckoutDetails struct {
@@ -81,6 +83,8 @@ type AdminOrderView struct {
 	ShippingCarrierName string          `json:"shipping_carrier_name"`
 	ShippingZoneCode    string          `json:"shipping_zone_code"`
 	ShippingZoneName    string          `json:"shipping_zone_name"`
+	ShipmentStatus      string          `json:"shipment_status"`
+	Tracking            string          `json:"tracking"`
 	GrandTotal          string          `json:"grand_total"`
 	Email               string          `json:"email"`
 	Name                string          `json:"name"`

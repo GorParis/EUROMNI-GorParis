@@ -259,9 +259,60 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	if supportCancel.Code != http.StatusForbidden {
 		t.Fatalf("support cancellation status/body = %d/%s; want 403", supportCancel.Code, supportCancel.Body)
 	}
+	supportManualPayment := performAPIRequest(mux, http.MethodPost, "/v1/admin/orders/"+createdOrder.Data.ID+"/payments/manual",
+		"Bearer "+supportSession.Data.Token, `{}`)
+	if supportManualPayment.Code != http.StatusForbidden {
+		t.Fatalf("support manual payment status/body = %d/%s; want 403", supportManualPayment.Code, supportManualPayment.Body)
+	}
+	supportFulfillment := performAPIRequest(mux, http.MethodPost, "/v1/admin/orders/"+createdOrder.Data.ID+"/fulfill",
+		"Bearer "+supportSession.Data.Token, `{}`)
+	if supportFulfillment.Code != http.StatusForbidden {
+		t.Fatalf("support fulfillment status/body = %d/%s; want 403", supportFulfillment.Code, supportFulfillment.Body)
+	}
 	supportShippingWrite := performAPIRequest(mux, http.MethodPut, "/v1/admin/shipping", "Bearer "+supportSession.Data.Token, `{}`)
 	if supportShippingWrite.Code != http.StatusForbidden {
 		t.Fatalf("support shipping-write status/body = %d/%s; want 403", supportShippingWrite.Code, supportShippingWrite.Body)
+	}
+	manualFlowToken := sha256.Sum256([]byte("admin manual payment flow"))
+	if err := db.CreateCart(context.Background(), seed.ShopID, manualFlowToken[:]); err != nil {
+		t.Fatalf("create admin manual-payment cart: %v", err)
+	}
+	defer func() {
+		_, _ = db.SQL.ExecContext(context.Background(), "DELETE FROM carts WHERE access_token_hash = $1", manualFlowToken[:])
+	}()
+	if _, err := db.AddCartLine(context.Background(), seed.ShopID, manualFlowToken[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add admin manual-payment cart line: %v", err)
+	}
+	manualFlowOrder, err := db.CheckoutCart(context.Background(), seed.ShopID, manualFlowToken[:], store.CheckoutDetails{
+		Email:               "admin-manual-flow@example.com",
+		Name:                "Admin manual flow",
+		ShippingCarrierCode: "colissimo",
+		ShippingAddress: store.ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create order for admin manual-payment flow: %v", err)
+	}
+	manualPaymentResponse := performAPIRequest(mux, http.MethodPost,
+		"/v1/admin/orders/"+manualFlowOrder.ID+"/payments/manual", staffAuthorization,
+		`{"provider_reference":"BANK-API-1"}`)
+	if manualPaymentResponse.Code != http.StatusNoContent {
+		t.Fatalf("admin manual payment status/body = %d/%s; want 204", manualPaymentResponse.Code, manualPaymentResponse.Body)
+	}
+	fulfillmentResponse := performAPIRequest(mux, http.MethodPost,
+		"/v1/admin/orders/"+manualFlowOrder.ID+"/fulfill", staffAuthorization,
+		`{"tracking":"TRACK-API-1"}`)
+	if fulfillmentResponse.Code != http.StatusNoContent {
+		t.Fatalf("admin fulfillment status/body = %d/%s; want 204", fulfillmentResponse.Code, fulfillmentResponse.Body)
+	}
+	fulfilledDetail := performAPIRequest(mux, http.MethodGet,
+		"/v1/admin/orders/"+manualFlowOrder.ID, staffAuthorization, "")
+	if fulfilledDetail.Code != http.StatusOK ||
+		!strings.Contains(fulfilledDetail.Body.String(), `"status":"fulfilled"`) ||
+		!strings.Contains(fulfilledDetail.Body.String(), `"shipment_status":"shipped"`) ||
+		!strings.Contains(fulfilledDetail.Body.String(), `"tracking":"TRACK-API-1"`) {
+		t.Fatalf("fulfilled admin order status/body = %d/%s", fulfilledDetail.Code, fulfilledDetail.Body)
 	}
 	cancelOrder := performAPIRequest(mux, http.MethodPatch, "/v1/admin/orders/"+createdOrder.Data.ID+"/status",
 		staffAuthorization, `{"status":"cancelled"}`)

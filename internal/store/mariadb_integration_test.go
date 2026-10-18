@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -127,6 +128,12 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		if orderID != "" {
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM shipments WHERE order_id = $1`, orderID); err != nil {
+				t.Errorf("clean up MariaDB test shipments: %v", err)
+			}
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM payments WHERE order_id = $1`, orderID); err != nil {
+				t.Errorf("clean up MariaDB test payments: %v", err)
+			}
 			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM orders WHERE id = $1`, orderID); err != nil {
 				t.Errorf("clean up MariaDB test order: %v", err)
 			}
@@ -166,7 +173,31 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	if adminOrder.Email != email || adminOrder.ShippingCarrierCode != "colissimo" {
 		t.Fatalf("unexpected MariaDB order snapshot: %#v", adminOrder)
 	}
-	if err := store.CancelAdminOrder(ctx, seed.ShopID, order.ID); err != nil {
-		t.Fatalf("cancel MariaDB test order and restore inventory: %v", err)
+	if err := store.ConfirmManualOrderPayment(ctx, seed.ShopID, order.ID, "MDB-TRANSFER"); err != nil {
+		t.Fatalf("record MariaDB manual payment: %v", err)
+	}
+	var paymentProvider, paymentStatus, paymentAmount, paymentCurrency, paymentReference string
+	if err := database.QueryRowContext(ctx, `
+		SELECT provider, status, amount, currency, provider_ref
+		FROM payments WHERE order_id = $1
+	`, order.ID).Scan(&paymentProvider, &paymentStatus, &paymentAmount, &paymentCurrency, &paymentReference); err != nil {
+		t.Fatalf("read MariaDB manual payment: %v", err)
+	}
+	if paymentProvider != "manual" || paymentStatus != "captured" ||
+		paymentAmount != order.GrandTotal || paymentCurrency != order.Currency || paymentReference != "MDB-TRANSFER" {
+		t.Fatalf("unexpected MariaDB payment snapshot: %s/%s %s %s ref=%q", paymentProvider, paymentStatus, paymentAmount, paymentCurrency, paymentReference)
+	}
+	if err := store.CancelAdminOrder(ctx, seed.ShopID, order.ID); !errors.Is(err, ErrOrderTransition) {
+		t.Fatalf("cancel paid MariaDB test order error = %v, want %v", err, ErrOrderTransition)
+	}
+	if err := store.FulfillAdminOrder(ctx, seed.ShopID, order.ID, "MDB-TRACK-1"); err != nil {
+		t.Fatalf("fulfill MariaDB test order: %v", err)
+	}
+	adminOrder, err = store.GetAdminOrder(ctx, seed.ShopID, order.ID)
+	if err != nil {
+		t.Fatalf("read fulfilled MariaDB order: %v", err)
+	}
+	if adminOrder.Status != "fulfilled" || adminOrder.ShipmentStatus != "shipped" || adminOrder.Tracking != "MDB-TRACK-1" {
+		t.Fatalf("unexpected fulfilled MariaDB order: %#v", adminOrder)
 	}
 }
