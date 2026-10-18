@@ -5,10 +5,10 @@ CMS souverain **headless** et **sandboxed** : le cœur d’exécution est en Go,
 ## Architecture (3 couches)
 
 1. **Pipeline de modules** — analyse statique ciblée et génération Wasm depuis une IR limitée ; la traduction générique assistée par IA reste à construire.
-2. **Cœur CMS (Go)** — runtime Wasm (Wasmtime), API GraphQL **et** REST, PostgreSQL.
+2. **Cœur CMS (Go)** — runtime Wasm (Wasmtime), API GraphQL **et** REST, PostgreSQL de référence et connecteur MariaDB dédié.
 3. **Front boutique** — Web Components universels, isolation Shadow DOM.
 
-Docs : [`docs/architecture.md`](docs/architecture.md), [`docs/api.md`](docs/api.md), [`docs/database.md`](docs/database.md), [`docs/sqlite-prototype.md`](docs/sqlite-prototype.md) (prototype mono-boutique, non destiné à la production), [`docs/abi.md`](docs/abi.md) (mapping Wasm → SQL), [`docs/portability.md`](docs/portability.md) (runtime CGo et guests Wasm), [`docs/local-postgresql.md`](docs/local-postgresql.md) (persistance locale), [`docs/cms-distribution.md`](docs/cms-distribution.md) (paquet autonome sans Docker), [`docs/testing-postgresql.md`](docs/testing-postgresql.md) (intégration réelle).
+Docs : [`docs/architecture.md`](docs/architecture.md), [`docs/api.md`](docs/api.md), [`docs/database.md`](docs/database.md), [`docs/database-support.md`](docs/database-support.md) (comparatif des connecteurs et état de validation), [`docs/mariadb-setup.md`](docs/mariadb-setup.md) (installation et test MariaDB), [`docs/sqlite-prototype.md`](docs/sqlite-prototype.md) (prototype mono-boutique, non destiné à la production), [`docs/abi.md`](docs/abi.md) (mapping Wasm → SQL), [`docs/portability.md`](docs/portability.md) (runtime CGo et guests Wasm), [`docs/local-postgresql.md`](docs/local-postgresql.md) (persistance locale), [`docs/cms-distribution.md`](docs/cms-distribution.md) (paquet autonome sans Docker), [`docs/testing-postgresql.md`](docs/testing-postgresql.md) (intégration réelle).
 
 ## Structure
 
@@ -16,8 +16,8 @@ Docs : [`docs/architecture.md`](docs/architecture.md), [`docs/api.md`](docs/api.
 cmd/cms/          # point d’entrée du moteur
 internal/api/     # couche GraphQL / REST
 internal/wasm/    # runtime Wasmtime et ABI hôte
-internal/store/   # accès PostgreSQL
-migrations/       # schéma SQL + seed exemple
+internal/store/   # accès PostgreSQL et MariaDB
+migrations/       # schémas et migrations PostgreSQL et MariaDB
 pipeline/         # analyse de modules, IR et compilation Wasm limitée
 frontend/         # composants de démonstration de la boutique
 docs/             # architecture, portabilité et modèle de données
@@ -30,16 +30,16 @@ go test ./...
 go run ./cmd/cms
 ```
 
-Prérequis : Go 1.23+, PostgreSQL 16+ (service local recommandé pour commencer ; tout PostgreSQL standard convient). Docker et un hébergeur cloud sont facultatifs. Le CMS écoute par défaut sur `127.0.0.1:8081`; utilisez `LISTEN_ADDR` pour définir explicitement une autre adresse. L’ABI Wasm n’est pas exposée en HTTP.
+Prérequis : Go 1.23+ et PostgreSQL 16+ (recommandé), ou MariaDB 11.8 après avoir pris connaissance de son état de validation dans [`docs/database-support.md`](docs/database-support.md). Docker et un hébergeur cloud sont facultatifs. Le CMS écoute par défaut sur `127.0.0.1:8081`; utilisez `LISTEN_ADDR` pour définir explicitement une autre adresse. L’ABI Wasm n’est pas exposée en HTTP.
 
 Sans `DATABASE_URL`, le serveur démarre volontairement avec un catalogue mémoire
 de démonstration et l’authentification staff est indisponible. Pour une instance
-CMS persistante, configurez PostgreSQL et appliquez les migrations décrites dans
+CMS persistante, configurez une base prise en charge et appliquez les migrations décrites dans
 [`docs/local-postgresql.md`](docs/local-postgresql.md) avant le démarrage.
 
 ## Administration du catalogue
 
-L’interface CMS minimale est servie sous `/admin/` et utilise l’API REST staff. La connexion requiert un compte PostgreSQL associé à la boutique. Aucun mot de passe de démonstration n’est fourni.
+L’interface CMS minimale est servie sous `/admin/` et utilise l’API REST staff. La connexion requiert un compte associé à la boutique dans le connecteur configuré. Aucun mot de passe de démonstration n’est fourni.
 
 Le schéma est installé ou mis à jour avec le migrateur intégré ; Compose lance
 la même commande avant le serveur CMS. Pour un lancement autonome, configurez

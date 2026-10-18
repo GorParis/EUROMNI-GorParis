@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"euromni/internal/dbdialect"
 )
 
 var _ CatalogAdminWriter = (*Store)(nil)
@@ -63,11 +63,14 @@ func (s *Store) CreateProduct(ctx context.Context, shopID string, input ProductI
 	defer tx.Rollback()
 
 	var product ProductView
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO products (shop_id, slug, status)
-		VALUES ($1, $2, $3)
-		RETURNING id::text
-	`, shopID, input.Slug, input.Status).Scan(&product.ID)
+	product.ID, err = NewCatalogID()
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO products (id, shop_id, slug, status)
+		VALUES ($1, $2, $3, $4)
+	`, product.ID, shopID, input.Slug, input.Status)
 	if err != nil {
 		return nil, catalogDBError(err)
 	}
@@ -178,11 +181,14 @@ func (s *Store) CreateCategory(ctx context.Context, shopID string, input Categor
 	defer tx.Rollback()
 
 	var category CategoryView
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO categories (shop_id, slug)
-		VALUES ($1, $2)
-		RETURNING id::text
-	`, shopID, input.Slug).Scan(&category.ID)
+	category.ID, err = NewCatalogID()
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO categories (id, shop_id, slug)
+		VALUES ($1, $2, $3)
+	`, category.ID, shopID, input.Slug)
 	if err != nil {
 		return nil, catalogDBError(err)
 	}
@@ -333,11 +339,14 @@ func replaceProductMedia(ctx context.Context, tx *sql.Tx, shopID, productID stri
 				return err
 			}
 		} else {
-			if err := tx.QueryRowContext(ctx, `
-				INSERT INTO media (shop_id, uri, mime_type, alt)
-				VALUES ($1, $2, $3, $4)
-				RETURNING id::text
-			`, shopID, input.URI, input.MimeType, input.Alt).Scan(&mediaID); err != nil {
+			mediaID, err = NewCatalogID()
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO media (id, shop_id, uri, mime_type, alt)
+				VALUES ($1, $2, $3, $4, $5)
+			`, mediaID, shopID, input.URI, input.MimeType, input.Alt); err != nil {
 				return err
 			}
 		}
@@ -382,11 +391,14 @@ func replaceProductVariants(ctx context.Context, tx *sql.Tx, productID string, i
 			return fmt.Errorf("encode variant options: %w", err)
 		}
 		if !found {
-			if err := tx.QueryRowContext(ctx, `
-				INSERT INTO variants (product_id, sku, options)
-				VALUES ($1, $2, $3)
-				RETURNING id::text
-			`, productID, input.SKU, string(options)).Scan(&variantID); err != nil {
+			variantID, err = NewCatalogID()
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO variants (id, product_id, sku, options)
+				VALUES ($1, $2, $3, $4)
+			`, variantID, productID, input.SKU, string(options)); err != nil {
 				return catalogDBError(err)
 			}
 		} else if _, err := tx.ExecContext(ctx, `
@@ -436,8 +448,7 @@ func replaceProductVariants(ctx context.Context, tx *sql.Tx, productID string, i
 }
 
 func catalogDBError(err error) error {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+	if dbdialect.IsUniqueConstraint(err) {
 		return fmt.Errorf("%w: %v", ErrConflict, err)
 	}
 	return err

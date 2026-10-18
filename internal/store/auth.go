@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"euromni/internal/dbdialect"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -160,15 +161,16 @@ func (s *Store) BootstrapStaff(ctx context.Context, shopID, email, name, passwor
 		return tx.Commit()
 	}
 
-	var userID string
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO users (email, password_hash, name)
-		VALUES ($1, $2, $3)
-		RETURNING id::text
-	`, email, string(passwordHash), name).Scan(&userID)
+	userID, err := NewCatalogID()
 	if err != nil {
-		var pgErr interface{ SQLState() string }
-		if errors.As(err, &pgErr) && pgErr.SQLState() == "23505" {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO users (id, email, password_hash, name)
+		VALUES ($1, $2, $3, $4)
+	`, userID, email, string(passwordHash), name)
+	if err != nil {
+		if dbdialect.IsUniqueConstraint(err) {
 			return ErrStaffAlreadyExists
 		}
 		return err

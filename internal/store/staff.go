@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"euromni/internal/dbdialect"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -86,12 +87,15 @@ func (s *Store) CreateStaffMember(ctx context.Context, shopID string, input Staf
 		return nil, err
 	}
 	defer tx.Rollback()
-	var member StaffMemberView
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO users (email, password_hash, name)
-		VALUES ($1, $2, $3)
-		RETURNING id::text, email::text, name
-	`, email, string(passwordHash), name).Scan(&member.ID, &member.Email, &member.Name)
+	memberID, err := NewCatalogID()
+	if err != nil {
+		return nil, err
+	}
+	member := StaffMemberView{ID: memberID, Email: email, Name: name}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO users (id, email, password_hash, name)
+		VALUES ($1, $2, $3, $4)
+	`, member.ID, email, string(passwordHash), name)
 	if err != nil {
 		if isUniqueConstraint(err) {
 			return nil, ErrStaffAlreadyExists
@@ -222,6 +226,5 @@ func assignableStaffRole(role string) bool {
 }
 
 func isUniqueConstraint(err error) bool {
-	var pgErr interface{ SQLState() string }
-	return errors.As(err, &pgErr) && pgErr.SQLState() == "23505"
+	return dbdialect.IsUniqueConstraint(err)
 }

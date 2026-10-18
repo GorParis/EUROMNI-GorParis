@@ -34,3 +34,26 @@ func TestMariaDBSchemaIsEmbedded(t *testing.T) {
 		}
 	}
 }
+
+func TestMariaDBSeedMigrationIsEmbedded(t *testing.T) {
+	seed, err := MariaDBFiles.ReadFile("mariadb/0002_mariadb_demo_seed.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"'atelier-demo'",
+		"'sacs'",
+		"'cabas-lin'",
+		"'CABAS-LIN-NAT'",
+		"'france-ue'",
+		"shipping_rates",
+		"'demo.loyalty'",
+	} {
+		if !strings.Contains(string(seed), expected) {
+			t.Errorf("MariaDB demo seed is missing %q", expected)
+		}
+	}
+	if strings.Contains(string(seed), "::jsonb") || strings.Contains(string(seed), "ARRAY[") {
+		t.Fatal("MariaDB demo seed contains PostgreSQL-specific data syntax")
+	}
+}

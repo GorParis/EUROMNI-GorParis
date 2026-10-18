@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"strings"
 	"time"
 
+	"euromni/internal/dbdialect"
 	"euromni/internal/migrations"
 	schemafiles "euromni/migrations"
 	"github.com/jackc/pgx/v5"
@@ -37,12 +40,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if dsn == "" {
 		return errors.New("DATABASE_URL is required")
 	}
-	config, err := pgx.ParseConfig(dsn)
+	driverName, driverDSN, dialect, err := dbdialect.Resolve(dsn)
 	if err != nil {
-		return fmt.Errorf("parse DATABASE_URL: %w", err)
+		return fmt.Errorf("resolve DATABASE_URL: %w", err)
 	}
-	config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
-	db := stdlib.OpenDB(*config)
+	var db *sql.DB
+	var source fs.FS = schemafiles.Files
+	if dialect == dbdialect.MariaDB {
+		db, err = sql.Open(driverName, driverDSN)
+		if err != nil {
+			return fmt.Errorf("open MariaDB DATABASE_URL: %w", err)
+		}
+		source, err = fs.Sub(schemafiles.MariaDBFiles, "mariadb")
+		if err != nil {
+			return fmt.Errorf("load embedded MariaDB migrations: %w", err)
+		}
+	} else {
+		config, parseErr := pgx.ParseConfig(dsn)
+		if parseErr != nil {
+			return fmt.Errorf("parse DATABASE_URL: %w", parseErr)
+		}
+		config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+		db = stdlib.OpenDB(*config)
+	}
 	defer func() {
 		if err := db.Close(); err != nil {
 			log.Printf("close migration database: %v", err)
@@ -54,7 +74,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := db.PingContext(pingCtx); err != nil {
 		return fmt.Errorf("connect to DATABASE_URL: %w", err)
 	}
-	applied, err := migrations.Apply(ctx, db, schemafiles.Files)
+	applied, err := migrations.ApplyWithDialect(ctx, db, source, dialect)
 	if err != nil {
 		return err
 	}

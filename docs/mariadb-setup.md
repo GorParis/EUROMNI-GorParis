@@ -6,28 +6,53 @@ portable by merely changing the connection driver. The MariaDB schema is in
 It creates the application tables, shipping configuration tables, migration
 ledger, and `updated_at` triggers. It deliberately does not insert demo data.
 
-## Import into a new database
+## Initialize a database
 
-This is a one-time schema import for a **new, empty MariaDB database**:
+The preferred path is the migration command, which detects the URL scheme and
+uses the MariaDB migration set:
 
-1. In phpMyAdmin, select the target database and confirm it contains no tables.
-2. Open **Import**, choose `0001_mariadb_schema.sql`, leave the format as SQL,
-   and run the import.
-3. Verify that the database has 36 base tables and that
-   `schema_migrations` contains `0001_mariadb_schema.sql`.
+```powershell
+$env:DATABASE_URL = "mariadb://USER:PASSWORD@HOST:3306/DATABASE?tls=true"
+go run ./cmd/db-migrate
+```
 
-The script is not an upgrade script and must not be re-imported over an existing
-schema. PostgreSQL keeps using the root-level migrations unchanged.
+For an empty database this applies `0001_mariadb_schema.sql`, then the synthetic
+catalog and shipping fixture in `0002_mariadb_demo_seed.sql`. If the schema was
+already installed by phpMyAdmin, the command recognizes its migration ledger
+and applies only the missing seed migration. Keep credentials out of shell
+history and source control.
 
-The MariaDB schema was imported into the provided empty MariaDB 11.8 database.
-The first import reported a reserved-word syntax error in the `module_kv` primary
-key; the key was quoted and that missing table was created separately. The
-result was verified at 36 base tables, one migration-ledger row, and no shop or
-shipping data. A transactional smoke test successfully inserted a shop,
-carrier, zone, and rate, checked JSON and the `updated_at` trigger, and rolled
-back; follow-up counts confirmed that no smoke-test rows remained.
+For manual schema installation, select a **new, empty** database in phpMyAdmin,
+import `0001_mariadb_schema.sql`, and then run `go run ./cmd/db-migrate` to apply
+the remaining migrations. The initial DDL is not an upgrade script and must not
+be re-imported over an existing schema. MariaDB commits DDL statements
+individually, so an interrupted baseline install may need manual cleanup before
+it can be retried. The migrator refuses to replay the baseline if it finds
+application tables without a migration ledger.
 
-This proves the schema and basic MariaDB DDL/DML on that server, **not** full CMS
-compatibility. The application queries and migration command still contain
-PostgreSQL-specific behavior; do not point the running CMS at this database
-until that work is completed and tested.
+PostgreSQL continues to use the root-level migrations unchanged. The MariaDB
+connection uses its own placeholder, cast, JSON, upsert, and row-lock handling;
+the checkout, catalog administration, staff, and migration paths select the
+MariaDB-compatible SQL behavior where syntax differs.
+
+PostgreSQL remains the reference connector. MariaDB unit tests and compilation
+of the integration test validate the adapter's local behavior, but do not
+qualify a real MariaDB server. The IONOS phpMyAdmin session confirmed MariaDB
+11.8.8 and access to a database with 36 tables; it did not validate the Go
+driver or this migration runner. Direct access from the development machine
+was blocked because the database hostname did not resolve (`NXDOMAIN`).
+Consult [the connector comparison](database-support.md) for the current
+validation status.
+
+The opt-in Go integration test applies the MariaDB migrations when needed and
+exercises catalog reads/writes, category and module fixtures, shipping JSON
+lookup, cart checkout, order reading, and cancellation:
+
+```powershell
+$env:MARIADB_TEST_DATABASE_URL = "mariadb://USER:PASSWORD@HOST:3306/DEDICATED_TEST_DATABASE?tls=true"
+go test -tags integration ./internal/store -run TestMariaDBMigrationAndCommerceFlow
+```
+
+Use a dedicated, disposable test database: the test installs the schema and
+synthetic fixtures when missing, then creates and removes temporary commerce
+records. Do not point it at a database with user or production data.

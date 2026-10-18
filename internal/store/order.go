@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"euromni/internal/dbdialect"
 	"euromni/internal/seed"
 )
 
@@ -248,21 +249,39 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	}
 
 	var customerID string
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO customers (shop_id, email, name)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (shop_id, email)
-		DO UPDATE SET name = EXCLUDED.name, updated_at = now()
-		RETURNING id::text
-	`, shopID, details.Email, details.Name).Scan(&customerID)
+	if s.Dialect == dbdialect.MariaDB {
+		customerID, err = NewCatalogID()
+		if err != nil {
+			return nil, err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO customers (id, shop_id, email, name)
+			VALUES ($1, $2, $3, $4)
+			ON DUPLICATE KEY UPDATE name = VALUES(name), updated_at = now()
+		`, customerID, shopID, details.Email, details.Name)
+		if err != nil {
+			return nil, err
+		}
+		err = tx.QueryRowContext(ctx, `
+			SELECT id::text FROM customers WHERE shop_id = $1 AND email = $2
+		`, shopID, details.Email).Scan(&customerID)
+	} else {
+		err = tx.QueryRowContext(ctx, `
+			INSERT INTO customers (shop_id, email, name)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (shop_id, email)
+			DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+			RETURNING id::text
+		`, shopID, details.Email, details.Name).Scan(&customerID)
+	}
 	if err != nil {
 		return nil, err
 	}
 	totalWithShipping := new(big.Rat).Add(subtotal, shippingTotal)
 	total := totalWithShipping.FloatString(4)
 	shippingTotalText := shippingTotal.FloatString(4)
-	var persistedOrderID string
-	err = tx.QueryRowContext(ctx, `
+	persistedOrderID := orderID
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO orders (
 			id, shop_id, customer_id, number, status, currency,
 			subtotal, tax_total, shipping_total, grand_total,
@@ -270,9 +289,8 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 			shipping_zone_code, shipping_zone_name, placed_at
 		)
 		VALUES ($1, $2, $3, $4, 'pending', $5, $6, 0, $7, $8, $9::jsonb, $10, $11, $12, $13, now())
-		RETURNING id::text
 	`, orderID, shopID, customerID, orderNumber, currency, subtotal.FloatString(4), shippingTotalText,
-		total, string(addressJSON), details.ShippingCarrierCode, carrierName, zoneCode, zoneName).Scan(&persistedOrderID)
+		total, string(addressJSON), details.ShippingCarrierCode, carrierName, zoneCode, zoneName)
 	if err != nil {
 		return nil, err
 	}

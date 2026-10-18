@@ -1,8 +1,17 @@
 # Modèle de données EUROMNI
 
-**Moteur : PostgreSQL 16+.** L’hébergeur n’est pas figé : n’importe quelle instance Postgres suffit. L’instance actuelle est chez IONOS (pas OVH). Le schéma est portable : UUID, `timestamptz`, `jsonb`, pas d’extensions propriétaires.
+**Moteur de référence : PostgreSQL 16+.** Le CMS dispose aussi d’un connecteur
+MariaDB 11.8 dédié, dont la validation réelle reste à compléter. Le prototype
+SQLite n’est pas connecté au CMS. Comparaison et état des tests :
+[`docs/database-support.md`](database-support.md).
 
-Un prototype SQLite séparé explore une installation légère mono-boutique pour le catalogue, le panier et le checkout. Il n’est ni compatible avec les migrations PostgreSQL, ni câblé au CMS, et ne change pas le moteur de référence. Son périmètre et ses limites sont décrits dans [`docs/sqlite-prototype.md`](sqlite-prototype.md).
+Le schéma PostgreSQL reste la référence pour les migrations et le modèle du
+CMS. MariaDB utilise un schéma et un adaptateur SQL séparés ; ses migrations ne
+sont pas celles de PostgreSQL. Un prototype SQLite distinct explore une
+installation légère mono-boutique pour le catalogue, le panier et le checkout.
+Il n’est ni compatible avec les migrations PostgreSQL, ni câblé au CMS, et ne
+change pas le moteur de référence. Son périmètre et ses limites sont décrits
+dans [`docs/sqlite-prototype.md`](sqlite-prototype.md).
 
 Source de vérité : migrations SQL numérotées et registre `schema_migrations`.  
 Schéma initial : [`migrations/0001_init.sql`](../migrations/0001_init.sql).  
@@ -13,7 +22,7 @@ Mapping Wasm : [`docs/abi.md`](abi.md).
 
 | Sujet | Décision |
 |-------|----------|
-| SGBD | PostgreSQL (SQL, transactions, JSONB, enums) |
+| SGBD | PostgreSQL de référence ; connecteur MariaDB distinct ; SQLite expérimental |
 | Identifiants | UUID v4 (`gen_random_uuid`) |
 | Argent | `numeric(19,4)` + `char(3)` ISO 4217 — jamais de float |
 | i18n | tables `*_translations` (locale, champs texte) |
@@ -67,7 +76,7 @@ Depuis la racine du dépôt, configurez `DATABASE_URL` et lancez le migrateur :
 go run ./cmd/db-migrate
 ```
 
-Le migrateur applique les scripts dans l’ordre, prend un verrou PostgreSQL pour
+Le migrateur PostgreSQL applique les scripts dans l’ordre, prend un verrou PostgreSQL pour
 exclure une exécution concurrente et vérifie que `schema_migrations` forme un
 préfixe cohérent des migrations embarquées. Les migrations qui modifient le
 schéma enregistrent leur version dans la même transaction que leur changement ;
@@ -81,5 +90,10 @@ Pour une nouvelle migration, ajouter un fichier `NNNN_description.sql` dans
 gère la transaction et inscrit lui-même le nom dans `schema_migrations`. Ne pas
 ajouter de `BEGIN`, `COMMIT` ni d’insertion manuelle dans le registre ; cela
 permet au migrateur de revenir en arrière sur toute la migration en cas d’échec.
+
+MariaDB possède sa propre suite dans `migrations/mariadb/`, appliquée
+automatiquement quand `DATABASE_URL` utilise le schéma `mariadb://` ou
+`mysql://`. La procédure et les limites de validation sont décrites dans
+[`docs/mariadb-setup.md`](mariadb-setup.md).
 
 Ces migrations contiennent le schéma et le seed d’exemple, pas une sauvegarde des données clients ou des transactions. La commande [`db-backup`](local-postgresql.md#sauvegarde-locale-de-développement) sauvegarde la base et le FileStore localement. Avant tout usage client, il faut encore décider le stockage protégé hors machine et le chiffrement, puis mesurer et répéter la restauration sur des données représentatives.

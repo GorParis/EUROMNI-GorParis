@@ -50,7 +50,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	db, err := store.Open(os.Getenv("DATABASE_URL"))
 	if err != nil {
-		return fmt.Errorf("connect to PostgreSQL: %w", err)
+		return fmt.Errorf("connect to database: %w", err)
 	}
 	if db.SQL == nil {
 		return errors.New("DATABASE_URL is required")
@@ -61,7 +61,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return errors.Join(fmt.Errorf("bootstrap owner account: %w", bootstrapErr), closeErr)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("close PostgreSQL connection: %w", closeErr)
+		return fmt.Errorf("close database connection: %w", closeErr)
 	}
 	fmt.Fprintf(stdout, "Created the initial owner account for shop %s.\n", strings.TrimSpace(*shopID))
 	return nil

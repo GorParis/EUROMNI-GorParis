@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"euromni/internal/dbdialect"
 )
 
 const advisoryLockID int64 = 714253896214
@@ -27,6 +29,7 @@ func Apply(ctx context.Context, db *sql.DB, source fs.FS) (applied []string, ret
 	if db == nil {
 		return nil, errors.New("migration database is not configured")
 	}
+
 	ordered, err := list(source)
 	if err != nil {
 		return nil, err
@@ -108,6 +111,154 @@ func Apply(ctx context.Context, db *sql.DB, source fs.FS) (applied []string, ret
 		return nil, fmt.Errorf("migration ledger contains %d entries but only %d migration files are available", len(recorded), len(ordered))
 	}
 	return applied, nil
+}
+
+func ApplyWithDialect(ctx context.Context, db *sql.DB, source fs.FS, dialect dbdialect.Dialect) ([]string, error) {
+	switch dialect {
+	case dbdialect.MariaDB:
+		return ApplyMariaDB(ctx, db, source)
+	case dbdialect.PostgreSQL:
+		return Apply(ctx, db, source)
+	default:
+		return nil, fmt.Errorf("unsupported database dialect %q", dialect)
+	}
+}
+
+func ApplyMariaDB(ctx context.Context, db *sql.DB, source fs.FS) (applied []string, retErr error) {
+	if db == nil {
+		return nil, errors.New("migration database is not configured")
+	}
+	ordered, err := list(source)
+	if err != nil {
+		return nil, err
+	}
+	if ordered[0].name != "0001_mariadb_schema.sql" {
+		return nil, errors.New("MariaDB migration source must start with 0001_mariadb_schema.sql")
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire MariaDB migration connection: %w", err)
+	}
+	defer conn.Close()
+	var locked int
+	if err := conn.QueryRowContext(ctx, `SELECT GET_LOCK($1, 10)`, "euromni:schema-migrations").Scan(&locked); err != nil {
+		return nil, fmt.Errorf("lock MariaDB schema migrations: %w", err)
+	}
+	if locked != 1 {
+		return nil, errors.New("timed out waiting for MariaDB schema migration lock")
+	}
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var released int
+		if err := conn.QueryRowContext(unlockCtx, `SELECT RELEASE_LOCK($1)`, "euromni:schema-migrations").Scan(&released); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("unlock MariaDB schema migrations: %w", err))
+		} else if released != 1 {
+			retErr = errors.Join(retErr, errors.New("MariaDB schema migration lock was not released"))
+		}
+	}()
+
+	hasLedger, err := mariaDBTableExists(ctx, conn, "schema_migrations")
+	if err != nil {
+		return nil, fmt.Errorf("inspect MariaDB migration ledger: %w", err)
+	}
+	if !hasLedger {
+		hasSchema, err := mariaDBTableExists(ctx, conn, "shops")
+		if err != nil {
+			return nil, fmt.Errorf("inspect existing MariaDB schema: %w", err)
+		}
+		if hasSchema {
+			return nil, errors.New("database has an EUROMNI schema without schema_migrations; refusing to replay MariaDB baseline")
+		}
+		if err := executeMariaDB(ctx, conn, source, ordered[0].name, false); err != nil {
+			return nil, err
+		}
+		recorded, err := mariaDBMigrationRecorded(ctx, conn, ordered[0].name)
+		if err != nil {
+			return nil, fmt.Errorf("verify MariaDB baseline ledger entry: %w", err)
+		}
+		if !recorded {
+			return nil, errors.New("MariaDB baseline completed without recording its version in schema_migrations")
+		}
+		applied = append(applied, ordered[0].name)
+	}
+
+	recorded, err := readLedger(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	if len(recorded) == 0 {
+		return nil, errors.New("MariaDB migration ledger exists without its baseline entry")
+	}
+	if len(recorded) > len(ordered) {
+		return nil, fmt.Errorf("MariaDB migration ledger contains %d entries but only %d migration files are available", len(recorded), len(ordered))
+	}
+	for i, version := range recorded {
+		if ordered[i].name != version {
+			return nil, fmt.Errorf("MariaDB migration ledger is not a known contiguous prefix: entry %d is %q, expected %q", i+1, version, ordered[i].name)
+		}
+	}
+	for i := len(recorded); i < len(ordered); i++ {
+		name := ordered[i].name
+		if err := executeMariaDB(ctx, conn, source, name, true); err != nil {
+			return nil, err
+		}
+		recordedVersion, err := mariaDBMigrationRecorded(ctx, conn, name)
+		if err != nil {
+			return nil, fmt.Errorf("verify MariaDB migration %s ledger entry: %w", name, err)
+		}
+		if !recordedVersion {
+			return nil, fmt.Errorf("MariaDB migration %s completed without recording its version in schema_migrations", name)
+		}
+		applied = append(applied, name)
+	}
+	return applied, nil
+}
+
+func mariaDBTableExists(ctx context.Context, conn *sql.Conn, name string) (bool, error) {
+	var exists bool
+	err := conn.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = DATABASE() AND table_name = $1
+		)
+	`, name).Scan(&exists)
+	return exists, err
+}
+
+func mariaDBMigrationRecorded(ctx context.Context, conn *sql.Conn, version string) (bool, error) {
+	var recorded bool
+	err := conn.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)
+	`, version).Scan(&recorded)
+	return recorded, err
+}
+
+func executeMariaDB(ctx context.Context, conn *sql.Conn, source fs.FS, name string, record bool) error {
+	script, err := fs.ReadFile(source, name)
+	if err != nil {
+		return fmt.Errorf("read MariaDB migration %s: %w", name, err)
+	}
+	if !record {
+		if _, err := conn.ExecContext(ctx, string(script)); err != nil {
+			return fmt.Errorf("apply MariaDB migration %s (MariaDB DDL may have committed earlier statements): %w", name, err)
+		}
+		return nil
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin MariaDB migration %s: %w", name, err)
+	}
+	if _, err := tx.ExecContext(ctx, string(script)); err != nil {
+		return rollback(tx, fmt.Errorf("apply MariaDB migration %s (MariaDB DDL may have committed earlier statements): %w", name, err))
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, name); err != nil {
+		return rollback(tx, fmt.Errorf("record MariaDB migration %s: %w", name, err))
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit MariaDB migration %s: %w", name, err)
+	}
+	return nil
 }
 
 func list(source fs.FS) ([]migration, error) {

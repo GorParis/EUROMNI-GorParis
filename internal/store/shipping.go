@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"euromni/internal/dbdialect"
 	"euromni/internal/seed"
 )
 
@@ -209,8 +210,15 @@ func (s *Store) ReplaceShippingConfig(ctx context.Context, shopID string, config
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, shopID); err != nil {
-		return err
+	if s.Dialect == dbdialect.MariaDB {
+		var lockedShopID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM shops WHERE id = $1 FOR UPDATE`, shopID).Scan(&lockedShopID); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, shopID); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM shipping_carriers WHERE shop_id = $1`, shopID); err != nil {
 		return err
