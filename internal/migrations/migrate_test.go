@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -36,8 +37,16 @@ func TestMariaDBMigrationSourceStartsWithInstalledSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ordered) != 3 || ordered[0].name != "0001_mariadb_schema.sql" ||
-		ordered[1].name != "0002_mariadb_demo_seed.sql" || ordered[2].name != "0003_shipping_weight_value_rates.sql" {
+	if len(ordered) != 4 || ordered[0].name != "0001_mariadb_schema.sql" ||
+		ordered[1].name != "0002_mariadb_demo_seed.sql" || ordered[2].name != "0003_shipping_weight_value_rates.sql" ||
+		ordered[3].name != "0004_shipping_rate_mode_check.sql" {
 		t.Fatalf("unexpected MariaDB migration order: %#v", ordered)
+	}
+	migration, err := schemafiles.MariaDBFiles.ReadFile("mariadb/0004_shipping_rate_mode_check.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(migration), "CHECK (rate_mode IN ('fixed', 'weight_value'))") {
+		t.Fatal("MariaDB rate mode migration does not constrain supported modes")
 	}
 }

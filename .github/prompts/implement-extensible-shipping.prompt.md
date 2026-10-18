@@ -15,26 +15,29 @@ tests before editing.
 
 ## Verified restart baseline (18 October 2026)
 
-- The current local `main` and `origin/main` both point to `9f3d92d`; there are
-  no local commits ahead of the remote at this checkpoint.
-- The transport implementation is already present as 26 staged file changes.
-  Preserve the index and inspect both `git diff --cached` and the worktree before
-  editing. Do not reset, unstage, commit, or push unless explicitly requested.
+- The transport checkpoint is commit `9fe5e7c` (`Add weight-value shipping
+  rates`), published to `origin/main`.
+- A follow-up review found MariaDB lacked PostgreSQL's supported `rate_mode`
+  check. The additive `0004_shipping_rate_mode_check.sql` migration and its
+  migration test are local follow-up changes; preserve them and inspect the
+  worktree before editing. Do not reset or overwrite them.
 - The current slice retains fixed rates and adds optional product weight in
   grams, weight-by-cart-subtotal rules, quote calculation, checkout price
   revalidation, order snapshots, admin configuration, and PostgreSQL/MariaDB
   migrations and tests.
 - Fresh focused validation passed:
   `go test -count=1 ./internal/api ./internal/store ./internal/migrations`.
-  This does not establish that database-backed integration tests ran against
-  real PostgreSQL or MariaDB instances.
+  The follow-up migration check also passes with
+  `go test -count=1 ./internal/migrations`. The full Go suite reported `ok` for
+  all packages from cache; database integration results are not confirmed.
 
-Resume by reviewing the current diff and verifying boundary behavior, stale or
-changed quotes, historical snapshots, and migration parity. Run `go test ./...`
-and only run database integration tests against dedicated configured test
-databases. Continue with the smallest additive milestone; do not begin carrier
-API integrations or introduce package-allocation semantics without an explicit
-decision.
+The code review confirmed inclusive lower and exclusive upper bounds, no
+weight-rate fallback, quote revalidation by current amount, and order snapshots;
+existing PostgreSQL integration tests cover these paths but their latest run is
+not confirmed. Run the embedded PostgreSQL integration test and MariaDB only
+against a dedicated configured test database. Continue with the smallest
+additive milestone; do not begin carrier API integrations or introduce
+package-allocation semantics without an explicit decision.
 
 ## Product direction
 

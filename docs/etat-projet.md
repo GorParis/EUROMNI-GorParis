@@ -8,11 +8,14 @@ poids × sous-total, devis au checkout et snapshot de commande. L’administrati
 permet de configurer ces règles. Les migrations, adaptateurs et tests PostgreSQL
 et MariaDB correspondants sont présents dans les changements locaux.
 
-État Git observé à la reprise : branche `main`, identique à `origin/main` au
-commit `9f3d92d`. Les 26 fichiers de cette intégration sont des changements
-indexés, pas des commits locaux en avance. Ne pas réinitialiser l’index, créer
-un commit ou pousser sans demande explicite. Préserver ces changements avant
-toute modification supplémentaire.
+Point de sauvegarde publié : commit `9fe5e7c` (`Add weight-value shipping
+rates`) sur `main`, poussé vers `origin/main`. Il contient l’intégration
+transport et ses documents. Une revue a ensuite relevé une contrainte `rate_mode`
+et une clé trop longue dans la migration MariaDB. Les changements locaux non
+commités corrigent `0003_shipping_weight_value_rates.sql`, le rendent rejouable
+après un DDL partiel, ajoutent la contrainte `0004_shipping_rate_mode_check.sql`
+et leurs tests/documentation. Les préserver; ne pas réécrire le checkpoint
+publié.
 
 Vérification exécutée :
 
@@ -20,15 +23,20 @@ Vérification exécutée :
 go test -count=1 ./internal/api ./internal/store ./internal/migrations
 ```
 
-Résultat : les trois packages passent. Cette vérification ne prouve pas que les
-tests d’intégration ont utilisé une base PostgreSQL ou MariaDB réelle. Exécuter
-`go test ./...`, puis les intégrations avec des bases de test dédiées si elles
-sont configurées. Ne pas déclarer MariaDB validé sans exécution réelle.
+Résultats : `go test -count=1 ./...` passe; le scénario
+`go test -tags integration -count=1 ./internal/store -run
+'^TestMariaDBMigrationAndCommerceFlow$'` passe sur MariaDB 11.8.2 avec une base
+locale dédiée. Le premier passage a détecté la clé composite trop longue; le
+second, sur la même base laissée en DDL partiel, a confirmé la reprise et le
+flux commerce. Cela valide ce scénario, pas le connecteur MariaDB en général.
+Ne pas annoncer d’autres tests d’intégration comme exécutés sans leur résultat.
 
-Prochaine étape : relire le diff indexé et la documentation de transport, puis
-vérifier les frontières de tranches, les conflits de devis au checkout, les
-snapshots historiques et la parité des migrations. Le découpage transporteur /
-service, les origines, colis, délais et devis externes restent hors de cette
+Revue du code : bornes basses inclusives et hautes exclusives; les tests
+PostgreSQL couvrent les limites de poids et de sous-total, l’absence de fallback,
+le devis modifié et le snapshot. L’intégration PostgreSQL reste à confirmer. Le
+serveur MariaDB portable installé sous `%LOCALAPPDATA%` a été arrêté après le
+test; ses binaires et son datadir dédié sont conservés. Le découpage transporteur
+/ service, les origines, colis, délais et devis externes restent hors de cette
 première tranche.
 
 ## Vision cible

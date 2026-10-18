@@ -238,8 +238,9 @@ l’unique stockage de prix, statut, devise ou version.
 
 1. conserver les tables actuelles, les forfaits et snapshots historiques ;
 2. ajouter les poids facultatifs, grilles poids × sous-total et snapshots
-   additifs (`0010_shipping_weight_value_rates.sql` et migration MariaDB
-   `0003_shipping_weight_value_rates.sql`) ;
+  additifs (`0010_shipping_weight_value_rates.sql`, migration MariaDB
+  `0003_shipping_weight_value_rates.sql` et contrainte de mode
+  `0004_shipping_rate_mode_check.sql`) ;
 3. séparer transporteurs et services sélectionnables, sans rendre obligatoires
    des données que la boutique démo ne possède pas encore ;
 4. ajouter les profils physiques et origines, puis définir une politique

@@ -1,13 +1,13 @@
 ALTER TABLE variants
-  ADD COLUMN weight_grams integer NULL CHECK (weight_grams IS NULL OR weight_grams >= 0);
+  ADD COLUMN IF NOT EXISTS weight_grams integer NULL CHECK (weight_grams IS NULL OR weight_grams >= 0);
 
 ALTER TABLE shipping_rates
-  ADD COLUMN rate_mode VARCHAR(32) NOT NULL DEFAULT 'fixed';
+  ADD COLUMN IF NOT EXISTS rate_mode VARCHAR(32) NOT NULL DEFAULT 'fixed';
 
-CREATE TABLE shipping_rate_rules (
+CREATE TABLE IF NOT EXISTS shipping_rate_rules (
   shop_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  carrier_code VARCHAR(512) NOT NULL,
-  zone_code VARCHAR(512) NOT NULL,
+  carrier_code VARCHAR(64) NOT NULL,
+  zone_code VARCHAR(64) NOT NULL,
   min_weight_grams BIGINT NOT NULL CHECK (min_weight_grams >= 0),
   max_weight_grams BIGINT NULL,
   min_subtotal numeric(19, 4) NOT NULL DEFAULT 0 CHECK (min_subtotal >= 0),
@@ -22,7 +22,7 @@ CREATE TABLE shipping_rate_rules (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 ALTER TABLE orders
-  ADD COLUMN shipping_rate_mode VARCHAR(32) NOT NULL DEFAULT 'fixed',
-  ADD COLUMN shipping_weight_grams BIGINT NULL,
-  ADD COLUMN shipping_pricing_subtotal numeric(19, 4) NULL,
-  ADD COLUMN shipping_rate_rule JSON NULL;
+  ADD COLUMN IF NOT EXISTS shipping_rate_mode VARCHAR(32) NOT NULL DEFAULT 'fixed',
+  ADD COLUMN IF NOT EXISTS shipping_weight_grams BIGINT NULL,
+  ADD COLUMN IF NOT EXISTS shipping_pricing_subtotal numeric(19, 4) NULL,
+  ADD COLUMN IF NOT EXISTS shipping_rate_rule JSON NULL;
