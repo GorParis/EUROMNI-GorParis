@@ -87,6 +87,35 @@ func TestValidateShippingConfig(t *testing.T) {
 			want: "each rate must refer to a configured carrier",
 		},
 		{
+			name: "unknown service",
+			mutate: func(config *store.ShippingConfig) {
+				config.Rates[0].ServiceCode = "unknown"
+			},
+			want: "each rate must refer to a configured service",
+		},
+		{
+			name: "duplicate service per carrier",
+			mutate: func(config *store.ShippingConfig) {
+				service := store.ShippingService{CarrierCode: "colissimo", Code: "home", Name: "Domicile", Active: true}
+				config.Services = []store.ShippingService{service, service}
+			},
+			want: "service codes must be unique per carrier",
+		},
+		{
+			name: "multiple services in same zone",
+			mutate: func(config *store.ShippingConfig) {
+				config.Services = []store.ShippingService{
+					{CarrierCode: "colissimo", Code: "home", Name: "Domicile", Active: true},
+					{CarrierCode: "colissimo", Code: "express", Name: "Express", Active: true},
+				}
+				config.Rates[0].ServiceCode = "home"
+				secondRate := config.Rates[0]
+				secondRate.ServiceCode = "express"
+				secondRate.Amount = "12.90"
+				config.Rates = append(config.Rates, secondRate)
+			},
+		},
+		{
 			name: "invalid amount",
 			mutate: func(config *store.ShippingConfig) {
 				config.Rates[0].Amount = "-1.00"
@@ -143,6 +172,20 @@ func TestValidateShippingConfig(t *testing.T) {
 				t.Fatalf("validation error = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestValidateShippingConfigAddsLegacyService(t *testing.T) {
+	config := store.ShippingConfig{
+		Carriers: []store.ShippingCarrier{{Code: "colissimo", Name: "Colissimo", Active: true}},
+		Zones: []store.ShippingZone{{Code: "france", Name: "France", CountryCodes: []string{"FR"}, Active: true}},
+		Rates: []store.ShippingRate{{CarrierCode: "colissimo", ZoneCode: "france", Amount: "6.90", Currency: "EUR", Active: true}},
+	}
+	if message := validateShippingConfig(&config); message != "" {
+		t.Fatalf("legacy shipping config validation = %q", message)
+	}
+	if len(config.Services) != 1 || config.Services[0].Code != "legacy" || config.Rates[0].ServiceCode != "legacy" {
+		t.Fatalf("legacy shipping config normalization = %+v", config)
 	}
 }
 

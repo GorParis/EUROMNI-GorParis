@@ -20,7 +20,7 @@ L’API REST et GraphQL partagent le même store Go. Les erreurs internes ne son
 - `POST /v1/cart` crée un panier invité et renvoie une seule fois un jeton Bearer aléatoire de 256 bits.
 - `GET /v1/cart` lit le panier authentifié.
 - `POST /v1/cart/add` accepte `{ "variant_id": "…", "quantity": 1 }`.
-- `POST /v1/checkout` accepte l’e-mail, le nom, le `shipping_carrier_code` choisi et l’adresse d’expédition du client ; il revalide côté serveur la destination, le tarif et la devise, puis crée une commande en attente et consomme le stock du panier dans la même transaction. Le transporteur, la zone et le montant de livraison sont figés sur la commande. Un mode devenu indisponible renvoie `409 Conflict`.
+- `POST /v1/checkout` accepte l’e-mail, le nom, `shipping_carrier_code`, le `shipping_service_code` choisi et l’adresse d’expédition du client. Il revalide côté serveur la destination, le service, la révision, le devis et la devise, puis crée une commande en attente et consomme le stock du panier dans la même transaction. L’omission du service conserve la compatibilité avec le service `legacy`. Le transporteur, le service, la version tarifaire, la zone et le montant de livraison sont figés sur la commande. Un devis ou service devenu indisponible renvoie `409 Conflict`.
 
 Les deux routes de lecture/modification et la création de panier exigent ou renvoient un jeton Bearer selon l’opération. Le jeton est un secret : le serveur ne stocke que son SHA-256, il expire après 30 jours, et les réponses panier utilisent `Cache-Control: no-store`. Le client doit transmettre le jeton dans `Authorization: Bearer <token>`, jamais dans l’URL. En production, ces routes doivent être servies uniquement sur HTTPS.
 

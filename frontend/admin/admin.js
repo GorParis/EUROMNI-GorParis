@@ -15,6 +15,7 @@
   const orderDetail = document.querySelector("#order-detail");
   const shippingPanel = document.querySelector("#shipping-panel");
   const shippingCarriers = document.querySelector("#shipping-carriers");
+  const shippingServices = document.querySelector("#shipping-services");
   const shippingZones = document.querySelector("#shipping-zones");
   const shippingRates = document.querySelector("#shipping-rates");
   const saveShippingButton = document.querySelector("#save-shipping");
@@ -22,7 +23,7 @@
   let categories = [];
   let editingCategory = null;
   let currentIdentity = null;
-  let shippingConfig = { carriers: [], zones: [], rates: [] };
+  let shippingConfig = { carriers: [], services: [], zones: [], rates: [] };
 
   function setStatus(message, isError = false) {
     status.textContent = message;
@@ -245,8 +246,10 @@
     const total = document.createElement("p");
     total.textContent = `Total : ${order.grand_total} ${order.currency}`;
     const shipping = document.createElement("p");
+    const serviceLabel = order.shipping_service_name ? ` · ${order.shipping_service_name}` : "";
+    const versionLabel = order.shipping_rate_version ? ` · version ${order.shipping_rate_version}` : "";
     shipping.textContent = order.shipping_carrier_name
-      ? `Livraison : ${order.shipping_carrier_name} · ${order.shipping_total} ${order.currency} · ${order.shipping_zone_name || ""}`
+      ? `Livraison : ${order.shipping_carrier_name}${serviceLabel} · ${order.shipping_total} ${order.currency} · ${order.shipping_zone_name || ""}${versionLabel}`
       : `Livraison : ${order.shipping_total} ${order.currency}`;
     if (order.shipment_status) {
       const shipment = document.createElement("p");
@@ -386,11 +389,12 @@
   }
 
   function renderShipping(config) {
-    shippingConfig = config || { carriers: [], zones: [], rates: [] };
-    for (const key of ["carriers", "zones", "rates"]) {
+    shippingConfig = config || { carriers: [], services: [], zones: [], rates: [] };
+    for (const key of ["carriers", "services", "zones", "rates"]) {
       if (!Array.isArray(shippingConfig[key])) shippingConfig[key] = [];
     }
     shippingCarriers.replaceChildren();
+    shippingServices.replaceChildren();
     shippingZones.replaceChildren();
     shippingRates.replaceChildren();
 
@@ -401,6 +405,9 @@
         shippingField("Code", carrier.code, (value) => {
           const previousCode = carrier.code;
           carrier.code = value;
+          shippingConfig.services.forEach((service) => {
+            if (service.carrier_code === previousCode) service.carrier_code = value;
+          });
           shippingConfig.rates.forEach((rate) => {
             if (rate.carrier_code === previousCode) rate.carrier_code = value;
           });
@@ -417,11 +424,61 @@
       remove.textContent = "Supprimer";
       remove.addEventListener("click", () => {
         const [removed] = shippingConfig.carriers.splice(index, 1);
+        shippingConfig.services = shippingConfig.services.filter((service) => service.carrier_code !== removed.code);
         shippingConfig.rates = shippingConfig.rates.filter((rate) => rate.carrier_code !== removed.code);
         renderShipping(shippingConfig);
       });
       card.append(remove);
       shippingCarriers.append(card);
+    });
+
+    shippingConfig.services.forEach((service, index) => {
+      const card = document.createElement("article");
+      card.className = "card";
+      const carrierLabel = document.createElement("label");
+      carrierLabel.textContent = "Transporteur";
+      const carrierSelect = document.createElement("select");
+      for (const carrier of shippingConfig.carriers) {
+        const option = document.createElement("option");
+        option.value = carrier.code;
+        option.textContent = carrier.name || carrier.code;
+        option.selected = carrier.code === service.carrier_code;
+        carrierSelect.append(option);
+      }
+      carrierSelect.addEventListener("change", () => {
+        const previousCarrierCode = service.carrier_code;
+        service.carrier_code = carrierSelect.value;
+        shippingConfig.rates.forEach((rate) => {
+          if (rate.carrier_code === previousCarrierCode && rate.service_code === service.code) {
+            rate.carrier_code = service.carrier_code;
+          }
+        });
+      });
+      carrierLabel.append(carrierSelect);
+      card.append(
+        carrierLabel,
+        shippingField("Code du service", service.code, (value) => {
+          const previousCode = service.code;
+          service.code = value;
+          shippingConfig.rates.forEach((rate) => {
+            if (rate.carrier_code === service.carrier_code && rate.service_code === previousCode) rate.service_code = value;
+          });
+        }, { required: true, pattern: "[a-z0-9]+(-[a-z0-9]+)*" }),
+        shippingField("Nom affiché", service.name, (value) => { service.name = value; }, { required: true }),
+        shippingToggle("Actif", service.active, (value) => { service.active = value; }),
+      );
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger";
+      remove.textContent = "Supprimer";
+      remove.addEventListener("click", () => {
+        const [removed] = shippingConfig.services.splice(index, 1);
+        shippingConfig.rates = shippingConfig.rates.filter((rate) =>
+          rate.carrier_code !== removed.carrier_code || rate.service_code !== removed.code);
+        renderShipping(shippingConfig);
+      });
+      card.append(remove);
+      shippingServices.append(card);
     });
 
     shippingConfig.zones.forEach((zone, index) => {
@@ -473,8 +530,27 @@
         option.selected = carrier.code === rate.carrier_code;
         carrierSelect.append(option);
       }
-      carrierSelect.addEventListener("change", () => { rate.carrier_code = carrierSelect.value; });
+      carrierSelect.addEventListener("change", () => {
+        rate.carrier_code = carrierSelect.value;
+        const services = shippingConfig.services.filter((service) => service.carrier_code === rate.carrier_code);
+        if (!services.some((service) => service.code === rate.service_code)) {
+          rate.service_code = services[0]?.code || "";
+        }
+        renderShipping(shippingConfig);
+      });
       carrierLabel.append(carrierSelect);
+      const serviceLabel = document.createElement("label");
+      serviceLabel.textContent = "Service de livraison";
+      const serviceSelect = document.createElement("select");
+      for (const service of shippingConfig.services.filter((entry) => entry.carrier_code === rate.carrier_code)) {
+        const option = document.createElement("option");
+        option.value = service.code;
+        option.textContent = service.name || service.code;
+        option.selected = service.code === rate.service_code;
+        serviceSelect.append(option);
+      }
+      serviceSelect.addEventListener("change", () => { rate.service_code = serviceSelect.value; });
+      serviceLabel.append(serviceSelect);
       const zoneLabel = document.createElement("label");
       zoneLabel.textContent = "Zone";
       const zoneSelect = document.createElement("select");
@@ -502,7 +578,7 @@
         renderShipping(shippingConfig);
       });
       modeLabel.append(modeSelect);
-      const fields = [carrierLabel, zoneLabel, modeLabel];
+      const fields = [carrierLabel, serviceLabel, zoneLabel, modeLabel];
       if (rate.mode === "fixed") {
         fields.push(shippingField("Tarif forfaitaire", rate.amount, (value) => { rate.amount = value; }, {
           required: true,
@@ -527,6 +603,10 @@
       }
       card.append(
         ...fields,
+        Object.assign(document.createElement("p"), {
+          className: "muted",
+          textContent: `Version ${rate.rate_version || "créée à l’enregistrement"}`,
+        }),
         shippingField("Devise", rate.currency, (value) => { rate.currency = value.toUpperCase(); }, {
           required: true,
           pattern: "[A-Z]{3}",
@@ -770,6 +850,15 @@
     shippingConfig.carriers.push({ code: "", name: "", active: false });
     renderShipping(shippingConfig);
   });
+  document.querySelector("#add-shipping-service").addEventListener("click", () => {
+    shippingConfig.services.push({
+      carrier_code: shippingConfig.carriers[0]?.code || "",
+      code: "",
+      name: "",
+      active: true,
+    });
+    renderShipping(shippingConfig);
+  });
   document.querySelector("#add-shipping-zone").addEventListener("click", () => {
     shippingConfig.zones.push({ code: "", name: "", country_codes: [], active: true });
     renderShipping(shippingConfig);
@@ -777,6 +866,7 @@
   document.querySelector("#add-shipping-rate").addEventListener("click", () => {
     shippingConfig.rates.push({
       carrier_code: shippingConfig.carriers[0]?.code || "",
+      service_code: shippingConfig.services.find((service) => service.carrier_code === shippingConfig.carriers[0]?.code)?.code || "",
       zone_code: shippingConfig.zones[0]?.code || "",
       mode: "fixed",
       amount: "0.00",

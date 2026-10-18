@@ -393,7 +393,7 @@ template.innerHTML = `
       <p class="cart-total-row" hidden><span>Total</span><span class="cart-total"></span></p>
       <form class="checkout-form" hidden>
         <h3>Coordonnées de livraison</h3>
-        <p class="checkout-note">Les frais sont calculés selon la destination et le transporteur sélectionné. La devise dépend des prix configurés ; aucun change automatique n’est appliqué selon le pays. Le paiement et les taxes ne sont pas encore calculés ; le stock est déduit à la confirmation.</p>
+        <p class="checkout-note">Les frais sont calculés selon la destination et le service de livraison sélectionné. La devise dépend des prix configurés ; aucun change automatique n’est appliqué selon le pays. Le paiement et les taxes ne sont pas encore calculés ; le stock est déduit à la confirmation.</p>
         <label>Nom complet<input name="name" autocomplete="name" maxlength="120" required /></label>
         <label>Adresse e-mail<input name="email" type="email" autocomplete="email" maxlength="320" required /></label>
         <label>Adresse<input name="line1" autocomplete="address-line1" maxlength="200" required /></label>
@@ -411,7 +411,7 @@ template.innerHTML = `
           </label>
         </div>
         <label>Mode de livraison
-          <select name="shipping_carrier_code" required disabled>
+          <select name="shipping_option_key" required disabled>
             <option value="">Saisissez un pays pour voir les modes disponibles</option>
           </select>
         </label>
@@ -492,6 +492,10 @@ function formatPrice(amount, currency, locale) {
   }
 }
 
+function shippingOptionKey(option) {
+  return `${option.carrier_code}:${option.service_code || "legacy"}`;
+}
+
 function addDecimalAmounts(left, right) {
   const parse = (value) => {
     const match = /^([0-9]+)(?:\.([0-9]{1,4}))?$/.exec(String(value));
@@ -538,7 +542,7 @@ class EuromniCatalog extends HTMLElement {
     this.shadowRoot.querySelector('[name="country"]').addEventListener("change", (event) => {
       this.loadShippingOptions(event.currentTarget.value);
     });
-    this.shadowRoot.querySelector('[name="shipping_carrier_code"]').addEventListener("change", () => {
+    this.shadowRoot.querySelector('[name="shipping_option_key"]').addEventListener("change", () => {
       this.updateCheckoutEstimate();
     });
     this.shadowRoot.querySelector(".locale-control select").addEventListener("change", (event) => {
@@ -646,7 +650,7 @@ class EuromniCatalog extends HTMLElement {
 
   async loadShippingOptions(countryValue) {
     const country = String(countryValue || "").trim().toUpperCase();
-    const select = this.shadowRoot.querySelector('[name="shipping_carrier_code"]');
+    const select = this.shadowRoot.querySelector('[name="shipping_option_key"]');
     const status = this.shadowRoot.querySelector(".shipping-options-status");
     this.shippingController?.abort();
     this.shippingOptions = [];
@@ -699,9 +703,9 @@ class EuromniCatalog extends HTMLElement {
       select.append(prompt);
       for (const option of this.shippingOptions) {
         const item = document.createElement("option");
-        item.value = option.carrier_code;
+        item.value = shippingOptionKey(option);
         item.textContent =
-          `${option.carrier_name} — ${formatPrice(option.amount, option.currency, this.locale)}`;
+          `${option.carrier_name} · ${option.service_name} — ${formatPrice(option.amount, option.currency, this.locale)}`;
         select.append(item);
       }
       select.disabled = this.shippingOptions.length === 0;
@@ -724,8 +728,8 @@ class EuromniCatalog extends HTMLElement {
 
   updateCheckoutEstimate() {
     const estimate = this.shadowRoot.querySelector(".checkout-estimate");
-    const carrierCode = this.shadowRoot.querySelector('[name="shipping_carrier_code"]').value;
-    const option = this.shippingOptions.find((entry) => entry.carrier_code === carrierCode);
+    const selection = this.shadowRoot.querySelector('[name="shipping_option_key"]').value;
+    const option = this.shippingOptions.find((entry) => shippingOptionKey(entry) === selection);
     const cartAmount = this.currentCart?.total?.amount;
     const currency = this.currentCart?.total?.currency || option?.currency;
     if (!option || !currency || !Number.isFinite(Number(cartAmount))) {
@@ -1128,12 +1132,13 @@ class EuromniCatalog extends HTMLElement {
     button.textContent = "Enregistrement…";
     const values = Object.fromEntries(new FormData(form).entries());
     const shippingOption = this.shippingOptions.find(
-      (option) => option.carrier_code === values.shipping_carrier_code,
+      (option) => shippingOptionKey(option) === values.shipping_option_key,
     );
     const details = {
       email: values.email,
       name: values.name,
-      shipping_carrier_code: values.shipping_carrier_code,
+      shipping_carrier_code: shippingOption?.carrier_code || "",
+      shipping_service_code: shippingOption?.service_code || "",
       expected_shipping_total: shippingOption?.amount || "",
       expected_shipping_quote_id: shippingOption?.quote_id || "",
       shipping_address: {
@@ -1154,8 +1159,8 @@ class EuromniCatalog extends HTMLElement {
       this.renderCart({ items: [], total: { amount: "0.0000", currency: order.currency } });
       form.reset();
       this.shippingOptions = [];
-      this.shadowRoot.querySelector('[name="shipping_carrier_code"]').replaceChildren();
-      this.shadowRoot.querySelector('[name="shipping_carrier_code"]').disabled = true;
+      this.shadowRoot.querySelector('[name="shipping_option_key"]').replaceChildren();
+      this.shadowRoot.querySelector('[name="shipping_option_key"]').disabled = true;
       this.setCartStatus(
         `Commande ${order.number} enregistrée en attente de paiement. Total : ` +
         `${formatPrice(order.grand_total, order.currency, this.locale)} (hors taxes).`,

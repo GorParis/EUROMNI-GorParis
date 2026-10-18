@@ -203,14 +203,17 @@
         </section>
         <section id="shipping-panel" class="panel" hidden>
           <h2>Transporteurs et livraisons</h2>
-          <p class="muted">Configurez les transporteurs, les zones pays et un tarif fixe par transporteur et zone. Les tarifs ne sont pas encore proposés au checkout et aucune étiquette transporteur n’est achetée.</p>
+          <p class="muted">Un transporteur peut proposer plusieurs services. Chaque tarif appartient à un service et une zone; une nouvelle sauvegarde crée une nouvelle version du tarif.</p>
           <h3>Transporteurs</h3>
           <div id="shipping-carriers" class="product-list"></div>
           <button id="add-shipping-carrier" class="secondary" type="button">Ajouter un transporteur</button>
+          <h3>Services de livraison</h3>
+          <div id="shipping-services" class="product-list"></div>
+          <button id="add-shipping-service" class="secondary" type="button">Ajouter un service</button>
           <h3>Zones de livraison</h3>
           <div id="shipping-zones" class="product-list"></div>
           <button id="add-shipping-zone" class="secondary" type="button">Ajouter une zone</button>
-          <h3>Tarifs fixes</h3>
+          <h3>Tarifs par service et zone</h3>
           <div id="shipping-rates" class="product-list"></div>
           <button id="add-shipping-rate" class="secondary" type="button">Ajouter un tarif</button>
           <div class="actions" style="margin-top: 1rem">

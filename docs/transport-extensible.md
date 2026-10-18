@@ -27,16 +27,19 @@ elles ne sont pas déterminées par le schéma technique.
 Le modèle offre désormais :
 
 - des transporteurs identifiés par code ;
+- des services de livraison identifiés par un code propre à leur transporteur ;
 - des zones de pays sans chevauchement ;
-- un tarif fixe ou une matrice de tarifs par couple transporteur-zone, dans la
+- un tarif fixe ou une matrice poids × sous-total par service-zone, dans la
   devise de la boutique ;
+- une version UUID immuable à chaque sauvegarde de tarif, avec conservation
+  de l’en-tête tarifaire et des règles de chaque version ;
 - un poids unitaire facultatif en grammes par variante ;
 - le devis d’un panier par intersection de tranche de poids et de sous-total
   produits ;
 - la sélection d’une option au checkout ;
-- un snapshot sur la commande du code/nom du transporteur, de la zone et du
-  montant, et pour une matrice le poids total des articles, le sous-total
-  tarifaire et la règle appliquée ;
+- un snapshot sur la commande du code/nom du transporteur, du service, de la
+  version tarifaire, de la zone et du montant, et pour une matrice le poids
+  total des articles, le sous-total tarifaire et la règle appliquée ;
 - la confirmation administrative d’expédition et un numéro de suivi manuel.
 
 Le premier calculateur conserve le tarif fixe historique et ajoute une matrice
@@ -46,26 +49,37 @@ chevaucher. Le sous-total est celui des articles, hors taxes et livraison. Le
 poids est la somme des poids unitaires multipliés par les quantités ; emballage
 et colis ne sont pas estimés. Si un poids manque, ou si aucune règle ne couvre
 le panier, aucun devis pondéral n’est proposé : aucun forfait de secours
-implicite.
+implicite. Les anciennes configurations sont migrées vers un service par
+transporteur, code `legacy`, affiché comme « Offre historique ».
 
-`GET /v1/shipping-options?country=FR` continue d’exposer les tarifs fixes
-compatibles sans panier. `POST /v1/shipping-quotes` exige l’autorisation du
-panier et un pays `{ "country": "FR" }` pour calculer les tarifs matriciels.
-Le checkout recalcule le montant. Pour les matrices, il exige le champ
+`GET /v1/shipping-options?country=FR` expose les tarifs fixes de chaque service
+sans panier. `POST /v1/shipping-quotes` exige l’autorisation du panier et un
+pays `{ "country": "FR" }` pour calculer les tarifs matriciels. Chaque option
+retourne `carrier_code`, `service_code`, `service_name`, `rate_version` et son
+`quote_id`. Le checkout recalcule le montant et exige désormais le service
+sélectionné pour les nouveaux clients; les clients historiques sans
+`shipping_service_code` ciblent `legacy`. Pour les matrices, il exige le champ
 `expected_shipping_total`; tout décalage avec le devis présenté provoque un
 conflit et demande une nouvelle sélection. Le champ reste facultatif pour les
 clients historiques utilisant uniquement les forfaits. Les options exposent
 également un `quote_id`, empreinte déterministe de l’option complète; le
 storefront le renvoie dans `expected_shipping_quote_id`. Si la règle, le libellé,
-la zone ou tout autre élément de l’option change, le checkout refuse le devis
+la zone, le service ou la version tarifaire change, le checkout refuse le devis
 même si le montant reste identique. Ce champ est additif et facultatif pour les
 clients API historiques; l’empreinte détecte une évolution, elle ne remplace ni
 l’autorisation du panier ni une durée d’expiration serveur.
+
+Chaque sauvegarde admin crée une nouvelle version UUID. Les tables
+`shipping_rate_versions` et `shipping_rate_version_rules` conservent les
+versions précédentes, y compris après remplacement/suppression du tarif courant.
+La commande pointe vers la version et stocke aussi le nom du service accepté;
+elle reste donc interprétable après modification de la configuration.
 
 L’admin configure les règles matricielles en JSON sous chaque tarif. Exemple :
 
 ```json
 {
+  "service_code": "home",
   "mode": "weight_value",
   "rules": [
     {
@@ -86,11 +100,10 @@ L’admin configure les règles matricielles en JSON sous chaque tarif. Exemple 
 }
 ```
 
-La distinction entre transporteur et services sélectionnables, les profils
-physiques, les origines, délais, restrictions produit, colis, tarifs retournés
-par un service externe et références versionnées de règles restent à
-implémenter. Les transporteurs configurés sont encore les options sélectionnées
-au checkout ; ne pas déduire un service précis de leur nom.
+Les services sont sélectionnables et les révisions tarifaires sont conservées.
+Les profils physiques, les origines, délais, restrictions produit, colis et
+tarifs retournés par un service externe restent à implémenter. Les capacités
+opérationnelles d’un service ne sont pas déduites de son nom commercial.
 
 ## Concepts natifs
 
@@ -128,7 +141,7 @@ au checkout ; ne pas déduire un service précis de leur nom.
 ### Règles et calcul de prix
 
 Une règle de tarif appartient à une boutique, un service, une destination ou
-zone et une devise. Elle possède un identifiant/version, une période
+zone et une devise. Elle possède un identifiant/version immuable, une période
 d’application, un état actif, une priorité non ambiguë et une explication
 lisible par l’administration. Le montant doit toujours utiliser une précision
 décimale, jamais un flottant.
@@ -247,8 +260,9 @@ l’unique stockage de prix, statut, devise ou version.
   additifs (`0010_shipping_weight_value_rates.sql`, migration MariaDB
   `0003_shipping_weight_value_rates.sql` et contrainte de mode
   `0004_shipping_rate_mode_check.sql`) ;
-3. séparer transporteurs et services sélectionnables, sans rendre obligatoires
-   des données que la boutique démo ne possède pas encore ;
+3. séparer transporteurs et services et conserver les révisions tarifaires
+  (`0011_shipping_services_rate_versions.sql`, migration MariaDB
+  `0005_shipping_services_rate_versions.sql`) ;
 4. ajouter les profils physiques et origines, puis définir une politique
    explicite de colisage ;
 5. ajouter délais, restrictions, références versionnées, extensions Wasm et

@@ -38,6 +38,7 @@ type CheckoutDetails struct {
 	Email                 string
 	Name                  string
 	ShippingCarrierCode   string
+	ShippingServiceCode   string
 	ExpectedShippingTotal string
 	ExpectedShippingQuoteID string
 	ShippingAddress       ShippingAddress
@@ -62,6 +63,9 @@ type OrderView struct {
 	ShippingTotal           string          `json:"shipping_total"`
 	ShippingCarrierCode     string          `json:"shipping_carrier_code"`
 	ShippingCarrierName     string          `json:"shipping_carrier_name"`
+	ShippingServiceCode     string          `json:"shipping_service_code,omitempty"`
+	ShippingServiceName     string          `json:"shipping_service_name,omitempty"`
+	ShippingRateVersion     string          `json:"shipping_rate_version,omitempty"`
 	ShippingRateMode        string          `json:"shipping_rate_mode"`
 	ShippingWeightGrams     *int64          `json:"shipping_weight_grams,omitempty"`
 	ShippingPricingSubtotal *string         `json:"shipping_pricing_subtotal,omitempty"`
@@ -88,6 +92,9 @@ type AdminOrderView struct {
 	ShippingTotal           string          `json:"shipping_total"`
 	ShippingCarrierCode     string          `json:"shipping_carrier_code"`
 	ShippingCarrierName     string          `json:"shipping_carrier_name"`
+	ShippingServiceCode     string          `json:"shipping_service_code,omitempty"`
+	ShippingServiceName     string          `json:"shipping_service_name,omitempty"`
+	ShippingRateVersion     string          `json:"shipping_rate_version,omitempty"`
 	ShippingZoneCode        string          `json:"shipping_zone_code"`
 	ShippingZoneName        string          `json:"shipping_zone_name"`
 	ShippingRateMode        string          `json:"shipping_rate_mode"`
@@ -213,21 +220,30 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	if len(lines) == 0 {
 		return nil, ErrEmptyCart
 	}
-	var carrierName, zoneCode, zoneName, rateMode, shippingAmount string
+	serviceCode := details.ShippingServiceCode
+	if serviceCode == "" {
+		serviceCode = "legacy"
+	}
+	var carrierName, serviceName, zoneCode, zoneName, rateMode, shippingAmount, rateVersion string
 	err = tx.QueryRowContext(ctx, `
-		SELECT carrier.name, zone.code, zone.name, rate.rate_mode, rate.amount::text
+		SELECT carrier.name, service.name, zone.code, zone.name,
+		       rate.rate_mode, rate.amount::text, rate.rate_version::text
 		FROM shipping_rates rate
 		JOIN shipping_carriers carrier
 		  ON carrier.shop_id = rate.shop_id AND carrier.code = rate.carrier_code
+		JOIN shipping_services service
+		  ON service.shop_id = rate.shop_id AND service.carrier_code = rate.carrier_code
+		 AND service.code = rate.service_code
 		JOIN shipping_zones zone
 		  ON zone.shop_id = rate.shop_id AND zone.code = rate.zone_code
 		WHERE rate.shop_id = $1
 		  AND rate.carrier_code = $2
-		  AND rate.currency = $3
-		  AND rate.active = true AND carrier.active = true AND zone.active = true
-		  AND zone.country_codes @> jsonb_build_array($4::text)
-	`, shopID, details.ShippingCarrierCode, currency, details.ShippingAddress.Country).Scan(
-		&carrierName, &zoneCode, &zoneName, &rateMode, &shippingAmount,
+		  AND rate.service_code = $3
+		  AND rate.currency = $4
+		  AND rate.active = true AND carrier.active = true AND service.active = true AND zone.active = true
+		  AND zone.country_codes @> jsonb_build_array($5::text)
+	`, shopID, details.ShippingCarrierCode, serviceCode, currency, details.ShippingAddress.Country).Scan(
+		&carrierName, &serviceName, &zoneCode, &zoneName, &rateMode, &shippingAmount, &rateVersion,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrShippingUnavailable
@@ -237,6 +253,7 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	}
 	shippingOption := ShippingOption{
 		CarrierCode: details.ShippingCarrierCode, CarrierName: carrierName,
+		ServiceCode: serviceCode, ServiceName: serviceName, RateVersion: rateVersion,
 		ZoneCode: zoneCode, ZoneName: zoneName, Amount: shippingAmount,
 		Currency: currency, RateMode: rateMode,
 	}
@@ -248,7 +265,7 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 			return nil, ErrShippingUnavailable
 		}
 		rule, err := matchingShippingRateRule(
-			ctx, tx, shopID, details.ShippingCarrierCode, zoneCode, totalWeight, subtotal,
+			ctx, tx, shopID, details.ShippingCarrierCode, serviceCode, zoneCode, totalWeight, subtotal,
 		)
 		if err != nil {
 			return nil, err
@@ -369,13 +386,14 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 			id, shop_id, customer_id, number, status, currency,
 			subtotal, tax_total, shipping_total, grand_total,
 			shipping_address, shipping_carrier_code, shipping_carrier_name,
-			shipping_zone_code, shipping_zone_name, shipping_rate_mode,
+			shipping_service_code, shipping_service_name, shipping_zone_code,
+			shipping_zone_name, shipping_rate_mode, shipping_rate_version,
 			shipping_weight_grams, shipping_pricing_subtotal, shipping_rate_rule, placed_at
 		)
-		VALUES ($1, $2, $3, $4, 'pending', $5, $6, 0, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, now())
+		VALUES ($1, $2, $3, $4, 'pending', $5, $6, 0, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, now())
 	`, orderID, shopID, customerID, orderNumber, currency, subtotal.FloatString(4), shippingTotalText,
-		total, string(addressJSON), details.ShippingCarrierCode, carrierName, zoneCode, zoneName,
-		rateMode, snapshotWeight, snapshotSubtotal, nullableJSON(snapshotRule))
+		total, string(addressJSON), details.ShippingCarrierCode, carrierName, serviceCode, serviceName,
+		zoneCode, zoneName, rateMode, rateVersion, snapshotWeight, snapshotSubtotal, nullableJSON(snapshotRule))
 	if err != nil {
 		return nil, err
 	}
@@ -397,6 +415,7 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		ID: persistedOrderID, Number: orderNumber, Status: "pending", Currency: currency,
 		Subtotal: subtotal.FloatString(4), TaxTotal: "0.0000", ShippingTotal: shippingTotalText,
 		ShippingCarrierCode: details.ShippingCarrierCode, ShippingCarrierName: carrierName,
+		ShippingServiceCode: serviceCode, ShippingServiceName: serviceName, ShippingRateVersion: rateVersion,
 		ShippingRateMode: rateMode, ShippingWeightGrams: snapshotWeight,
 		ShippingPricingSubtotal: snapshotSubtotal, ShippingRateRule: snapshotRule,
 		GrandTotal: total,
@@ -443,8 +462,16 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 	if details.ShippingCarrierCode != "colissimo" || details.ShippingAddress.Country != "FR" {
 		return nil, ErrShippingUnavailable
 	}
+	serviceCode := details.ShippingServiceCode
+	if serviceCode == "" {
+		serviceCode = "legacy"
+	}
+	if serviceCode != "legacy" {
+		return nil, ErrShippingUnavailable
+	}
 	shippingOption := ShippingOption{
 		CarrierCode: "colissimo", CarrierName: "Colissimo (tarif de démonstration)",
+		ServiceCode: "legacy", ServiceName: "Offre historique", RateVersion: legacyShippingRateVersion,
 		ZoneCode: "france-ue", ZoneName: "France et Union européenne",
 		Amount: "6.9000", Currency: cart.currency, RateMode: "fixed",
 	}
@@ -513,6 +540,8 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 		ID: orderID, Number: orderNumber, Status: "pending", Currency: cart.currency,
 		Subtotal: subtotal.FloatString(4), TaxTotal: "0.0000", ShippingTotal: shippingTotal,
 		ShippingCarrierCode: "colissimo", ShippingCarrierName: "Colissimo (tarif de démonstration)",
+		ShippingServiceCode: "legacy", ShippingServiceName: "Offre historique",
+		ShippingRateVersion: legacyShippingRateVersion,
 		GrandTotal: total,
 		Items:      orderLines(lines),
 	}, nil

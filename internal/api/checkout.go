@@ -16,6 +16,7 @@ type checkoutRequest struct {
 	Email                 string                `json:"email"`
 	Name                  string                `json:"name"`
 	ShippingCarrierCode   string                `json:"shipping_carrier_code"`
+	ShippingServiceCode   string                `json:"shipping_service_code,omitempty"`
 	ExpectedShippingTotal string                `json:"expected_shipping_total,omitempty"`
 	ExpectedShippingQuoteID string              `json:"expected_shipping_quote_id,omitempty"`
 	ShippingAddress       store.ShippingAddress `json:"shipping_address"`
@@ -94,11 +95,16 @@ func decodeCheckoutRequest(w http.ResponseWriter, r *http.Request) (store.Checko
 	address.Country = strings.ToUpper(strings.TrimSpace(address.Country))
 	name := strings.TrimSpace(request.Name)
 	carrierCode := strings.TrimSpace(request.ShippingCarrierCode)
+	serviceCode := strings.TrimSpace(request.ShippingServiceCode)
+	if serviceCode == "" {
+		serviceCode = "legacy"
+	}
 	expectedShippingTotal := strings.TrimSpace(request.ExpectedShippingTotal)
 	expectedShippingQuoteID := strings.TrimSpace(request.ExpectedShippingQuoteID)
 	parsedEmail, err := mail.ParseAddress(strings.TrimSpace(request.Email))
 	if err != nil || parsedEmail.Address == "" || len(parsedEmail.Address) > 320 || len(name) == 0 || len(name) > 120 ||
 		!shippingCodePattern.MatchString(carrierCode) ||
+		!shippingCodePattern.MatchString(serviceCode) ||
 		len(address.Line1) == 0 || len(address.Line1) > 200 || len(address.Line2) > 200 ||
 		len(address.City) == 0 || len(address.City) > 100 || len(address.PostalCode) == 0 || len(address.PostalCode) > 32 ||
 		len(address.Region) > 100 || !validCountryCode(address.Country) {
@@ -112,6 +118,7 @@ func decodeCheckoutRequest(w http.ResponseWriter, r *http.Request) (store.Checko
 	}
 	return store.CheckoutDetails{
 		Email: parsedEmail.Address, Name: name, ShippingCarrierCode: carrierCode,
+		ShippingServiceCode: serviceCode,
 		ExpectedShippingTotal: expectedShippingTotal, ExpectedShippingQuoteID: expectedShippingQuoteID,
 		ShippingAddress: address,
 	}, nil

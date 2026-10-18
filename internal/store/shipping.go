@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -30,6 +31,7 @@ type ShippingQuoteReader interface {
 
 type ShippingConfig struct {
 	Carriers []ShippingCarrier `json:"carriers"`
+	Services []ShippingService `json:"services"`
 	Zones    []ShippingZone    `json:"zones"`
 	Rates    []ShippingRate    `json:"rates"`
 }
@@ -38,6 +40,13 @@ type ShippingCarrier struct {
 	Code   string `json:"code"`
 	Name   string `json:"name"`
 	Active bool   `json:"active"`
+}
+
+type ShippingService struct {
+	CarrierCode string `json:"carrier_code"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Active      bool   `json:"active"`
 }
 
 type ShippingZone struct {
@@ -49,7 +58,9 @@ type ShippingZone struct {
 
 type ShippingRate struct {
 	CarrierCode string             `json:"carrier_code"`
+	ServiceCode string             `json:"service_code"`
 	ZoneCode    string             `json:"zone_code"`
+	RateVersion string             `json:"rate_version,omitempty"`
 	Mode        string             `json:"mode"`
 	Amount      string             `json:"amount"`
 	Currency    string             `json:"currency"`
@@ -68,16 +79,21 @@ type ShippingRateRule struct {
 type ShippingOption struct {
 	CarrierCode     string            `json:"carrier_code"`
 	CarrierName     string            `json:"carrier_name"`
+	ServiceCode     string            `json:"service_code"`
+	ServiceName     string            `json:"service_name"`
 	ZoneCode        string            `json:"zone_code"`
 	ZoneName        string            `json:"zone_name"`
 	Amount          string            `json:"amount"`
 	Currency        string            `json:"currency"`
+	RateVersion     string            `json:"rate_version"`
 	RateMode        string            `json:"rate_mode,omitempty"`
 	WeightGrams     *int64            `json:"weight_grams,omitempty"`
 	PricingSubtotal string            `json:"pricing_subtotal,omitempty"`
 	RateRule        *ShippingRateRule `json:"rate_rule,omitempty"`
 	QuoteID         string            `json:"quote_id,omitempty"`
 }
+
+const legacyShippingRateVersion = "00000000-0000-4000-8000-000000000001"
 
 func shippingOptionQuoteID(option ShippingOption) (string, error) {
 	option.QuoteID = ""
@@ -89,24 +105,71 @@ func shippingOptionQuoteID(option ShippingOption) (string, error) {
 	return hex.EncodeToString(fingerprint[:]), nil
 }
 
+func newShippingRateVersion() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
+	}
+	value[6] = (value[6] & 0x0f) | 0x40
+	value[8] = (value[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(value[:])
+	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:], nil
+}
+
+func normalizeShippingConfig(config ShippingConfig) (ShippingConfig, error) {
+	if config.Services == nil {
+		config.Services = []ShippingService{}
+	}
+	services := make(map[string]struct{}, len(config.Services))
+	for _, service := range config.Services {
+		services[service.CarrierCode+"\x00"+service.Code] = struct{}{}
+	}
+	legacyServices := make(map[string]struct{})
+	for index := range config.Rates {
+		rate := &config.Rates[index]
+		if rate.ServiceCode == "" {
+			rate.ServiceCode = "legacy"
+		}
+		key := rate.CarrierCode + "\x00" + rate.ServiceCode
+		if _, exists := services[key]; exists {
+			continue
+		}
+		if rate.ServiceCode != "legacy" {
+			return ShippingConfig{}, fmt.Errorf("shipping rate references unknown service %q", rate.ServiceCode)
+		}
+		if _, added := legacyServices[rate.CarrierCode]; !added {
+			config.Services = append(config.Services, ShippingService{
+				CarrierCode: rate.CarrierCode, Code: "legacy", Name: "Offre historique", Active: true,
+			})
+			legacyServices[rate.CarrierCode] = struct{}{}
+		}
+		services[key] = struct{}{}
+	}
+	return config, nil
+}
+
 func (s *Store) ListShippingOptions(ctx context.Context, shopID, country string) ([]ShippingOption, error) {
 	if s == nil || s.SQL == nil {
 		return nil, errors.New("store not configured")
 	}
 	rows, err := s.SQL.QueryContext(ctx, `
-		SELECT carrier.code, carrier.name, zone.code, zone.name, rate.amount::text, rate.currency::text
+		SELECT carrier.code, carrier.name, service.code, service.name,
+		       zone.code, zone.name, rate.amount::text, rate.currency::text, rate.rate_version::text
 		FROM shipping_rates rate
 		JOIN shipping_carriers carrier
 		  ON carrier.shop_id = rate.shop_id AND carrier.code = rate.carrier_code
+		JOIN shipping_services service
+		  ON service.shop_id = rate.shop_id AND service.carrier_code = rate.carrier_code
+		 AND service.code = rate.service_code
 		JOIN shipping_zones zone
 		  ON zone.shop_id = rate.shop_id AND zone.code = rate.zone_code
 		JOIN shops shop ON shop.id = rate.shop_id
 		WHERE rate.shop_id = $1
-		  AND rate.active = true AND carrier.active = true AND zone.active = true
+		  AND rate.active = true AND carrier.active = true AND service.active = true AND zone.active = true
 		  AND rate.rate_mode = 'fixed'
 		  AND zone.country_codes @> jsonb_build_array($2::text)
 		  AND rate.currency = shop.currency
-		ORDER BY rate.amount, carrier.name, carrier.code
+		ORDER BY rate.amount, carrier.name, service.name, service.code
 	`, shopID, country)
 	if err != nil {
 		return nil, err
@@ -116,8 +179,8 @@ func (s *Store) ListShippingOptions(ctx context.Context, shopID, country string)
 	for rows.Next() {
 		var option ShippingOption
 		if err := rows.Scan(
-			&option.CarrierCode, &option.CarrierName, &option.ZoneCode,
-			&option.ZoneName, &option.Amount, &option.Currency,
+			&option.CarrierCode, &option.CarrierName, &option.ServiceCode, &option.ServiceName,
+			&option.ZoneCode, &option.ZoneName, &option.Amount, &option.Currency, &option.RateVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -216,31 +279,38 @@ func (s *Store) ListCartShippingOptions(ctx context.Context, shopID string, toke
 	}
 
 	rateRows, err := s.SQL.QueryContext(ctx, `
-		SELECT carrier.code, carrier.name, zone.code, zone.name,
-		       rate.rate_mode, rate.amount::text, rate.currency::text
+		SELECT carrier.code, carrier.name, service.code, service.name,
+		       zone.code, zone.name, rate.rate_mode, rate.amount::text,
+		       rate.currency::text, rate.rate_version::text
 		FROM shipping_rates rate
 		JOIN shipping_carriers carrier
 		  ON carrier.shop_id = rate.shop_id AND carrier.code = rate.carrier_code
+		JOIN shipping_services service
+		  ON service.shop_id = rate.shop_id AND service.carrier_code = rate.carrier_code
+		 AND service.code = rate.service_code
 		JOIN shipping_zones zone
 		  ON zone.shop_id = rate.shop_id AND zone.code = rate.zone_code
 		WHERE rate.shop_id = $1
 		  AND rate.active = true AND carrier.active = true AND zone.active = true
+		  AND service.active = true
 		  AND zone.country_codes @> jsonb_build_array($2::text)
 		  AND rate.currency = $3
-		ORDER BY carrier.name, carrier.code
+		ORDER BY carrier.name, service.name, service.code
 	`, shopID, country, currency)
 	if err != nil {
 		return nil, err
 	}
 	type candidate struct {
-		carrierCode, carrierName, zoneCode, zoneName, mode, amount, currency string
+		carrierCode, carrierName, serviceCode, serviceName string
+		zoneCode, zoneName, mode, amount, currency, rateVersion string
 	}
 	candidates := make([]candidate, 0)
 	for rateRows.Next() {
 		var entry candidate
 		if err := rateRows.Scan(
-			&entry.carrierCode, &entry.carrierName, &entry.zoneCode, &entry.zoneName,
-			&entry.mode, &entry.amount, &entry.currency,
+			&entry.carrierCode, &entry.carrierName, &entry.serviceCode, &entry.serviceName,
+			&entry.zoneCode, &entry.zoneName, &entry.mode, &entry.amount, &entry.currency,
+			&entry.rateVersion,
 		); err != nil {
 			_ = rateRows.Close()
 			return nil, err
@@ -259,8 +329,9 @@ func (s *Store) ListCartShippingOptions(ctx context.Context, shopID string, toke
 	for _, entry := range candidates {
 		option := ShippingOption{
 			CarrierCode: entry.carrierCode, CarrierName: entry.carrierName,
+			ServiceCode: entry.serviceCode, ServiceName: entry.serviceName,
 			ZoneCode: entry.zoneCode, ZoneName: entry.zoneName,
-			Currency: entry.currency, RateMode: entry.mode,
+			Currency: entry.currency, RateMode: entry.mode, RateVersion: entry.rateVersion,
 		}
 		switch entry.mode {
 		case "fixed":
@@ -270,7 +341,7 @@ func (s *Store) ListCartShippingOptions(ctx context.Context, shopID string, toke
 				continue
 			}
 			rule, err := matchingShippingRateRule(
-				ctx, s.SQL, shopID, entry.carrierCode, entry.zoneCode, totalWeight, subtotal,
+				ctx, s.SQL, shopID, entry.carrierCode, entry.serviceCode, entry.zoneCode, totalWeight, subtotal,
 			)
 			if err != nil {
 				return nil, err
@@ -299,15 +370,15 @@ type shippingRuleQueryer interface {
 }
 
 func matchingShippingRateRule(
-	ctx context.Context, queryer shippingRuleQueryer, shopID, carrierCode, zoneCode string,
+	ctx context.Context, queryer shippingRuleQueryer, shopID, carrierCode, serviceCode, zoneCode string,
 	weight int64, subtotal *big.Rat,
 ) (*ShippingRateRule, error) {
 	rows, err := queryer.QueryContext(ctx, `
 		SELECT min_weight_grams, max_weight_grams, min_subtotal::text, max_subtotal::text, amount::text
 		FROM shipping_rate_rules
-		WHERE shop_id = $1 AND carrier_code = $2 AND zone_code = $3
+		WHERE shop_id = $1 AND carrier_code = $2 AND service_code = $3 AND zone_code = $4
 		ORDER BY min_weight_grams, min_subtotal
-	`, shopID, carrierCode, zoneCode)
+	`, shopID, carrierCode, serviceCode, zoneCode)
 	if err != nil {
 		return nil, err
 	}
@@ -364,10 +435,13 @@ func (m *Memory) ListShippingOptions(ctx context.Context, shopID, country string
 	option := ShippingOption{
 		CarrierCode: "colissimo",
 		CarrierName: "Colissimo (tarif de démonstration)",
+		ServiceCode: "legacy",
+		ServiceName: "Offre historique",
 		ZoneCode:    "france-ue",
 		ZoneName:    "France et Union européenne",
 		Amount:      "6.9000",
 		Currency:    "EUR",
+		RateVersion: legacyShippingRateVersion,
 		RateMode:    "fixed",
 	}
 	var err error
@@ -397,10 +471,13 @@ func (m *Memory) ListCartShippingOptions(ctx context.Context, shopID string, tok
 	option := ShippingOption{
 		CarrierCode: "colissimo",
 		CarrierName: "Colissimo (tarif de démonstration)",
+		ServiceCode: "legacy",
+		ServiceName: "Offre historique",
 		ZoneCode:    "france-ue",
 		ZoneName:    "France et Union européenne",
 		Amount:      "6.9000",
 		Currency:    cart.currency,
+		RateVersion: legacyShippingRateVersion,
 		RateMode:    "fixed",
 	}
 	quoteID, err := shippingOptionQuoteID(option)
@@ -417,6 +494,7 @@ func (s *Store) GetShippingConfig(ctx context.Context, shopID string) (*Shipping
 	}
 	config := &ShippingConfig{
 		Carriers: []ShippingCarrier{},
+		Services: []ShippingService{},
 		Zones:    []ShippingZone{},
 		Rates:    []ShippingRate{},
 	}
@@ -436,6 +514,31 @@ func (s *Store) GetShippingConfig(ctx context.Context, shopID string) (*Shipping
 			return nil, err
 		}
 		config.Carriers = append(config.Carriers, carrier)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	rows, err = s.SQL.QueryContext(ctx, `
+		SELECT carrier_code, code, name, active
+		FROM shipping_services
+		WHERE shop_id = $1
+		ORDER BY carrier_code, name, code
+	`, shopID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var service ShippingService
+		if err := rows.Scan(&service.CarrierCode, &service.Code, &service.Name, &service.Active); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		config.Services = append(config.Services, service)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -476,17 +579,19 @@ func (s *Store) GetShippingConfig(ctx context.Context, shopID string) (*Shipping
 	}
 
 	rows, err = s.SQL.QueryContext(ctx, `
-		SELECT carrier_code, zone_code, rate_mode, amount::text, currency::text, active
+		SELECT carrier_code, service_code, zone_code, rate_version::text,
+		       rate_mode, amount::text, currency::text, active
 		FROM shipping_rates
 		WHERE shop_id = $1
-		ORDER BY carrier_code, zone_code
+		ORDER BY carrier_code, service_code, zone_code
 	`, shopID)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var rate ShippingRate
-		if err := rows.Scan(&rate.CarrierCode, &rate.ZoneCode, &rate.Mode, &rate.Amount, &rate.Currency, &rate.Active); err != nil {
+		if err := rows.Scan(&rate.CarrierCode, &rate.ServiceCode, &rate.ZoneCode, &rate.RateVersion,
+			&rate.Mode, &rate.Amount, &rate.Currency, &rate.Active); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -504,9 +609,9 @@ func (s *Store) GetShippingConfig(ctx context.Context, shopID string) (*Shipping
 		rules, err := s.SQL.QueryContext(ctx, `
 			SELECT min_weight_grams, max_weight_grams, min_subtotal::text, max_subtotal::text, amount::text
 			FROM shipping_rate_rules
-			WHERE shop_id = $1 AND carrier_code = $2 AND zone_code = $3
+			WHERE shop_id = $1 AND carrier_code = $2 AND service_code = $3 AND zone_code = $4
 			ORDER BY min_weight_grams, min_subtotal
-		`, shopID, rate.CarrierCode, rate.ZoneCode)
+		`, shopID, rate.CarrierCode, rate.ServiceCode, rate.ZoneCode)
 		if err != nil {
 			return nil, err
 		}
@@ -542,6 +647,10 @@ func (s *Store) ReplaceShippingConfig(ctx context.Context, shopID string, config
 	if s == nil || s.SQL == nil {
 		return errors.New("store not configured")
 	}
+	config, err := normalizeShippingConfig(config)
+	if err != nil {
+		return err
+	}
 	tx, err := s.SQL.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -571,6 +680,14 @@ func (s *Store) ReplaceShippingConfig(ctx context.Context, shopID string, config
 			return err
 		}
 	}
+	for _, service := range config.Services {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO shipping_services (shop_id, carrier_code, code, name, active)
+			VALUES ($1, $2, $3, $4, $5)
+		`, shopID, service.CarrierCode, service.Code, service.Name, service.Active); err != nil {
+			return err
+		}
+	}
 	for _, zone := range config.Zones {
 		countries, err := json.Marshal(zone.CountryCodes)
 		if err != nil {
@@ -584,6 +701,20 @@ func (s *Store) ReplaceShippingConfig(ctx context.Context, shopID string, config
 		}
 	}
 	for _, rate := range config.Rates {
+		rateVersion, err := newShippingRateVersion()
+		if err != nil {
+			return err
+		}
+		serviceName := ""
+		for _, service := range config.Services {
+			if service.CarrierCode == rate.CarrierCode && service.Code == rate.ServiceCode {
+				serviceName = service.Name
+				break
+			}
+		}
+		if serviceName == "" {
+			return fmt.Errorf("shipping rate references unknown service %q", rate.ServiceCode)
+		}
 		mode := rate.Mode
 		if mode == "" {
 			mode = "fixed"
@@ -593,19 +724,40 @@ func (s *Store) ReplaceShippingConfig(ctx context.Context, shopID string, config
 			amount = "0"
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO shipping_rates (shop_id, carrier_code, zone_code, rate_mode, amount, currency, active)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-		`, shopID, rate.CarrierCode, rate.ZoneCode, mode, amount, rate.Currency, rate.Active); err != nil {
+			INSERT INTO shipping_rates (
+				shop_id, carrier_code, service_code, zone_code, rate_version, rate_mode, amount, currency, active
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, shopID, rate.CarrierCode, rate.ServiceCode, rate.ZoneCode, rateVersion, mode, amount, rate.Currency, rate.Active); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO shipping_rate_versions (
+				rate_version, shop_id, carrier_code, service_code, service_name, zone_code,
+				rate_mode, amount, currency, active
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`, rateVersion, shopID, rate.CarrierCode, rate.ServiceCode, serviceName,
+			rate.ZoneCode, mode, amount, rate.Currency, rate.Active); err != nil {
 			return err
 		}
 		for _, rule := range rate.Rules {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO shipping_rate_rules (
-					shop_id, carrier_code, zone_code, min_weight_grams, max_weight_grams,
+					shop_id, carrier_code, service_code, zone_code, min_weight_grams, max_weight_grams,
 					min_subtotal, max_subtotal, amount
 				)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			`, shopID, rate.CarrierCode, rate.ZoneCode, rule.MinWeightGrams, rule.MaxWeightGrams,
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			`, shopID, rate.CarrierCode, rate.ServiceCode, rate.ZoneCode, rule.MinWeightGrams, rule.MaxWeightGrams,
+				rule.MinSubtotal, rule.MaxSubtotal, rule.Amount); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO shipping_rate_version_rules (
+					rate_version, min_weight_grams, max_weight_grams, min_subtotal, max_subtotal, amount
+				)
+				VALUES ($1, $2, $3, $4, $5, $6)
+			`, rateVersion, rule.MinWeightGrams, rule.MaxWeightGrams,
 				rule.MinSubtotal, rule.MaxSubtotal, rule.Amount); err != nil {
 				return err
 			}

@@ -28,10 +28,15 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 			shippingConfig.Carriers[index].Active = true
 		}
 	}
-	shippingConfig.Rates = []store.ShippingRate{{
-		CarrierCode: "colissimo", ZoneCode: shippingConfig.Zones[0].Code,
-		Amount: "6.90", Currency: "EUR", Active: true,
-	}}
+	shippingConfig.Services = append(shippingConfig.Services, store.ShippingService{
+		CarrierCode: "colissimo", Code: "home", Name: "Domicile", Active: true,
+	}, store.ShippingService{
+		CarrierCode: "colissimo", Code: "express", Name: "Express", Active: true,
+	})
+	shippingConfig.Rates = []store.ShippingRate{
+		{CarrierCode: "colissimo", ServiceCode: "home", ZoneCode: shippingConfig.Zones[0].Code, Amount: "6.90", Currency: "EUR", Active: true},
+		{CarrierCode: "colissimo", ServiceCode: "express", ZoneCode: shippingConfig.Zones[0].Code, Amount: "12.90", Currency: "EUR", Active: true},
+	}
 	if err := db.ReplaceShippingConfig(context.Background(), seed.ShopID, *shippingConfig); err != nil {
 		t.Fatalf("configure shipping for checkout: %v", err)
 	}
@@ -98,12 +103,34 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	}
 	var shippingQuoteData struct {
 		Data []struct {
-			QuoteID string `json:"quote_id"`
+			QuoteID     string `json:"quote_id"`
+			ServiceCode string `json:"service_code"`
+			ServiceName string `json:"service_name"`
+			RateVersion string `json:"rate_version"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(shippingQuote.Body.Bytes(), &shippingQuoteData); err != nil ||
-		len(shippingQuoteData.Data) != 1 || shippingQuoteData.Data[0].QuoteID == "" {
+	if err := json.Unmarshal(shippingQuote.Body.Bytes(), &shippingQuoteData); err != nil {
 		t.Fatalf("decode cart shipping quote id: %+v, error = %v", shippingQuoteData, err)
+	}
+	var homeQuote *struct {
+		QuoteID     string `json:"quote_id"`
+		ServiceCode string `json:"service_code"`
+		ServiceName string `json:"service_name"`
+		RateVersion string `json:"rate_version"`
+	}
+	foundExpress := false
+	for index := range shippingQuoteData.Data {
+		quote := &shippingQuoteData.Data[index]
+		if quote.ServiceCode == "home" {
+			homeQuote = quote
+		}
+		if quote.ServiceCode == "express" && quote.ServiceName == "Express" && quote.RateVersion != "" {
+			foundExpress = true
+		}
+	}
+	if len(shippingQuoteData.Data) != 2 || homeQuote == nil || homeQuote.QuoteID == "" ||
+		homeQuote.ServiceName != "Domicile" || homeQuote.RateVersion == "" || !foundExpress {
+		t.Fatalf("shipping service quotes = %+v, want home and express for one carrier", shippingQuoteData.Data)
 	}
 
 	queryBody := `{"query":"{ products { slug } product(id: \"` + seed.ProductID + `\") { slug variants { prices { amount } } } categories { slug } cart { total { amount currency } } }"}`
@@ -112,12 +139,14 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		t.Fatalf("GraphQL status/body = %d/%s", graphqlResponse.Code, graphqlResponse.Body)
 	}
 
-	checkoutBody := `{"email":"checkout@example.com","name":"Checkout integration","shipping_carrier_code":"colissimo","expected_shipping_total":"6.9000","expected_shipping_quote_id":"` + shippingQuoteData.Data[0].QuoteID + `","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
+	checkoutBody := `{"email":"checkout@example.com","name":"Checkout integration","shipping_carrier_code":"colissimo","shipping_service_code":"home","expected_shipping_total":"6.9000","expected_shipping_quote_id":"` + homeQuote.QuoteID + `","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
 	checkoutResponse := performAPIRequest(mux, http.MethodPost, "/v1/checkout", "Bearer "+created.Data.Token, checkoutBody)
 	if checkoutResponse.Code != http.StatusCreated ||
 		!strings.Contains(checkoutResponse.Body.String(), `"shipping_total":"6.9000"`) ||
 		!strings.Contains(checkoutResponse.Body.String(), `"grand_total":"184.9000"`) ||
-		!strings.Contains(checkoutResponse.Body.String(), `"shipping_carrier_name":"Colissimo"`) {
+		!strings.Contains(checkoutResponse.Body.String(), `"shipping_carrier_name":"Colissimo"`) ||
+		!strings.Contains(checkoutResponse.Body.String(), `"shipping_service_name":"Domicile"`) ||
+		!strings.Contains(checkoutResponse.Body.String(), `"shipping_rate_version":"`+homeQuote.RateVersion+`"`) {
 		t.Fatalf("REST checkout status/body = %d/%s", checkoutResponse.Code, checkoutResponse.Body)
 	}
 	var createdOrder struct {
@@ -179,6 +208,8 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	if orderDetail.Code != http.StatusOK || !strings.Contains(orderDetail.Body.String(), `"email":"checkout@example.com"`) ||
 		!strings.Contains(orderDetail.Body.String(), `"sku":"CABAS-LIN-NAT"`) ||
 		!strings.Contains(orderDetail.Body.String(), `"shipping_carrier_name":"Colissimo"`) ||
+		!strings.Contains(orderDetail.Body.String(), `"shipping_service_name":"Domicile"`) ||
+		!strings.Contains(orderDetail.Body.String(), `"shipping_rate_version":"`+homeQuote.RateVersion+`"`) ||
 		!strings.Contains(orderDetail.Body.String(), `"shipping_zone_name":"France et Union européenne"`) {
 		t.Fatalf("admin order detail status/body = %d/%s; want customer, line and shipping snapshots", orderDetail.Code, orderDetail.Body)
 	}
@@ -189,8 +220,10 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		t.Fatalf("admin shipping config status/body = %d/%s", shippingConfigResponse.Code, shippingConfigResponse.Body)
 	}
 	replaceShipping := performAPIRequest(mux, http.MethodPut, "/v1/admin/shipping", staffAuthorization,
-		`{"carriers":[{"code":"colissimo","name":"Colissimo","active":true}],"zones":[{"code":"france-ue","name":"France et Union européenne","country_codes":["FR"],"active":true}],"rates":[{"carrier_code":"colissimo","zone_code":"france-ue","amount":"6.90","currency":"EUR","active":true}]}`)
-	if replaceShipping.Code != http.StatusOK || !strings.Contains(replaceShipping.Body.String(), `"amount":"6.90"`) {
+		`{"carriers":[{"code":"colissimo","name":"Colissimo","active":true}],"services":[{"carrier_code":"colissimo","code":"home","name":"Domicile","active":true},{"carrier_code":"colissimo","code":"express","name":"Express","active":true},{"carrier_code":"colissimo","code":"legacy","name":"Offre historique","active":true}],"zones":[{"code":"france-ue","name":"France et Union européenne","country_codes":["FR"],"active":true}],"rates":[{"carrier_code":"colissimo","service_code":"home","zone_code":"france-ue","amount":"6.90","currency":"EUR","active":true},{"carrier_code":"colissimo","service_code":"express","zone_code":"france-ue","amount":"12.90","currency":"EUR","active":true},{"carrier_code":"colissimo","service_code":"legacy","zone_code":"france-ue","amount":"6.90","currency":"EUR","active":true}]}`)
+	if replaceShipping.Code != http.StatusOK || !strings.Contains(replaceShipping.Body.String(), `"service_code":"home"`) ||
+		!strings.Contains(replaceShipping.Body.String(), `"service_code":"express"`) ||
+		!strings.Contains(replaceShipping.Body.String(), `"rate_version":"`) {
 		t.Fatalf("admin shipping update status/body = %d/%s; want saved tariff", replaceShipping.Code, replaceShipping.Body)
 	}
 

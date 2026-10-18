@@ -15,8 +15,8 @@ tests before editing.
 
 ## Verified restart baseline (18 October 2026)
 
-- The transport checkpoint is commit `48f04b3` (`Fix MariaDB shipping
-  migrations`), published to `origin/main`.
+- The transport checkpoint is commit `c3dd43b` (`Bind checkout to shipping
+  quote fingerprint`), published to `origin/main`.
 - MariaDB 11.8.2 local integration passed against a dedicated database after
   correcting the oversized composite key and making migration `0003` retryable
   after partial DDL. The local portable server is stopped; its user-profile
@@ -28,13 +28,13 @@ tests before editing.
 - Fresh validation passed: `go test -count=1 ./...` and
   `go test -tags integration -count=1 ./internal/store -run
   '^TestMariaDBMigrationAndCommerceFlow$'` against local MariaDB 11.8.2.
-- The PostgreSQL integration result remains unconfirmed; PostgreSQL is still
-  the reference connector and should be validated before claiming parity.
+- The local follow-up adds selectable services and immutable UUID tariff
+  revisions. Run both PostgreSQL and dedicated MariaDB integrations for this
+  slice before committing it.
 
-The current transport refinement adds quote fingerprint revalidation to close
-the same-price stale-rule gap. Continue with selectable native services and
-versioned tariff rules; run the embedded PostgreSQL integration test before
-claiming connector parity. Do not begin carrier API integrations or introduce
+The current transport refinement separates selectable services from carriers
+and archives tariff revisions with order snapshots. Continue with provider-
+neutral native rules; do not begin carrier API integrations or introduce
 package-allocation semantics without an explicit decision.
 
 ## Product direction

@@ -131,12 +131,20 @@ func adminShippingConfig(w http.ResponseWriter, r *http.Request) {
 		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "shipping configuration could not be saved"})
 		return
 	}
-	writePrivateJSON(w, http.StatusOK, map[string]any{"data": config})
+	savedConfig, err := reader.GetShippingConfig(r.Context(), session.ShopID)
+	if err != nil {
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "shipping configuration could not be read"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": savedConfig})
 }
 
 func validateShippingConfig(config *store.ShippingConfig) string {
-	if len(config.Carriers) > 100 || len(config.Zones) > 100 || len(config.Rates) > 1000 {
+	if len(config.Carriers) > 100 || len(config.Services) > 500 || len(config.Zones) > 100 || len(config.Rates) > 1000 {
 		return "shipping configuration exceeds the supported limits"
+	}
+	if config.Services == nil {
+		config.Services = []store.ShippingService{}
 	}
 	carriers := make(map[string]struct{}, len(config.Carriers))
 	for index := range config.Carriers {
@@ -153,6 +161,27 @@ func validateShippingConfig(config *store.ShippingConfig) string {
 			return "carrier codes must be unique"
 		}
 		carriers[carrier.Code] = struct{}{}
+	}
+	services := make(map[string]struct{}, len(config.Services))
+	for index := range config.Services {
+		service := &config.Services[index]
+		service.CarrierCode = strings.TrimSpace(service.CarrierCode)
+		service.Code = strings.TrimSpace(service.Code)
+		service.Name = strings.TrimSpace(service.Name)
+		if _, exists := carriers[service.CarrierCode]; !exists {
+			return "each service must refer to a configured carrier"
+		}
+		if !shippingCodePattern.MatchString(service.Code) {
+			return "service codes must use lowercase letters, numbers and single hyphens"
+		}
+		if service.Name == "" || len(service.Name) > 120 {
+			return "service names must contain 1 to 120 characters"
+		}
+		key := service.CarrierCode + "\x00" + service.Code
+		if _, exists := services[key]; exists {
+			return "service codes must be unique per carrier"
+		}
+		services[key] = struct{}{}
 	}
 	zones := make(map[string]struct{}, len(config.Zones))
 	countries := make(map[string]string)
@@ -195,6 +224,7 @@ func validateShippingConfig(config *store.ShippingConfig) string {
 	for index := range config.Rates {
 		rate := &config.Rates[index]
 		rate.CarrierCode = strings.TrimSpace(rate.CarrierCode)
+		rate.ServiceCode = strings.TrimSpace(rate.ServiceCode)
 		rate.ZoneCode = strings.TrimSpace(rate.ZoneCode)
 		rate.Amount = strings.TrimSpace(rate.Amount)
 		rate.Currency = strings.TrimSpace(rate.Currency)
@@ -208,9 +238,22 @@ func validateShippingConfig(config *store.ShippingConfig) string {
 		if _, exists := zones[rate.ZoneCode]; !exists {
 			return "each rate must refer to a configured zone"
 		}
-		key := rate.CarrierCode + "\x00" + rate.ZoneCode
+		if rate.ServiceCode == "" {
+			rate.ServiceCode = "legacy"
+		}
+		serviceKey := rate.CarrierCode + "\x00" + rate.ServiceCode
+		if _, exists := services[serviceKey]; !exists && rate.ServiceCode == "legacy" {
+			config.Services = append(config.Services, store.ShippingService{
+				CarrierCode: rate.CarrierCode, Code: rate.ServiceCode, Name: "Offre historique", Active: true,
+			})
+			services[serviceKey] = struct{}{}
+		}
+		if _, exists := services[serviceKey]; !exists {
+			return "each rate must refer to a configured service"
+		}
+		key := rate.CarrierCode + "\x00" + rate.ServiceCode + "\x00" + rate.ZoneCode
 		if _, exists := rates[key]; exists {
-			return "each carrier can have only one rate per zone"
+			return "each service can have only one rate per zone"
 		}
 		rates[key] = struct{}{}
 		if rate.Mode != "fixed" && rate.Mode != "weight_value" {

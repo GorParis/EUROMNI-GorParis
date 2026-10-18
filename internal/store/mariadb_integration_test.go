@@ -63,8 +63,11 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 			shippingConfig.Carriers[index].Active = true
 		}
 	}
+	shippingConfig.Services = []ShippingService{{
+		CarrierCode: "colissimo", Code: "legacy", Name: "Offre historique", Active: true,
+	}}
 	shippingConfig.Rates = []ShippingRate{{
-		CarrierCode: "colissimo", ZoneCode: "france-ue", Mode: "fixed",
+		CarrierCode: "colissimo", ServiceCode: "legacy", ZoneCode: "france-ue", Mode: "fixed",
 		Amount: "6.90", Currency: "EUR", Active: true,
 	}}
 	if err := store.ReplaceShippingConfig(ctx, seed.ShopID, *shippingConfig); err != nil {
@@ -241,8 +244,11 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 			config.Carriers[index].Active = true
 		}
 	}
+	config.Services = append(config.Services, ShippingService{
+		CarrierCode: "colissimo", Code: "home", Name: "Domicile", Active: true,
+	})
 	config.Rates = []ShippingRate{{
-		CarrierCode: "colissimo", ZoneCode: "france-ue", Mode: "weight_value",
+		CarrierCode: "colissimo", ServiceCode: "home", ZoneCode: "france-ue", Mode: "weight_value",
 		Currency: "EUR", Active: true,
 		Rules: []ShippingRateRule{{
 			MinWeightGrams: 0, MinSubtotal: "0", Amount: "4.50",
@@ -259,12 +265,13 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	}
 	quotes, err := store.ListCartShippingOptions(ctx, seed.ShopID, weightedTokenHash[:], "FR")
 	if err != nil || len(quotes) != 1 || quotes[0].Amount != "4.5000" ||
+		quotes[0].ServiceCode != "home" || quotes[0].RateVersion == "" ||
 		quotes[0].WeightGrams == nil || *quotes[0].WeightGrams != 750 {
 		t.Fatalf("MariaDB weight-value quote = %#v, error = %v", quotes, err)
 	}
 	weightedOrder, err := store.CheckoutCart(ctx, seed.ShopID, weightedTokenHash[:], CheckoutDetails{
 		Email: weightedEmail, Name: "MariaDB Weight Value",
-		ShippingCarrierCode: "colissimo", ExpectedShippingTotal: quotes[0].Amount,
+		ShippingCarrierCode: "colissimo", ShippingServiceCode: "home", ExpectedShippingTotal: quotes[0].Amount,
 		ExpectedShippingQuoteID: quotes[0].QuoteID,
 		ShippingAddress: ShippingAddress{
 			Line1: "1 rue de test", City: "Paris", PostalCode: "75001", Country: "FR",
@@ -274,9 +281,25 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 		t.Fatalf("checkout MariaDB weight-value cart: %v", err)
 	}
 	weightedOrderID = weightedOrder.ID
-	if weightedOrder.ShippingRateMode != "weight_value" || weightedOrder.ShippingWeightGrams == nil ||
+	if weightedOrder.ShippingRateMode != "weight_value" || weightedOrder.ShippingServiceCode != "home" ||
+		weightedOrder.ShippingServiceName != "Domicile" || weightedOrder.ShippingRateVersion == "" || weightedOrder.ShippingWeightGrams == nil ||
 		*weightedOrder.ShippingWeightGrams != 750 || len(weightedOrder.ShippingRateRule) == 0 {
 		t.Fatalf("unexpected MariaDB weight-value order snapshot: %#v", weightedOrder)
+	}
+	previousRateVersion := weightedOrder.ShippingRateVersion
+	updatedConfig, err := store.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("read MariaDB shipping config for version update: %v", err)
+	}
+	updatedConfig.Rates[0].Rules[0].Amount = "4.60"
+	if err := store.ReplaceShippingConfig(ctx, seed.ShopID, *updatedConfig); err != nil {
+		t.Fatalf("save new MariaDB shipping rate version: %v", err)
+	}
+	var archivedVersionCount int
+	if err := database.QueryRowContext(ctx,
+		`SELECT count(*) FROM shipping_rate_versions WHERE rate_version = $1`, previousRateVersion,
+	).Scan(&archivedVersionCount); err != nil || archivedVersionCount != 1 {
+		t.Fatalf("previous MariaDB rate version count = %d, error = %v; want 1", archivedVersionCount, err)
 	}
 }
 
