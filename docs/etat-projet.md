@@ -1,43 +1,36 @@
 # État du projet EUROMNI
 
-## Reprise en cours — intégration transport (18 octobre 2026)
+## Reprise en cours — historique des tarifs (18 octobre 2026)
 
-Le travail local porte sur la première grille native de tarifs de transport :
-tarifs fixes conservés, poids facultatif des variantes, calcul par intersection
-poids × sous-total, devis au checkout et snapshot de commande. L’administration
-permet de configurer ces règles. Les migrations, adaptateurs et tests PostgreSQL
-et MariaDB correspondants sont présents dans les changements locaux.
+Point de sauvegarde publié : commit `0b9c7a6` (`Separate shipping services and
+rate versions`) sur `main`, poussé vers `origin/main`. Le transport distingue
+maintenant transporteur, service et tarif; le checkout choisit le service et
+enregistre sa version UUID. Les tarifs préexistants sont migrés vers le service
+`legacy` (« Offre historique ») sans perte de prix.
 
-Point de sauvegarde publié : commit `9fe5e7c` (`Add weight-value shipping
-rates`) sur `main`, poussé vers `origin/main`. Il contient l’intégration
-transport et ses documents. Une revue a ensuite relevé une contrainte `rate_mode`
-et une clé trop longue dans la migration MariaDB. Les changements locaux non
-commités corrigent `0003_shipping_weight_value_rates.sql`, le rendent rejouable
-après un DDL partiel, ajoutent la contrainte `0004_shipping_rate_mode_check.sql`
-et leurs tests/documentation. Les préserver; ne pas réécrire le checkpoint
-publié.
+Les tables `shipping_rate_versions` et `shipping_rate_version_rules` sont un
+historique append-only. Chaque sauvegarde de configuration crée une nouvelle
+version et copie les règles; les commandes pointent vers la version sélectionnée.
+L’admin expose la version courante, mais ne propose pas encore la consultation,
+la comparaison ou la restauration de versions antérieures.
 
-Vérification exécutée :
+Validations réellement exécutées pour le checkpoint :
 
-```sh
-go test -count=1 ./internal/api ./internal/store ./internal/migrations
-```
+- `go test -count=1 ./...` : 233 tests passent.
+- `go test -tags integration -count=1 ./internal/store -run TestPostgresStoreIntegration` : passe sur PostgreSQL embarqué.
+- `go test -tags integration -count=1 ./internal/api -run TestPostgresAPIEndToEnd` : passe sur PostgreSQL embarqué.
+- `go test -v -tags integration -count=1 ./internal/store -run TestMariaDBMigrationAndCommerceFlow` : passe sur MariaDB 11.8.2 et une base locale dédiée.
+- `node --check frontend/admin/admin.js` et `node --check frontend/euromni-catalog.js` : passent.
 
-Résultats : `go test -count=1 ./...` passe; le scénario
-`go test -tags integration -count=1 ./internal/store -run
-'^TestMariaDBMigrationAndCommerceFlow$'` passe sur MariaDB 11.8.2 avec une base
-locale dédiée. Le premier passage a détecté la clé composite trop longue; le
-second, sur la même base laissée en DDL partiel, a confirmé la reprise et le
-flux commerce. Cela valide ce scénario, pas le connecteur MariaDB en général.
-Ne pas annoncer d’autres tests d’intégration comme exécutés sans leur résultat.
+L’instance MariaDB portable est arrêtée; ses binaires et son datadir dédié sont
+conservés sous `%LOCALAPPDATA%`. La validation ci-dessus couvre les parcours
+testés, pas une qualification générale de MariaDB sur l’hébergeur IONOS.
 
-Revue du code : bornes basses inclusives et hautes exclusives; les tests
-PostgreSQL couvrent les limites de poids et de sous-total, l’absence de fallback,
-le devis modifié et le snapshot. L’intégration PostgreSQL reste à confirmer. Le
-serveur MariaDB portable installé sous `%LOCALAPPDATA%` a été arrêté après le
-test; ses binaires et son datadir dédié sont conservés. Le découpage transporteur
-/ service, les origines, colis, délais et devis externes restent hors de cette
-première tranche.
+**Prochaine reprise recommandée**: exposer l’historique par service et zone dans
+l’admin, comparer les versions et permettre une restauration non destructive.
+La restauration doit publier une nouvelle révision; aucune version historique
+ne doit être modifiée ou supprimée. Les tests doivent prouver que la commande
+existante reste attachée à sa version d’origine après une restauration.
 
 ## Vision cible
 
@@ -164,8 +157,8 @@ Le front existant est un bon socle de démonstration, mais il n’est pas encore
 2. finaliser la matrice de portabilité runtime
 3. verrouiller le manifeste/versionnement des modules
 4. sécuriser l’ingestion et la publication des artefacts
-5. terminer la validation de la première grille de transport et maintenir la
-   parité PostgreSQL / MariaDB
+5. ajouter la consultation, comparaison et restauration non destructive de
+   l’historique des tarifs; maintenir la parité PostgreSQL / MariaDB
 6. étendre les schémas dynamiques aux données métier requises et ajouter des
    règles déterministes de lowering pour d’autres triggers
 7. compléter le front-end en s’appuyant sur les flux validés

@@ -75,6 +75,32 @@ versions précédentes, y compris après remplacement/suppression du tarif coura
 La commande pointe vers la version et stocke aussi le nom du service accepté;
 elle reste donc interprétable après modification de la configuration.
 
+## Prochaine reprise : historique admin
+
+Le prochain incrément recommandé est une vue d’historique par transporteur,
+service et zone, avec consultation des montants/règles et restauration d’une
+version. La restauration doit recopier l’ancienne définition dans la
+configuration courante et créer un nouvel UUID; elle ne modifie jamais la ligne
+historique source. Conserver l’accès existant à la configuration sous
+autorisation admin.
+
+Critères d’acceptation :
+
+- l’admin peut lister les versions d’un tarif et lire leur service, zone,
+  horodatage, devise, mode, montant et règles ;
+- restaurer une version publie une nouvelle version et met à jour l’offre
+  courante sans supprimer ni modifier l’ancienne ;
+- une commande antérieure continue de référencer sa version d’origine après
+  changement ou restauration ;
+- accès non autorisé, version inconnue et paramètres invalides échouent sans
+  modifier la configuration ;
+- PostgreSQL et MariaDB ont le même comportement et des tests d’intégration
+  dédiés couvrent listing, restauration et snapshot historique.
+
+Ne pas ajouter à cette tranche les intégrations transporteur externes, les
+étiquettes, le colisage ou des délais contractuels. Aucun contrat de service,
+de priorité ou de frais supplémentaires n’est encore défini.
+
 L’admin configure les règles matricielles en JSON sous chaque tarif. Exemple :
 
 ```json

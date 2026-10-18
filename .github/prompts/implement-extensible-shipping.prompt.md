@@ -15,27 +15,27 @@ tests before editing.
 
 ## Verified restart baseline (18 October 2026)
 
-- The transport checkpoint is commit `c3dd43b` (`Bind checkout to shipping
-  quote fingerprint`), published to `origin/main`.
-- MariaDB 11.8.2 local integration passed against a dedicated database after
-  correcting the oversized composite key and making migration `0003` retryable
-  after partial DDL. The local portable server is stopped; its user-profile
-  binaries and dedicated data directory remain available.
-- The current slice retains fixed rates and adds optional product weight in
-  grams, weight-by-cart-subtotal rules, quote calculation, checkout price
-  revalidation, order snapshots, admin configuration, and PostgreSQL/MariaDB
-  migrations and tests.
-- Fresh validation passed: `go test -count=1 ./...` and
-  `go test -tags integration -count=1 ./internal/store -run
-  '^TestMariaDBMigrationAndCommerceFlow$'` against local MariaDB 11.8.2.
-- The local follow-up adds selectable services and immutable UUID tariff
-  revisions. Run both PostgreSQL and dedicated MariaDB integrations for this
-  slice before committing it.
+- Current `main` and `origin/main` point to `0b9c7a6` (`Separate shipping
+  services and rate versions`); the worktree was clean at this checkpoint.
+- Services are distinct from carriers; legacy carrier-only requests map to the
+  `legacy` service. Admin rate saves create UUID revisions and append immutable
+  tariff/rule snapshots. Orders store service code/name and the selected
+  revision.
+- The next bounded task is an admin history view by carrier/service/zone,
+  comparison of versions, and non-destructive restore. Restore by copying an
+  old definition into current config and saving it as a new version; never edit
+  historical rows. Preserve order-to-version references.
+- Do not add carrier API calls, labels, packaging, delivery estimates or new
+  pricing semantics in this task. Ask before expanding into those decisions.
+- Verified on the checkpoint: full Go suite (233 tests), PostgreSQL store/API
+  integrations, MariaDB 11.8.2 `TestMariaDBMigrationAndCommerceFlow`, and
+  `node --check` for admin/storefront scripts. The portable MariaDB server is
+  stopped; its user-profile install and dedicated datadir remain available.
 
-The current transport refinement separates selectable services from carriers
-and archives tariff revisions with order snapshots. Continue with provider-
-neutral native rules; do not begin carrier API integrations or introduce
-package-allocation semantics without an explicit decision.
+Before editing, inspect the current history schema, admin authorization pattern,
+config replacement transaction and order snapshot readers. Add route validation,
+authorization, PostgreSQL/MariaDB integration coverage, and update the transport
+docs. Do not commit or push unless asked.
 
 ## Product direction
 
