@@ -88,6 +88,15 @@ Les deux coexistent et parlent au **même** cœur de domaine :
 
 Pas deux modèles de données : un domaine Go, deux adaptateurs HTTP.
 
+## Marchés, locales et commerce transfrontalier
+
+Le modèle de marchés UE distingue pays, langue, devise, taxes, transport et
+moyens de paiement. Le français (`fr-FR`) reste la locale par défaut ; la langue
+ne se déduit pas automatiquement du pays de livraison. La prise en charge
+préparée des 27 États membres n’active pas à elle seule la vente ni des règles
+fiscales ou des tarifs. Voir le cadrage et les étapes dans
+[`docs/marches-localisation-europe.md`](marches-localisation-europe.md).
+
 ## 3. Front boutique
 
 - Web Components (Custom Elements + Shadow DOM) pour isoler styles et DOM.

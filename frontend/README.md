@@ -31,6 +31,13 @@ paiements et taxes ne sont pas encore calculés. La configuration initiale ne
 contient aucun tarif actif : un membre `owner` ou `admin` doit configurer les
 transporteurs, les zones et au moins un prix avant de pouvoir commander.
 
+Le cadrage des marchés distingue le pays de livraison, la langue, la devise,
+les taxes, le transport et le paiement. La boutique de démonstration conserve
+le français comme langue par défaut ; le code pays ne force pas la langue.
+L’extension aux 27 pays de l’UE ne les active pas automatiquement pour la vente
+ou la livraison. Voir [le modèle des marchés et localisations
+européens](../docs/marches-localisation-europe.md).
+
 Le seed de démonstration présente cinq produits : cabas, ceinture et chemise
 avec plusieurs tailles au choix pour les deux derniers, plus une tasse et une
 bougie en format unique.
