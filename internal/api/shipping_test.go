@@ -100,6 +100,36 @@ func TestValidateShippingConfig(t *testing.T) {
 			},
 			want: "currencies must use three uppercase letters",
 		},
+		{
+			name: "valid adjacent weight and subtotal bands",
+			mutate: func(config *store.ShippingConfig) {
+				config.Rates[0].Mode = "weight_value"
+				config.Rates[0].Amount = ""
+				config.Rates[0].Rules = []store.ShippingRateRule{
+					{MinWeightGrams: 0, MaxWeightGrams: int64Pointer(1000), MinSubtotal: "0", MaxSubtotal: stringPointer("50"), Amount: "5.90"},
+					{MinWeightGrams: 0, MaxWeightGrams: int64Pointer(1000), MinSubtotal: "50", Amount: "4.90"},
+					{MinWeightGrams: 1000, MinSubtotal: "0", Amount: "8.90"},
+				}
+			},
+		},
+		{
+			name: "overlapping weight and subtotal rules",
+			mutate: func(config *store.ShippingConfig) {
+				config.Rates[0].Mode = "weight_value"
+				config.Rates[0].Rules = []store.ShippingRateRule{
+					{MinWeightGrams: 0, MaxWeightGrams: int64Pointer(1000), MinSubtotal: "0", Amount: "5.90"},
+					{MinWeightGrams: 500, MinSubtotal: "50", Amount: "4.90"},
+				}
+			},
+			want: "weight_value rules cannot overlap",
+		},
+		{
+			name: "empty weight matrix",
+			mutate: func(config *store.ShippingConfig) {
+				config.Rates[0].Mode = "weight_value"
+			},
+			want: "weight_value rates require 1 to 200 rules",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -107,6 +137,7 @@ func TestValidateShippingConfig(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(&config)
 			}
+
 			got := validateShippingConfig(&config)
 			if got != test.want {
 				t.Fatalf("validation error = %q, want %q", got, test.want)
@@ -114,3 +145,7 @@ func TestValidateShippingConfig(t *testing.T) {
 		})
 	}
 }
+
+func int64Pointer(value int64) *int64 { return &value }
+
+func stringPointer(value string) *string { return &value }

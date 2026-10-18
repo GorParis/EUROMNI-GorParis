@@ -36,7 +36,8 @@ func TestMariaDBMigrationSourceStartsWithInstalledSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ordered) != 2 || ordered[0].name != "0001_mariadb_schema.sql" || ordered[1].name != "0002_mariadb_demo_seed.sql" {
+	if len(ordered) != 3 || ordered[0].name != "0001_mariadb_schema.sql" ||
+		ordered[1].name != "0002_mariadb_demo_seed.sql" || ordered[2].name != "0003_shipping_weight_value_rates.sql" {
 		t.Fatalf("unexpected MariaDB migration order: %#v", ordered)
 	}
 }

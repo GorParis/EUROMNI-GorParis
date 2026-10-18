@@ -63,6 +63,14 @@ Groupes :
 5. **CMS** — `pages`, `menus`
 6. **Sandbox** — `modules`, `shop_modules`, `module_kv`, `domain_events`
 
+Le modèle, l’état livré et la trajectoire des entités transport — règles fixes
+ou poids × sous-total, poids facultatifs des variantes, devis panier et
+snapshots — sont définis dans
+[`transport-extensible.md`](transport-extensible.md). Les migrations
+`0010_shipping_weight_value_rates.sql` (PostgreSQL) et
+`mariadb/0003_shipping_weight_value_rates.sql` ajoutent ces champs sans perdre
+les tarifs fixes ni les commandes historiques.
+
 ## Accès
 
 Seul le processus Go parle à Postgres. L’ABI Wasm (`catalog`, `cart`, `module.kv`, …) est la façade. Les modules n’ont pas de connection string.

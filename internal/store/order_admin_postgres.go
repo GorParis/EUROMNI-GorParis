@@ -58,11 +58,16 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 	}
 	var order AdminOrderView
 	var address sql.NullString
+	var weightGrams sql.NullInt64
+	var pricingSubtotal sql.NullString
+	var rateRule sql.NullString
 	err := s.SQL.QueryRowContext(ctx, `
 		SELECT o.id::text, o.number, o.status::text, o.currency::text,
 		       o.subtotal::text, o.tax_total::text, o.shipping_total::text, o.grand_total::text,
 		       COALESCE(o.shipping_carrier_code, ''), COALESCE(o.shipping_carrier_name, ''),
 		       COALESCE(o.shipping_zone_code, ''), COALESCE(o.shipping_zone_name, ''),
+		       o.shipping_rate_mode, o.shipping_weight_grams,
+		       o.shipping_pricing_subtotal::text, o.shipping_rate_rule::text,
 		       COALESCE((SELECT shipment.status::text FROM shipments shipment
 		                 WHERE shipment.order_id = o.id ORDER BY shipment.created_at DESC, shipment.id DESC LIMIT 1), ''),
 		       COALESCE((SELECT shipment.tracking FROM shipments shipment
@@ -76,6 +81,7 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 		&order.ID, &order.Number, &order.Status, &order.Currency,
 		&order.Subtotal, &order.TaxTotal, &order.ShippingTotal, &order.GrandTotal,
 		&order.ShippingCarrierCode, &order.ShippingCarrierName, &order.ShippingZoneCode, &order.ShippingZoneName,
+		&order.ShippingRateMode, &weightGrams, &pricingSubtotal, &rateRule,
 		&order.ShipmentStatus, &order.Tracking,
 		&order.Email, &order.Name, &address, &order.CreatedAt,
 	)
@@ -88,6 +94,15 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 	if address.Valid && address.String != "" {
 		if err := json.Unmarshal([]byte(address.String), &order.ShippingAddress); err != nil {
 			return nil, err
+		}
+		if weightGrams.Valid {
+			order.ShippingWeightGrams = &weightGrams.Int64
+		}
+		if pricingSubtotal.Valid {
+			order.ShippingPricingSubtotal = &pricingSubtotal.String
+		}
+		if rateRule.Valid {
+			order.ShippingRateRule = json.RawMessage(rateRule.String)
 		}
 	}
 	rows, err := s.SQL.QueryContext(ctx, `

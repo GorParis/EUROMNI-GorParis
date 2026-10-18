@@ -601,6 +601,10 @@ class EuromniCatalog extends HTMLElement {
     return this.getAttribute("shipping-src") || "/v1/shipping-options";
   }
 
+  get shippingQuoteSrc() {
+    return this.getAttribute("shipping-quote-src") || "/v1/shipping-quotes";
+  }
+
   async loadEUCountries() {
     const select = this.shadowRoot.querySelector('[name="country"]');
     const status = this.shadowRoot.querySelector(".shipping-options-status");
@@ -663,18 +667,29 @@ class EuromniCatalog extends HTMLElement {
     this.shippingController = controller;
     status.textContent = "";
     try {
-      const endpoint = new URL(this.shippingSrc, window.location.href);
-      endpoint.searchParams.set("country", country);
-      const response = await fetch(endpoint, {
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
-      const body = await response.json();
-      if (!response.ok) {
-        throw new Error(body?.error || "Les modes de livraison sont indisponibles.");
+      let options;
+      if (this.cartToken) {
+        options = await this.requestCart(this.shippingQuoteSrc, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ country }),
+          signal: controller.signal,
+        });
+      } else {
+        const endpoint = new URL(this.shippingSrc, window.location.href);
+        endpoint.searchParams.set("country", country);
+        const response = await fetch(endpoint, {
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body?.error || "Les modes de livraison sont indisponibles.");
+        }
+        options = body.data;
       }
       if (controller.signal.aborted) return;
-      this.shippingOptions = Array.isArray(body.data) ? body.data : [];
+      this.shippingOptions = Array.isArray(options) ? options : [];
       select.replaceChildren();
       const prompt = document.createElement("option");
       prompt.value = "";
@@ -1010,7 +1025,9 @@ class EuromniCatalog extends HTMLElement {
             ? "Le stock ne permet plus cette commande."
             : body && body.error === "shipping method unavailable for this destination"
               ? "Ce mode de livraison n’est plus disponible pour cette destination. Choisissez-en un autre."
-            : "Cette commande ne peut pas être finalisée.");
+            : body && body.error === "shipping quote changed"
+              ? "Le tarif de livraison a changé. Vérifiez le nouveau devis avant de commander."
+              : "Cette commande ne peut pas être finalisée.");
       }
       if (response.status === 401 && this.cartToken) {
         this.clearCartToken();
@@ -1068,6 +1085,8 @@ class EuromniCatalog extends HTMLElement {
       });
       this.renderCart(cart);
       this.setCartStatus("Article ajouté à votre panier.");
+      const country = this.shadowRoot.querySelector('[name="country"]').value;
+      if (country) await this.loadShippingOptions(country);
       const content = this.shadowRoot.querySelector(".cart-content");
       const toggle = this.shadowRoot.querySelector(".cart-toggle");
       content.hidden = false;
@@ -1089,6 +1108,8 @@ class EuromniCatalog extends HTMLElement {
     try {
       const cart = await this.requestCart(this.cartSrc);
       this.renderCart(cart);
+      const country = this.shadowRoot.querySelector('[name="country"]').value;
+      if (country) await this.loadShippingOptions(country);
       if (cart.items.length > 0) {
         this.setCartStatus("");
       }
@@ -1110,6 +1131,9 @@ class EuromniCatalog extends HTMLElement {
       email: values.email,
       name: values.name,
       shipping_carrier_code: values.shipping_carrier_code,
+      expected_shipping_total: this.shippingOptions.find(
+        (option) => option.carrier_code === values.shipping_carrier_code,
+      )?.amount || "",
       shipping_address: {
         line1: values.line1,
         line2: values.line2,
@@ -1137,6 +1161,9 @@ class EuromniCatalog extends HTMLElement {
       );
     } catch (error) {
       this.setCartStatus(error.message, true);
+      if (error.message === "Le tarif de livraison a changé. Vérifiez le nouveau devis avant de commander.") {
+        await this.loadShippingOptions(values.country);
+      }
     } finally {
       this.cartBusy = false;
       button.disabled = false;

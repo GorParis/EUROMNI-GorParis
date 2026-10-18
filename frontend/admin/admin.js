@@ -458,6 +458,9 @@
     });
 
     shippingConfig.rates.forEach((rate, index) => {
+      if (!rate.mode) rate.mode = "fixed";
+      if (!Array.isArray(rate.rules)) rate.rules = [];
+      if (typeof rate.ruleText !== "string") rate.ruleText = JSON.stringify(rate.rules, null, 2);
       const card = document.createElement("article");
       card.className = "card";
       const carrierLabel = document.createElement("label");
@@ -484,15 +487,46 @@
       }
       zoneSelect.addEventListener("change", () => { rate.zone_code = zoneSelect.value; });
       zoneLabel.append(zoneSelect);
-      card.append(
-        carrierLabel,
-        zoneLabel,
-        shippingField("Tarif", rate.amount, (value) => { rate.amount = value; }, {
+      const modeLabel = document.createElement("label");
+      modeLabel.textContent = "Calcul du tarif";
+      const modeSelect = document.createElement("select");
+      for (const [value, labelText] of [["fixed", "Forfait"], ["weight_value", "Poids × sous-total"]]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = labelText;
+        option.selected = rate.mode === value;
+        modeSelect.append(option);
+      }
+      modeSelect.addEventListener("change", () => {
+        rate.mode = modeSelect.value;
+        renderShipping(shippingConfig);
+      });
+      modeLabel.append(modeSelect);
+      const fields = [carrierLabel, zoneLabel, modeLabel];
+      if (rate.mode === "fixed") {
+        fields.push(shippingField("Tarif forfaitaire", rate.amount, (value) => { rate.amount = value; }, {
           required: true,
           type: "number",
           min: "0",
           step: "0.0001",
-        }),
+        }));
+      } else {
+        const rulesLabel = document.createElement("label");
+        rulesLabel.textContent = "Tranches poids × sous-total — JSON";
+        const rulesEditor = document.createElement("textarea");
+        rulesEditor.spellcheck = false;
+        rulesEditor.value = rate.ruleText;
+        rulesEditor.addEventListener("input", () => { rate.ruleText = rulesEditor.value; });
+        rulesLabel.append(rulesEditor);
+        const hint = document.createElement("p");
+        hint.className = "muted";
+        hint.textContent =
+          'Poids en grammes (min inclus, max exclu ; max null = sans limite). Sous-total produits hors taxes et livraison (mêmes bornes). Exemple : [{"min_weight_grams":0,"max_weight_grams":1000,"min_subtotal":"0","max_subtotal":null,"amount":"5.90"}].';
+        rulesLabel.append(hint);
+        fields.push(rulesLabel);
+      }
+      card.append(
+        ...fields,
         shippingField("Devise", rate.currency, (value) => { rate.currency = value.toUpperCase(); }, {
           required: true,
           pattern: "[A-Z]{3}",
@@ -564,7 +598,7 @@
     productForm.elements.status.value = "draft";
     productForm.elements.translations.value = '[\n  { "locale": "fr-FR", "name": "Nom du produit", "description": "" }\n]';
     productForm.elements.media.value = "[]";
-    productForm.elements.variants.value = '[\n  {\n    "sku": "ARTICLE-001",\n    "options": {},\n    "prices": [{ "currency": "EUR", "amount": "12.0000" }],\n    "inventory": { "quantity": 10, "track": true }\n  }\n]';
+    productForm.elements.variants.value = '[\n  {\n    "sku": "ARTICLE-001",\n    "options": {},\n    "weight_grams": null,\n    "prices": [{ "currency": "EUR", "amount": "12.0000" }],\n    "inventory": { "quantity": 10, "track": true }\n  }\n]';
     for (const checkbox of productForm.querySelectorAll('input[name="category_ids"]')) checkbox.checked = false;
     document.querySelector("#product-form-title").textContent = "Créer un produit";
     document.querySelector("#cancel-product-edit").hidden = true;
@@ -744,6 +778,7 @@
     shippingConfig.rates.push({
       carrier_code: shippingConfig.carriers[0]?.code || "",
       zone_code: shippingConfig.zones[0]?.code || "",
+      mode: "fixed",
       amount: "0.00",
       currency: "EUR",
       active: true,
@@ -755,7 +790,19 @@
     try {
       const saved = await request("/v1/admin/shipping", {
         method: "PUT",
-        body: JSON.stringify(shippingConfig),
+        body: JSON.stringify({
+          ...shippingConfig,
+          rates: shippingConfig.rates.map((rate) => {
+            const { ruleText, ...savedRate } = rate;
+            if (savedRate.mode === "weight_value") {
+              savedRate.rules = JSON.parse(ruleText);
+              savedRate.amount = "";
+            } else {
+              savedRate.rules = [];
+            }
+            return savedRate;
+          }),
+        }),
       });
       renderShipping(saved);
       setStatus("Configuration transport enregistrée.");

@@ -26,10 +26,11 @@ type MediaInput struct {
 }
 
 type VariantInput struct {
-	SKU       string         `json:"sku"`
-	Options   map[string]any `json:"options"`
-	Prices    []PriceView    `json:"prices"`
-	Inventory InventoryView  `json:"inventory"`
+	SKU         string         `json:"sku"`
+	Options     map[string]any `json:"options"`
+	WeightGrams *int64         `json:"weight_grams,omitempty"`
+	Prices      []PriceView    `json:"prices"`
+	Inventory   InventoryView  `json:"inventory"`
 }
 
 type CategoryInput struct {

@@ -589,6 +589,116 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 	}); !errors.Is(err, ErrShippingUnavailable) {
 		t.Fatalf("checkout with unsupported destination error = %v, want %v", err, ErrShippingUnavailable)
 	}
+
+	weightedToken := sha256.Sum256([]byte("weight-value shipping quote"))
+	weightedEmail := "weight-value-shipping@example.com"
+	var weightedOrderID string
+	t.Cleanup(func() {
+		if weightedOrderID != "" {
+			if _, err := db.SQL.ExecContext(context.Background(), `DELETE FROM orders WHERE id = $1`, weightedOrderID); err != nil {
+				t.Errorf("clean up weight-value order: %v", err)
+			}
+		}
+		if _, err := db.SQL.ExecContext(context.Background(), `DELETE FROM carts WHERE access_token_hash = $1`, weightedToken[:]); err != nil {
+			t.Errorf("clean up weight-value cart: %v", err)
+		}
+		if _, err := db.SQL.ExecContext(context.Background(), `DELETE FROM customers WHERE shop_id = $1 AND email = $2`, seed.ShopID, weightedEmail); err != nil {
+			t.Errorf("clean up weight-value customer: %v", err)
+		}
+	})
+	if err := db.CreateCart(ctx, seed.ShopID, weightedToken[:]); err != nil {
+		t.Fatalf("create weight-value cart: %v", err)
+	}
+	if _, err := db.AddCartLine(ctx, seed.ShopID, weightedToken[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add weight-value cart line: %v", err)
+	}
+	cart, err := db.GetCart(ctx, seed.ShopID, weightedToken[:])
+	if err != nil {
+		t.Fatalf("read weight-value cart: %v", err)
+	}
+	subtotalBoundary := cart.Total.Amount
+	weightedConfig := updated
+	weightedConfig.Rates = []ShippingRate{{
+		CarrierCode: "custom-carrier", ZoneCode: "france", Mode: "weight_value",
+		Currency: "EUR", Active: true,
+		Rules: []ShippingRateRule{
+			{MinWeightGrams: 0, MaxWeightGrams: storeInt64Pointer(1000), MinSubtotal: "0", MaxSubtotal: &subtotalBoundary, Amount: "5.00"},
+			{MinWeightGrams: 0, MaxWeightGrams: storeInt64Pointer(1000), MinSubtotal: subtotalBoundary, Amount: "4.00"},
+			{MinWeightGrams: 1000, MinSubtotal: "0", MaxSubtotal: &subtotalBoundary, Amount: "9.00"},
+			{MinWeightGrams: 1000, MinSubtotal: subtotalBoundary, Amount: "7.00"},
+		},
+	}}
+	if err := db.ReplaceShippingConfig(ctx, seed.ShopID, weightedConfig); err != nil {
+		t.Fatalf("configure weight-value shipping rates: %v", err)
+	}
+
+	if _, err := db.SQL.ExecContext(ctx, `UPDATE variants SET weight_grams = 500 WHERE id = $1`, seed.VariantID); err != nil {
+		t.Fatalf("set test variant weight: %v", err)
+	}
+	options, err := db.ListCartShippingOptions(ctx, seed.ShopID, weightedToken[:], "FR")
+	if err != nil || len(options) != 1 || options[0].Amount != "4.0000" ||
+		options[0].WeightGrams == nil || *options[0].WeightGrams != 500 {
+		t.Fatalf("500g quote at subtotal upper boundary = %+v, error = %v", options, err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `UPDATE variants SET weight_grams = 1000 WHERE id = $1`, seed.VariantID); err != nil {
+		t.Fatalf("set test variant boundary weight: %v", err)
+	}
+	options, err = db.ListCartShippingOptions(ctx, seed.ShopID, weightedToken[:], "FR")
+	if err != nil || len(options) != 1 || options[0].Amount != "7.0000" {
+		t.Fatalf("1000g quote at inclusive weight boundary = %+v, error = %v", options, err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `UPDATE variants SET weight_grams = NULL WHERE id = $1`, seed.VariantID); err != nil {
+		t.Fatalf("remove test variant weight: %v", err)
+	}
+	options, err = db.ListCartShippingOptions(ctx, seed.ShopID, weightedToken[:], "FR")
+	if err != nil || len(options) != 0 {
+		t.Fatalf("quote with missing variant weight = %+v, error = %v; want no fallback", options, err)
+	}
+	if _, err := db.CheckoutCart(ctx, seed.ShopID, weightedToken[:], CheckoutDetails{
+		Email: weightedEmail, Name: "Weight Value Shipping",
+		ShippingCarrierCode: "custom-carrier", ExpectedShippingTotal: "7.00",
+		ShippingAddress: ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+	}); !errors.Is(err, ErrShippingUnavailable) {
+		t.Fatalf("checkout with missing weight error = %v, want unavailable shipping", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `UPDATE variants SET weight_grams = 1000 WHERE id = $1`, seed.VariantID); err != nil {
+		t.Fatalf("restore test variant weight: %v", err)
+	}
+	weightedConfig.Rates[0].Rules[3].Amount = "8.00"
+	if err := db.ReplaceShippingConfig(ctx, seed.ShopID, weightedConfig); err != nil {
+		t.Fatalf("change weight-value shipping price: %v", err)
+	}
+	if _, err := db.CheckoutCart(ctx, seed.ShopID, weightedToken[:], CheckoutDetails{
+		Email: weightedEmail, Name: "Weight Value Shipping",
+		ShippingCarrierCode: "custom-carrier", ExpectedShippingTotal: "7.00",
+		ShippingAddress: ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+	}); !errors.Is(err, ErrShippingQuoteChanged) {
+		t.Fatalf("checkout with stale quote error = %v, want quote changed", err)
+	}
+	options, err = db.ListCartShippingOptions(ctx, seed.ShopID, weightedToken[:], "FR")
+	if err != nil || len(options) != 1 || options[0].Amount != "8.0000" {
+		t.Fatalf("refreshed 1000g quote = %+v, error = %v", options, err)
+	}
+	order, err := db.CheckoutCart(ctx, seed.ShopID, weightedToken[:], CheckoutDetails{
+		Email: weightedEmail, Name: "Weight Value Shipping",
+		ShippingCarrierCode: "custom-carrier", ExpectedShippingTotal: options[0].Amount,
+		ShippingAddress: ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+	})
+	if err != nil {
+		t.Fatalf("checkout with current weight-value quote: %v", err)
+	}
+	weightedOrderID = order.ID
+	if order.ShippingRateMode != "weight_value" || order.ShippingWeightGrams == nil ||
+		*order.ShippingWeightGrams != 1000 || order.ShippingPricingSubtotal == nil ||
+		*order.ShippingPricingSubtotal != subtotalBoundary || len(order.ShippingRateRule) == 0 {
+		t.Fatalf("weight-value checkout snapshot = %+v", order)
+	}
+	adminSnapshot, err := db.GetAdminOrder(ctx, seed.ShopID, order.ID)
+	if err != nil || adminSnapshot.ShippingRateMode != "weight_value" ||
+		adminSnapshot.ShippingWeightGrams == nil || *adminSnapshot.ShippingWeightGrams != 1000 {
+		t.Fatalf("weight-value admin snapshot = %+v, error = %v", adminSnapshot, err)
+	}
+
 	otherShop, err := db.GetShippingConfig(ctx, "e0e00000-0001-4000-8000-000000000099")
 	if err != nil {
 		t.Fatalf("read other shop shipping configuration: %v", err)
@@ -597,3 +707,5 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 		t.Fatalf("other shop received shipping configuration: %+v", otherShop)
 	}
 }
+
+func storeInt64Pointer(value int64) *int64 { return &value }

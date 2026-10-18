@@ -364,6 +364,27 @@ func TestCartBearerFlow(t *testing.T) {
 		t.Errorf("cart cache-control = %q, want no-store", addResponse.Header().Get("Cache-Control"))
 	}
 
+	quoteRequest := httptest.NewRequest(http.MethodPost, "/v1/shipping-quotes", strings.NewReader(`{"country":"FR"}`))
+	quoteRequest.Header.Set("Authorization", "Bearer "+created.Data.Token)
+	quoteResponse := httptest.NewRecorder()
+	mux.ServeHTTP(quoteResponse, quoteRequest)
+	var quote struct {
+		Data []store.ShippingOption `json:"data"`
+	}
+	if err := json.NewDecoder(quoteResponse.Body).Decode(&quote); err != nil {
+		t.Fatalf("decode shipping quote: %v", err)
+	}
+	if quoteResponse.Code != http.StatusOK || len(quote.Data) != 1 ||
+		quote.Data[0].CarrierCode != "colissimo" || quote.Data[0].Amount != "6.9000" {
+		t.Fatalf("shipping quote status/body = %d/%+v", quoteResponse.Code, quote)
+	}
+	unauthorizedQuote := httptest.NewRecorder()
+	mux.ServeHTTP(unauthorizedQuote, httptest.NewRequest(http.MethodPost, "/v1/shipping-quotes",
+		strings.NewReader(`{"country":"FR"}`)))
+	if unauthorizedQuote.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized shipping quote status = %d, want %d", unauthorizedQuote.Code, http.StatusUnauthorized)
+	}
+
 	viewRequest := httptest.NewRequest(http.MethodGet, "/v1/cart", nil)
 	viewRequest.Header.Set("Authorization", "Bearer "+created.Data.Token)
 	viewResponse := httptest.NewRecorder()

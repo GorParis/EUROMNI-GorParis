@@ -112,10 +112,11 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 			Locale: "fr-FR", Name: "Produit MariaDB", Description: "Test d'intégration",
 		}},
 		Variants: []VariantInput{{
-			SKU:       "MDB-" + suffix,
-			Options:   map[string]any{"taille": "unique"},
-			Prices:    []PriceView{{Currency: "EUR", Amount: "12.5000"}},
-			Inventory: InventoryView{Quantity: 5, Track: true},
+			SKU:         "MDB-" + suffix,
+			Options:     map[string]any{"taille": "unique"},
+			WeightGrams: mariaDBInt64Pointer(750),
+			Prices:      []PriceView{{Currency: "EUR", Amount: "12.5000"}},
+			Inventory:   InventoryView{Quantity: 5, Track: true},
 		}},
 	})
 	if err != nil {
@@ -123,7 +124,10 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	}
 	tokenHash := sha256.Sum256([]byte("mariadb-test-cart-" + suffix))
 	email := "mariadb-test-" + suffix + "@example.invalid"
+	weightedTokenHash := sha256.Sum256([]byte("mariadb-weighted-cart-" + suffix))
+	weightedEmail := "mariadb-weighted-" + suffix + "@example.invalid"
 	var orderID string
+	var weightedOrderID string
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
@@ -138,11 +142,22 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 				t.Errorf("clean up MariaDB test order: %v", err)
 			}
 		}
+		if weightedOrderID != "" {
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM orders WHERE id = $1`, weightedOrderID); err != nil {
+				t.Errorf("clean up MariaDB weight-value order: %v", err)
+			}
+		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM carts WHERE access_token_hash = $1`, tokenHash[:]); err != nil {
 			t.Errorf("clean up MariaDB test cart: %v", err)
 		}
+		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM carts WHERE access_token_hash = $1`, weightedTokenHash[:]); err != nil {
+			t.Errorf("clean up MariaDB weight-value cart: %v", err)
+		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM customers WHERE shop_id = $1 AND email = $2`, seed.ShopID, email); err != nil {
 			t.Errorf("clean up MariaDB test customer: %v", err)
+		}
+		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM customers WHERE shop_id = $1 AND email = $2`, seed.ShopID, weightedEmail); err != nil {
+			t.Errorf("clean up MariaDB weight-value customer: %v", err)
 		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM products WHERE id = $1`, product.ID); err != nil {
 			t.Errorf("clean up MariaDB test product: %v", err)
@@ -200,4 +215,52 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	if adminOrder.Status != "fulfilled" || adminOrder.ShipmentStatus != "shipped" || adminOrder.Tracking != "MDB-TRACK-1" {
 		t.Fatalf("unexpected fulfilled MariaDB order: %#v", adminOrder)
 	}
+
+	config, err := store.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("read MariaDB shipping config before weight-value test: %v", err)
+	}
+	for index := range config.Carriers {
+		if config.Carriers[index].Code == "colissimo" {
+			config.Carriers[index].Active = true
+		}
+	}
+	config.Rates = []ShippingRate{{
+		CarrierCode: "colissimo", ZoneCode: "france-ue", Mode: "weight_value",
+		Currency: "EUR", Active: true,
+		Rules: []ShippingRateRule{{
+			MinWeightGrams: 0, MinSubtotal: "0", Amount: "4.50",
+		}},
+	}}
+	if err := store.ReplaceShippingConfig(ctx, seed.ShopID, *config); err != nil {
+		t.Fatalf("configure MariaDB weight-value rate: %v", err)
+	}
+	if err := store.CreateCart(ctx, seed.ShopID, weightedTokenHash[:]); err != nil {
+		t.Fatalf("create MariaDB weight-value cart: %v", err)
+	}
+	if _, err := store.AddCartLine(ctx, seed.ShopID, weightedTokenHash[:], product.Variants[0].ID, 1); err != nil {
+		t.Fatalf("add MariaDB weight-value cart line: %v", err)
+	}
+	quotes, err := store.ListCartShippingOptions(ctx, seed.ShopID, weightedTokenHash[:], "FR")
+	if err != nil || len(quotes) != 1 || quotes[0].Amount != "4.5000" ||
+		quotes[0].WeightGrams == nil || *quotes[0].WeightGrams != 750 {
+		t.Fatalf("MariaDB weight-value quote = %#v, error = %v", quotes, err)
+	}
+	weightedOrder, err := store.CheckoutCart(ctx, seed.ShopID, weightedTokenHash[:], CheckoutDetails{
+		Email: weightedEmail, Name: "MariaDB Weight Value",
+		ShippingCarrierCode: "colissimo", ExpectedShippingTotal: quotes[0].Amount,
+		ShippingAddress: ShippingAddress{
+			Line1: "1 rue de test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	})
+	if err != nil {
+		t.Fatalf("checkout MariaDB weight-value cart: %v", err)
+	}
+	weightedOrderID = weightedOrder.ID
+	if weightedOrder.ShippingRateMode != "weight_value" || weightedOrder.ShippingWeightGrams == nil ||
+		*weightedOrder.ShippingWeightGrams != 750 || len(weightedOrder.ShippingRateRule) == 0 {
+		t.Fatalf("unexpected MariaDB weight-value order snapshot: %#v", weightedOrder)
+	}
 }
+
+func mariaDBInt64Pointer(value int64) *int64 { return &value }

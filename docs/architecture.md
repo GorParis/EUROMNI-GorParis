@@ -88,6 +88,14 @@ Les deux coexistent et parlent au **même** cœur de domaine :
 
 Pas deux modèles de données : un domaine Go, deux adaptateurs HTTP.
 
+## Transport extensible
+
+Le transport est un domaine natif extensible : le cœur gère services, règles
+tarifaires, contraintes et snapshots de devis ; un module Wasm peut fournir une
+règle métier via une capability typée, sans SQL, réseau ni secrets directs. Le
+modèle, les phases de migration et le contrat de devis sont décrits dans
+[`docs/transport-extensible.md`](transport-extensible.md).
+
 ## Marchés, locales et commerce transfrontalier
 
 Le modèle de marchés UE distingue pays, langue, devise, taxes, transport et

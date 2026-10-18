@@ -396,14 +396,14 @@ func replaceProductVariants(ctx context.Context, tx *sql.Tx, productID string, i
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO variants (id, product_id, sku, options)
-				VALUES ($1, $2, $3, $4)
-			`, variantID, productID, input.SKU, string(options)); err != nil {
+				INSERT INTO variants (id, product_id, sku, options, weight_grams)
+				VALUES ($1, $2, $3, $4, $5)
+			`, variantID, productID, input.SKU, string(options), input.WeightGrams); err != nil {
 				return catalogDBError(err)
 			}
 		} else if _, err := tx.ExecContext(ctx, `
-			UPDATE variants SET options = $2, updated_at = now() WHERE id = $1
-		`, variantID, string(options)); err != nil {
+			UPDATE variants SET options = $2, weight_grams = $3, updated_at = now() WHERE id = $1
+		`, variantID, string(options), input.WeightGrams); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `

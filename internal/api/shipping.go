@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/big"
 	"net/http"
 	"regexp"
 	"strings"
@@ -31,6 +32,53 @@ func shippingOptions(w http.ResponseWriter, r *http.Request) {
 	options, err := reader.ListShippingOptions(r.Context(), seed.ShopID, country)
 	if err != nil {
 		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": options})
+}
+
+func shippingQuote(w http.ResponseWriter, r *http.Request) {
+	reader, tokenHash, ok := authenticatedCartReader(r)
+	if !ok {
+		writePrivateJSON(w, http.StatusUnauthorized, map[string]any{"error": "cart authorization required"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxCartRequestBytes)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var request struct {
+		Country string `json:"country"`
+	}
+	if err := decoder.Decode(&request); err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid shipping quote request"})
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "shipping quote request must contain one JSON object"})
+		return
+	}
+	country := strings.ToUpper(strings.TrimSpace(request.Country))
+	if !validCountryCode(country) {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "a two-letter country code is required"})
+		return
+	}
+	quoteReader, ok := reader.(store.ShippingQuoteReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "shipping quotes unavailable"})
+		return
+	}
+	options, err := quoteReader.ListCartShippingOptions(r.Context(), seed.ShopID, tokenHash, country)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrInvalidCartToken):
+			writePrivateJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid cart authorization"})
+		case errors.Is(err, store.ErrNotFound):
+			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "cart contains unavailable items"})
+		default:
+			writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		}
 		return
 	}
 	writePrivateJSON(w, http.StatusOK, map[string]any{"data": options})
@@ -142,12 +190,17 @@ func validateShippingConfig(config *store.ShippingConfig) string {
 		}
 	}
 	rates := make(map[string]struct{}, len(config.Rates))
+	totalRules := 0
 	for index := range config.Rates {
 		rate := &config.Rates[index]
 		rate.CarrierCode = strings.TrimSpace(rate.CarrierCode)
 		rate.ZoneCode = strings.TrimSpace(rate.ZoneCode)
 		rate.Amount = strings.TrimSpace(rate.Amount)
 		rate.Currency = strings.TrimSpace(rate.Currency)
+		rate.Mode = strings.TrimSpace(rate.Mode)
+		if rate.Mode == "" {
+			rate.Mode = "fixed"
+		}
 		if _, exists := carriers[rate.CarrierCode]; !exists {
 			return "each rate must refer to a configured carrier"
 		}
@@ -159,12 +212,79 @@ func validateShippingConfig(config *store.ShippingConfig) string {
 			return "each carrier can have only one rate per zone"
 		}
 		rates[key] = struct{}{}
-		if !shippingAmountPattern.MatchString(rate.Amount) {
-			return "shipping amounts must be non-negative numbers with at most four decimal places"
+		if rate.Mode != "fixed" && rate.Mode != "weight_value" {
+			return "rate mode must be fixed or weight_value"
 		}
 		if !shippingCurrencyPattern.MatchString(rate.Currency) {
 			return "currencies must use three uppercase letters"
 		}
+		switch rate.Mode {
+		case "fixed":
+			if !shippingAmountPattern.MatchString(rate.Amount) {
+				return "shipping amounts must be non-negative numbers with at most four decimal places"
+			}
+			if len(rate.Rules) > 0 {
+				return "fixed rates cannot contain weight and subtotal rules"
+			}
+			rate.Rules = []store.ShippingRateRule{}
+		case "weight_value":
+			if len(rate.Rules) == 0 || len(rate.Rules) > 200 {
+				return "weight_value rates require 1 to 200 rules"
+			}
+			totalRules += len(rate.Rules)
+			if totalRules > 5000 {
+				return "shipping configuration exceeds the supported rule limit"
+			}
+			for ruleIndex := range rate.Rules {
+				rule := &rate.Rules[ruleIndex]
+				rule.MinSubtotal = strings.TrimSpace(rule.MinSubtotal)
+				rule.Amount = strings.TrimSpace(rule.Amount)
+				if rule.MinSubtotal == "" {
+					rule.MinSubtotal = "0"
+				}
+				if rule.MinWeightGrams < 0 ||
+					(rule.MaxWeightGrams != nil && *rule.MaxWeightGrams <= rule.MinWeightGrams) {
+					return "weight ranges must be non-negative and have an exclusive upper bound greater than the lower bound"
+				}
+				if !shippingAmountPattern.MatchString(rule.MinSubtotal) ||
+					(rule.MaxSubtotal != nil && !shippingAmountPattern.MatchString(strings.TrimSpace(*rule.MaxSubtotal))) ||
+					!shippingAmountPattern.MatchString(rule.Amount) {
+					return "weight_value rules require valid subtotal bounds and a non-negative amount with at most four decimal places"
+				}
+				if rule.MaxSubtotal != nil {
+					upper := strings.TrimSpace(*rule.MaxSubtotal)
+					rule.MaxSubtotal = &upper
+					minimum, _ := new(big.Rat).SetString(rule.MinSubtotal)
+					maximum, _ := new(big.Rat).SetString(upper)
+					if maximum.Cmp(minimum) <= 0 {
+						return "subtotal ranges must have an exclusive upper bound greater than the lower bound"
+					}
+				}
+				for previous := 0; previous < ruleIndex; previous++ {
+					if shippingRulesOverlap(rate.Rules[previous], *rule) {
+						return "weight_value rules cannot overlap"
+					}
+				}
+			}
+		}
 	}
 	return ""
+}
+
+func shippingRulesOverlap(left, right store.ShippingRateRule) bool {
+	weightOverlap := (left.MaxWeightGrams == nil || right.MinWeightGrams < *left.MaxWeightGrams) &&
+		(right.MaxWeightGrams == nil || left.MinWeightGrams < *right.MaxWeightGrams)
+	if !weightOverlap {
+		return false
+	}
+	leftMin, _ := new(big.Rat).SetString(left.MinSubtotal)
+	rightMin, _ := new(big.Rat).SetString(right.MinSubtotal)
+	subtotalOverlap := left.MaxSubtotal == nil || rightMin.Cmp(mustShippingRat(*left.MaxSubtotal)) < 0
+	subtotalOverlap = subtotalOverlap && (right.MaxSubtotal == nil || leftMin.Cmp(mustShippingRat(*right.MaxSubtotal)) < 0)
+	return subtotalOverlap
+}
+
+func mustShippingRat(value string) *big.Rat {
+	rational, _ := new(big.Rat).SetString(value)
+	return rational
 }

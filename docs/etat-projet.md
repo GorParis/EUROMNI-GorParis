@@ -1,5 +1,36 @@
 # État du projet EUROMNI
 
+## Reprise en cours — intégration transport (18 octobre 2026)
+
+Le travail local porte sur la première grille native de tarifs de transport :
+tarifs fixes conservés, poids facultatif des variantes, calcul par intersection
+poids × sous-total, devis au checkout et snapshot de commande. L’administration
+permet de configurer ces règles. Les migrations, adaptateurs et tests PostgreSQL
+et MariaDB correspondants sont présents dans les changements locaux.
+
+État Git observé à la reprise : branche `main`, identique à `origin/main` au
+commit `9f3d92d`. Les 26 fichiers de cette intégration sont des changements
+indexés, pas des commits locaux en avance. Ne pas réinitialiser l’index, créer
+un commit ou pousser sans demande explicite. Préserver ces changements avant
+toute modification supplémentaire.
+
+Vérification exécutée :
+
+```sh
+go test -count=1 ./internal/api ./internal/store ./internal/migrations
+```
+
+Résultat : les trois packages passent. Cette vérification ne prouve pas que les
+tests d’intégration ont utilisé une base PostgreSQL ou MariaDB réelle. Exécuter
+`go test ./...`, puis les intégrations avec des bases de test dédiées si elles
+sont configurées. Ne pas déclarer MariaDB validé sans exécution réelle.
+
+Prochaine étape : relire le diff indexé et la documentation de transport, puis
+vérifier les frontières de tranches, les conflits de devis au checkout, les
+snapshots historiques et la parité des migrations. Le découpage transporteur /
+service, les origines, colis, délais et devis externes restent hors de cette
+première tranche.
+
 ## Vision cible
 
 Le but du projet est de construire un CMS souverain headless, avec :
@@ -125,8 +156,10 @@ Le front existant est un bon socle de démonstration, mais il n’est pas encore
 2. finaliser la matrice de portabilité runtime
 3. verrouiller le manifeste/versionnement des modules
 4. sécuriser l’ingestion et la publication des artefacts
-5. étendre les schémas dynamiques aux données métier requises
-6. ajouter des règles déterministes de lowering pour d’autres triggers
+5. terminer la validation de la première grille de transport et maintenir la
+   parité PostgreSQL / MariaDB
+6. étendre les schémas dynamiques aux données métier requises et ajouter des
+   règles déterministes de lowering pour d’autres triggers
 7. compléter le front-end en s’appuyant sur les flux validés
 
 ## Conclusion

@@ -553,11 +553,12 @@ func newMemoryVariants(inputs []VariantInput) ([]VariantView, error) {
 			return nil, err
 		}
 		variants = append(variants, VariantView{
-			ID:        id,
-			SKU:       input.SKU,
-			Options:   cloneObject(input.Options),
-			Prices:    clonePrices(input.Prices),
-			Inventory: input.Inventory,
+			ID:          id,
+			SKU:         input.SKU,
+			Options:     cloneObject(input.Options),
+			WeightGrams: cloneInt64(input.WeightGrams),
+			Prices:      clonePrices(input.Prices),
+			Inventory:   input.Inventory,
 		})
 	}
 	return variants, nil
@@ -594,11 +595,20 @@ func (m *Memory) updatedMemoryVariants(product *ProductView, inputs []VariantInp
 		}
 		variant.SKU = input.SKU
 		variant.Options = cloneObject(input.Options)
+		variant.WeightGrams = cloneInt64(input.WeightGrams)
 		variant.Prices = clonePrices(input.Prices)
 		variant.Inventory = input.Inventory
 		variants = append(variants, variant)
 	}
 	return variants, nil
+}
+
+func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func cloneObject(value map[string]any) map[string]any {

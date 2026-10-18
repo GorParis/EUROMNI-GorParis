@@ -33,11 +33,12 @@ type MediaView struct {
 }
 
 type VariantView struct {
-	ID        string         `json:"id"`
-	SKU       string         `json:"sku"`
-	Options   map[string]any `json:"options"`
-	Prices    []PriceView    `json:"prices"`
-	Inventory InventoryView  `json:"inventory"`
+	ID          string         `json:"id"`
+	SKU         string         `json:"sku"`
+	Options     map[string]any `json:"options"`
+	WeightGrams *int64         `json:"weight_grams,omitempty"`
+	Prices      []PriceView    `json:"prices"`
+	Inventory   InventoryView  `json:"inventory"`
 }
 
 type PriceView struct {
@@ -239,7 +240,7 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	}
 
 	vRows, err := s.SQL.QueryContext(ctx, `
-		SELECT v.id::text, v.sku, v.options, COALESCE(i.quantity, 0), COALESCE(i.track, true)
+		SELECT v.id::text, v.sku, v.options, v.weight_grams, COALESCE(i.quantity, 0), COALESCE(i.track, true)
 		FROM variants v
 		LEFT JOIN inventory_items i ON i.variant_id = v.id
 		WHERE v.product_id = $1
@@ -254,8 +255,12 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	for vRows.Next() {
 		var v VariantView
 		var options []byte
-		if err := vRows.Scan(&v.ID, &v.SKU, &options, &v.Inventory.Quantity, &v.Inventory.Track); err != nil {
+		var weight sql.NullInt64
+		if err := vRows.Scan(&v.ID, &v.SKU, &options, &weight, &v.Inventory.Quantity, &v.Inventory.Track); err != nil {
 			return nil, err
+		}
+		if weight.Valid {
+			v.WeightGrams = &weight.Int64
 		}
 		if err := unmarshalObject(options, &v.Options); err != nil {
 			return nil, err

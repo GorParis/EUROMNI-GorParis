@@ -736,6 +736,9 @@ func validateProductInput(input store.ProductInput) error {
 		if !catalogSKU.MatchString(variant.SKU) {
 			return errors.New("each variant requires a valid SKU")
 		}
+		if variant.WeightGrams != nil && (*variant.WeightGrams < 0 || *variant.WeightGrams > 2147483647) {
+			return errors.New("variant weight_grams must be between 0 and 2147483647")
+		}
 		sku := strings.ToUpper(variant.SKU)
 		if _, exists := variantSKUs[sku]; exists {
 			return errors.New("variant SKUs must be unique")

@@ -89,6 +89,13 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		!strings.Contains(shippingOptions.Body.String(), `"amount":"6.9000"`) {
 		t.Fatalf("shipping options status/body = %d/%s", shippingOptions.Code, shippingOptions.Body)
 	}
+	shippingQuote := performAPIRequest(mux, http.MethodPost, "/v1/shipping-quotes",
+		"Bearer "+created.Data.Token, `{"country":"FR"}`)
+	if shippingQuote.Code != http.StatusOK ||
+		!strings.Contains(shippingQuote.Body.String(), `"carrier_code":"colissimo"`) ||
+		!strings.Contains(shippingQuote.Body.String(), `"amount":"6.9000"`) {
+		t.Fatalf("cart shipping quote status/body = %d/%s", shippingQuote.Code, shippingQuote.Body)
+	}
 
 	queryBody := `{"query":"{ products { slug } product(id: \"` + seed.ProductID + `\") { slug variants { prices { amount } } } categories { slug } cart { total { amount currency } } }"}`
 	graphqlResponse := performAPIRequest(mux, http.MethodPost, "/graphql", "Bearer "+created.Data.Token, queryBody)
@@ -96,7 +103,7 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		t.Fatalf("GraphQL status/body = %d/%s", graphqlResponse.Code, graphqlResponse.Body)
 	}
 
-	checkoutBody := `{"email":"checkout@example.com","name":"Checkout integration","shipping_carrier_code":"colissimo","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
+	checkoutBody := `{"email":"checkout@example.com","name":"Checkout integration","shipping_carrier_code":"colissimo","expected_shipping_total":"6.9000","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
 	checkoutResponse := performAPIRequest(mux, http.MethodPost, "/v1/checkout", "Bearer "+created.Data.Token, checkoutBody)
 	if checkoutResponse.Code != http.StatusCreated ||
 		!strings.Contains(checkoutResponse.Body.String(), `"shipping_total":"6.9000"`) ||
@@ -345,7 +352,7 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	}
 
 	productBody := `{"slug":"integration-article","status":"active","translations":[{"locale":"fr-FR","name":"Article d’intégration"}],"category_ids":["` +
-		createdCategory.Data.ID + `"],"variants":[{"sku":"INTEGRATION-ARTICLE-1","options":{"taille":"unique"},"prices":[{"currency":"EUR","amount":"12.5000"}],"inventory":{"quantity":8,"track":true}}]}`
+		createdCategory.Data.ID + `"],"variants":[{"sku":"INTEGRATION-ARTICLE-1","options":{"taille":"unique"},"weight_grams":250,"prices":[{"currency":"EUR","amount":"12.5000"}],"inventory":{"quantity":8,"track":true}}]}`
 	adminProduct := performAPIRequest(mux, http.MethodPost, "/v1/admin/products", staffAuthorization, productBody)
 	if adminProduct.Code != http.StatusCreated {
 		t.Fatalf("admin product create status/body = %d/%s; want 201", adminProduct.Code, adminProduct.Body)
@@ -355,8 +362,9 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 			ID          string   `json:"id"`
 			CategoryIDs []string `json:"category_ids"`
 			Variants    []struct {
-				ID     string `json:"id"`
-				Prices []struct {
+				ID          string `json:"id"`
+				WeightGrams *int64 `json:"weight_grams"`
+				Prices      []struct {
 					Amount string `json:"amount"`
 				} `json:"prices"`
 				Inventory struct {
@@ -371,6 +379,8 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	if createdProduct.Data.ID == "" || len(createdProduct.Data.CategoryIDs) != 1 ||
 		createdProduct.Data.CategoryIDs[0] != createdCategory.Data.ID || len(createdProduct.Data.Variants) != 1 ||
 		createdProduct.Data.Variants[0].Prices[0].Amount != "12.5000" ||
+		createdProduct.Data.Variants[0].WeightGrams == nil ||
+		*createdProduct.Data.Variants[0].WeightGrams != 250 ||
 		createdProduct.Data.Variants[0].Inventory.Quantity != 8 {
 		t.Fatalf("created admin product payload = %+v", createdProduct.Data)
 	}

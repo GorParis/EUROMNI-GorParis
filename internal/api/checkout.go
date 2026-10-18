@@ -13,10 +13,11 @@ import (
 )
 
 type checkoutRequest struct {
-	Email               string                `json:"email"`
-	Name                string                `json:"name"`
-	ShippingCarrierCode string                `json:"shipping_carrier_code"`
-	ShippingAddress     store.ShippingAddress `json:"shipping_address"`
+	Email                 string                `json:"email"`
+	Name                  string                `json:"name"`
+	ShippingCarrierCode   string                `json:"shipping_carrier_code"`
+	ExpectedShippingTotal string                `json:"expected_shipping_total,omitempty"`
+	ShippingAddress       store.ShippingAddress `json:"shipping_address"`
 }
 
 func checkout(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +56,8 @@ func checkout(w http.ResponseWriter, r *http.Request) {
 			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "cart is empty"})
 		case errors.Is(err, store.ErrShippingUnavailable):
 			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "shipping method unavailable for this destination"})
+		case errors.Is(err, store.ErrShippingQuoteChanged):
+			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "shipping quote changed"})
 		case errors.Is(err, store.ErrNotFound):
 			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "cart contains unavailable items"})
 		default:
@@ -90,6 +93,7 @@ func decodeCheckoutRequest(w http.ResponseWriter, r *http.Request) (store.Checko
 	address.Country = strings.ToUpper(strings.TrimSpace(address.Country))
 	name := strings.TrimSpace(request.Name)
 	carrierCode := strings.TrimSpace(request.ShippingCarrierCode)
+	expectedShippingTotal := strings.TrimSpace(request.ExpectedShippingTotal)
 	parsedEmail, err := mail.ParseAddress(strings.TrimSpace(request.Email))
 	if err != nil || parsedEmail.Address == "" || len(parsedEmail.Address) > 320 || len(name) == 0 || len(name) > 120 ||
 		!shippingCodePattern.MatchString(carrierCode) ||
@@ -98,8 +102,12 @@ func decodeCheckoutRequest(w http.ResponseWriter, r *http.Request) (store.Checko
 		len(address.Region) > 100 || !validCountryCode(address.Country) {
 		return store.CheckoutDetails{}, errors.New("invalid checkout details")
 	}
+	if expectedShippingTotal != "" && !shippingAmountPattern.MatchString(expectedShippingTotal) {
+		return store.CheckoutDetails{}, errors.New("invalid expected shipping total")
+	}
 	return store.CheckoutDetails{
-		Email: parsedEmail.Address, Name: name, ShippingCarrierCode: carrierCode, ShippingAddress: address,
+		Email: parsedEmail.Address, Name: name, ShippingCarrierCode: carrierCode,
+		ExpectedShippingTotal: expectedShippingTotal, ShippingAddress: address,
 	}, nil
 }
 

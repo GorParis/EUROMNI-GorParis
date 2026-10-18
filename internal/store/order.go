@@ -20,6 +20,7 @@ import (
 var ErrEmptyCart = errors.New("cart is empty")
 var ErrOrderTransition = errors.New("order status transition is not allowed")
 var ErrShippingUnavailable = errors.New("shipping method unavailable")
+var ErrShippingQuoteChanged = errors.New("shipping quote changed since it was displayed")
 
 type CheckoutWriter interface {
 	CheckoutCart(ctx context.Context, shopID string, tokenHash []byte, details CheckoutDetails) (*OrderView, error)
@@ -34,10 +35,11 @@ type OrderAdminReader interface {
 }
 
 type CheckoutDetails struct {
-	Email               string
-	Name                string
-	ShippingCarrierCode string
-	ShippingAddress     ShippingAddress
+	Email                 string
+	Name                  string
+	ShippingCarrierCode   string
+	ExpectedShippingTotal string
+	ShippingAddress       ShippingAddress
 }
 
 type ShippingAddress struct {
@@ -50,17 +52,21 @@ type ShippingAddress struct {
 }
 
 type OrderView struct {
-	ID                  string          `json:"id"`
-	Number              string          `json:"number"`
-	Status              string          `json:"status"`
-	Currency            string          `json:"currency"`
-	Subtotal            string          `json:"subtotal"`
-	TaxTotal            string          `json:"tax_total"`
-	ShippingTotal       string          `json:"shipping_total"`
-	ShippingCarrierCode string          `json:"shipping_carrier_code"`
-	ShippingCarrierName string          `json:"shipping_carrier_name"`
-	GrandTotal          string          `json:"grand_total"`
-	Items               []OrderLineView `json:"items"`
+	ID                      string          `json:"id"`
+	Number                  string          `json:"number"`
+	Status                  string          `json:"status"`
+	Currency                string          `json:"currency"`
+	Subtotal                string          `json:"subtotal"`
+	TaxTotal                string          `json:"tax_total"`
+	ShippingTotal           string          `json:"shipping_total"`
+	ShippingCarrierCode     string          `json:"shipping_carrier_code"`
+	ShippingCarrierName     string          `json:"shipping_carrier_name"`
+	ShippingRateMode        string          `json:"shipping_rate_mode"`
+	ShippingWeightGrams     *int64          `json:"shipping_weight_grams,omitempty"`
+	ShippingPricingSubtotal *string         `json:"shipping_pricing_subtotal,omitempty"`
+	ShippingRateRule        json.RawMessage `json:"shipping_rate_rule,omitempty"`
+	GrandTotal              string          `json:"grand_total"`
+	Items                   []OrderLineView `json:"items"`
 }
 
 type OrderLineView struct {
@@ -72,29 +78,34 @@ type OrderLineView struct {
 }
 
 type AdminOrderView struct {
-	ID                  string          `json:"id"`
-	Number              string          `json:"number"`
-	Status              string          `json:"status"`
-	Currency            string          `json:"currency"`
-	Subtotal            string          `json:"subtotal"`
-	TaxTotal            string          `json:"tax_total"`
-	ShippingTotal       string          `json:"shipping_total"`
-	ShippingCarrierCode string          `json:"shipping_carrier_code"`
-	ShippingCarrierName string          `json:"shipping_carrier_name"`
-	ShippingZoneCode    string          `json:"shipping_zone_code"`
-	ShippingZoneName    string          `json:"shipping_zone_name"`
-	ShipmentStatus      string          `json:"shipment_status"`
-	Tracking            string          `json:"tracking"`
-	GrandTotal          string          `json:"grand_total"`
-	Email               string          `json:"email"`
-	Name                string          `json:"name"`
-	ShippingAddress     ShippingAddress `json:"shipping_address"`
-	CreatedAt           time.Time       `json:"created_at"`
-	Items               []OrderLineView `json:"items"`
+	ID                      string          `json:"id"`
+	Number                  string          `json:"number"`
+	Status                  string          `json:"status"`
+	Currency                string          `json:"currency"`
+	Subtotal                string          `json:"subtotal"`
+	TaxTotal                string          `json:"tax_total"`
+	ShippingTotal           string          `json:"shipping_total"`
+	ShippingCarrierCode     string          `json:"shipping_carrier_code"`
+	ShippingCarrierName     string          `json:"shipping_carrier_name"`
+	ShippingZoneCode        string          `json:"shipping_zone_code"`
+	ShippingZoneName        string          `json:"shipping_zone_name"`
+	ShippingRateMode        string          `json:"shipping_rate_mode"`
+	ShippingWeightGrams     *int64          `json:"shipping_weight_grams,omitempty"`
+	ShippingPricingSubtotal *string         `json:"shipping_pricing_subtotal,omitempty"`
+	ShippingRateRule        json.RawMessage `json:"shipping_rate_rule,omitempty"`
+	ShipmentStatus          string          `json:"shipment_status"`
+	Tracking                string          `json:"tracking"`
+	GrandTotal              string          `json:"grand_total"`
+	Email                   string          `json:"email"`
+	Name                    string          `json:"name"`
+	ShippingAddress         ShippingAddress `json:"shipping_address"`
+	CreatedAt               time.Time       `json:"created_at"`
+	Items                   []OrderLineView `json:"items"`
 }
 
 type checkoutLine struct {
-	variantID string
+	variantID   string
+	weightGrams sql.NullInt64
 	OrderLineView
 }
 
@@ -145,7 +156,7 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT v.id::text, v.sku, cl.quantity, COALESCE(pt.name, pr.slug), p.amount::text
+		SELECT v.id::text, v.sku, cl.quantity, COALESCE(pt.name, pr.slug), p.amount::text, v.weight_grams
 		FROM cart_lines cl
 		JOIN variants v ON v.id = cl.variant_id
 		JOIN products pr ON pr.id = v.product_id
@@ -163,9 +174,11 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	}
 	lines := make([]checkoutLine, 0)
 	subtotal := new(big.Rat)
+	var totalWeight int64
+	weightKnown := true
 	for rows.Next() {
 		var line checkoutLine
-		if err := rows.Scan(&line.variantID, &line.SKU, &line.Quantity, &line.Name, &line.UnitPrice); err != nil {
+		if err := rows.Scan(&line.variantID, &line.SKU, &line.Quantity, &line.Name, &line.UnitPrice, &line.weightGrams); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -177,6 +190,16 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		lineAmount := new(big.Rat).Mul(unitPrice, big.NewRat(int64(line.Quantity), 1))
 		line.LineTotal = lineAmount.FloatString(4)
 		subtotal.Add(subtotal, lineAmount)
+		if line.weightGrams.Valid && line.weightGrams.Int64 <= (1<<63-1)/int64(line.Quantity) {
+			lineWeight := line.weightGrams.Int64 * int64(line.Quantity)
+			if totalWeight > (1<<63-1)-lineWeight {
+				weightKnown = false
+			} else {
+				totalWeight += lineWeight
+			}
+		} else {
+			weightKnown = false
+		}
 		lines = append(lines, line)
 	}
 	if err := rows.Err(); err != nil {
@@ -189,9 +212,9 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	if len(lines) == 0 {
 		return nil, ErrEmptyCart
 	}
-	var carrierName, zoneCode, zoneName, shippingAmount string
+	var carrierName, zoneCode, zoneName, rateMode, shippingAmount string
 	err = tx.QueryRowContext(ctx, `
-		SELECT carrier.name, zone.code, zone.name, rate.amount::text
+		SELECT carrier.name, zone.code, zone.name, rate.rate_mode, rate.amount::text
 		FROM shipping_rates rate
 		JOIN shipping_carriers carrier
 		  ON carrier.shop_id = rate.shop_id AND carrier.code = rate.carrier_code
@@ -203,7 +226,7 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		  AND rate.active = true AND carrier.active = true AND zone.active = true
 		  AND zone.country_codes @> jsonb_build_array($4::text)
 	`, shopID, details.ShippingCarrierCode, currency, details.ShippingAddress.Country).Scan(
-		&carrierName, &zoneCode, &zoneName, &shippingAmount,
+		&carrierName, &zoneCode, &zoneName, &rateMode, &shippingAmount,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrShippingUnavailable
@@ -211,9 +234,46 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	if err != nil {
 		return nil, err
 	}
+	var snapshotRule json.RawMessage
+	var snapshotWeight *int64
+	var snapshotSubtotal *string
+	if rateMode == "weight_value" {
+		if !weightKnown {
+			return nil, ErrShippingUnavailable
+		}
+		rule, err := matchingShippingRateRule(
+			ctx, tx, shopID, details.ShippingCarrierCode, zoneCode, totalWeight, subtotal,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if rule == nil {
+			return nil, ErrShippingUnavailable
+		}
+		shippingAmount = rule.Amount
+		ruleJSON, err := json.Marshal(rule)
+		if err != nil {
+			return nil, err
+		}
+		snapshotRule = ruleJSON
+		snapshotWeight = &totalWeight
+		pricingSubtotal := subtotal.FloatString(4)
+		snapshotSubtotal = &pricingSubtotal
+		if details.ExpectedShippingTotal == "" {
+			return nil, ErrShippingQuoteChanged
+		}
+	} else if rateMode != "fixed" {
+		return nil, fmt.Errorf("unsupported shipping rate mode %q", rateMode)
+	}
 	shippingTotal, ok := new(big.Rat).SetString(shippingAmount)
 	if !ok {
 		return nil, errors.New("invalid shipping rate")
+	}
+	if details.ExpectedShippingTotal != "" {
+		expected, ok := new(big.Rat).SetString(details.ExpectedShippingTotal)
+		if !ok || expected.Cmp(shippingTotal) != 0 {
+			return nil, ErrShippingQuoteChanged
+		}
 	}
 	var cartLineCount int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM cart_lines WHERE cart_id::text = $1`, cartID).Scan(&cartLineCount); err != nil {
@@ -290,11 +350,13 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 			id, shop_id, customer_id, number, status, currency,
 			subtotal, tax_total, shipping_total, grand_total,
 			shipping_address, shipping_carrier_code, shipping_carrier_name,
-			shipping_zone_code, shipping_zone_name, placed_at
+			shipping_zone_code, shipping_zone_name, shipping_rate_mode,
+			shipping_weight_grams, shipping_pricing_subtotal, shipping_rate_rule, placed_at
 		)
-		VALUES ($1, $2, $3, $4, 'pending', $5, $6, 0, $7, $8, $9::jsonb, $10, $11, $12, $13, now())
+		VALUES ($1, $2, $3, $4, 'pending', $5, $6, 0, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, now())
 	`, orderID, shopID, customerID, orderNumber, currency, subtotal.FloatString(4), shippingTotalText,
-		total, string(addressJSON), details.ShippingCarrierCode, carrierName, zoneCode, zoneName)
+		total, string(addressJSON), details.ShippingCarrierCode, carrierName, zoneCode, zoneName,
+		rateMode, snapshotWeight, snapshotSubtotal, nullableJSON(snapshotRule))
 	if err != nil {
 		return nil, err
 	}
@@ -316,9 +378,18 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		ID: persistedOrderID, Number: orderNumber, Status: "pending", Currency: currency,
 		Subtotal: subtotal.FloatString(4), TaxTotal: "0.0000", ShippingTotal: shippingTotalText,
 		ShippingCarrierCode: details.ShippingCarrierCode, ShippingCarrierName: carrierName,
+		ShippingRateMode: rateMode, ShippingWeightGrams: snapshotWeight,
+		ShippingPricingSubtotal: snapshotSubtotal, ShippingRateRule: snapshotRule,
 		GrandTotal: total,
 		Items:      orderLines(lines),
 	}, nil
+}
+
+func nullableJSON(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return string(raw)
 }
 
 func orderLines(lines []checkoutLine) []OrderLineView {
