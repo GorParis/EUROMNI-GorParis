@@ -79,21 +79,37 @@ commandes.
 
 ## État actuel et étapes proposées
 
-Le checkout actuel accepte un code pays ISO alpha-2, interroge les options
-d’expédition configurées pour ce pays et fige le transporteur, la zone et le
-tarif dans la commande. La configuration de transport fonctionne par zones de
-pays et tarifs fixes. Le français est utilisé par défaut dans la boutique de
-démonstration. En revanche, il n’existe pas encore de registre de marchés UE,
-de résolution de locale par préférence, de conversion de devises ni de calcul
-de taxes au checkout.
+Le checkout interroge désormais `GET /v1/reference/eu-countries` pour présenter
+les 27 destinations UE dans un sélecteur français et présélectionne la France.
+Le référentiel comprend code, nom, devise indicative et locales candidates ;
+ces locales sont des pistes de formatage/contenu, pas la preuve que la boutique
+est traduite dans ces langues. Le français reste la locale par défaut. Le
+checkout demande ensuite les options d’expédition configurées pour le pays et
+fige transporteur, zone et tarif dans la commande. La configuration de transport
+fonctionne par zones de pays et tarifs fixes.
+
+Les pays du référentiel ne sont pas pour autant des marchés activés. Une
+destination ne devient livrable que si un transporteur et un tarif actifs la
+couvrent. Le sélecteur de langue du contenu propose les locales trouvées dans
+les traductions du catalogue et des catégories, mémorise la préférence dans le
+navigateur et reste indépendant du pays de livraison. `fr-FR` demeure le défaut
+et le fallback déterministe. Le texte fixe de l’interface n’est pas encore
+traduit ; la configuration générale des locales de boutique et leur gestion
+dans l’administration restent à faire. La conversion de devises et les taxes
+au checkout ne sont pas encore calculées.
 
 Ordre de réalisation proposé :
 
-1. Ajouter le référentiel versionné des 27 pays et les métadonnées de marché,
-   sans activer par défaut vente, transport ou taxes.
-2. Rendre le choix et la préférence de langue indépendants du pays, garder
-   `fr-FR` par défaut et fournir un fallback déterministe lorsqu’une traduction
-   manque.
+1. **Réalisé** — Ajouter le référentiel de référence des 27 pays, avec devises
+   indicatives et locales candidates, sans activer par défaut ventes, transport
+   ou taxes. La source API est `GET /v1/reference/eu-countries`.
+2. **Partiellement réalisé** — Le sélecteur de langue du contenu propose les
+   locales trouvées dans les traductions du catalogue et des catégories,
+   mémorise la préférence dans le navigateur et reste indépendant du pays de
+   livraison. `fr-FR` demeure le défaut et le fallback déterministe. Le texte
+   fixe de l’interface n’est pas encore traduit ; la configuration générale
+   des locales de boutique et leur gestion dans l’administration restent à
+   faire.
 3. Définir la politique de prix et de devise de la boutique ; ne pas présenter
    une conversion comme un prix réellement disponible sans règle explicite.
 4. Ajouter un moteur de taxes fondé sur des données officielles révisables,

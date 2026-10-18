@@ -47,6 +47,27 @@ template.innerHTML = `
     .category-toolbar[hidden] {
       display: none;
     }
+    .locale-control {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      margin: 0 0 1rem;
+      color: #57534e;
+      font: 600 0.85rem/1.4 system-ui, sans-serif;
+    }
+    .locale-control[hidden] {
+      display: none;
+    }
+    .locale-control select {
+      min-height: 2.35rem;
+      padding: 0.4rem 0.65rem;
+      border: 1px solid #d6cdbd;
+      border-radius: 0.35rem;
+      background: #fffefa;
+      color: #292524;
+      font: 400 0.9rem/1.4 system-ui, sans-serif;
+    }
     article {
       height: 100%;
       background: #fffefa;
@@ -355,6 +376,10 @@ template.innerHTML = `
     }
   </style>
   <h2 class="collection-title">La collection</h2>
+  <label class="locale-control" hidden>
+    <span>Langue du contenu</span>
+    <select aria-label="Langue du contenu"></select>
+  </label>
   <nav class="category-toolbar" aria-label="Filtres de catalogue" hidden></nav>
   <p class="status" part="status" role="status" aria-live="polite">Chargement du catalogue…</p>
   <section class="cart" aria-labelledby="cart-title">
@@ -368,7 +393,7 @@ template.innerHTML = `
       <p class="cart-total-row" hidden><span>Total</span><span class="cart-total"></span></p>
       <form class="checkout-form" hidden>
         <h3>Coordonnées de livraison</h3>
-        <p class="checkout-note">Les frais sont calculés selon la destination et le transporteur sélectionné. Le paiement et les taxes ne sont pas encore calculés ; le stock est déduit à la confirmation.</p>
+        <p class="checkout-note">Les frais sont calculés selon la destination et le transporteur sélectionné. La devise dépend des prix configurés ; aucun change automatique n’est appliqué selon le pays. Le paiement et les taxes ne sont pas encore calculés ; le stock est déduit à la confirmation.</p>
         <label>Nom complet<input name="name" autocomplete="name" maxlength="120" required /></label>
         <label>Adresse e-mail<input name="email" type="email" autocomplete="email" maxlength="320" required /></label>
         <label>Adresse<input name="line1" autocomplete="address-line1" maxlength="200" required /></label>
@@ -379,7 +404,11 @@ template.innerHTML = `
         </div>
         <div class="checkout-grid">
           <label>Région<input name="region" autocomplete="address-level1" maxlength="100" /></label>
-          <label>Pays (code ISO)<input name="country" autocomplete="country" maxlength="2" pattern="[A-Za-z]{2}" required /></label>
+          <label>Pays
+            <select name="country" autocomplete="country" required disabled>
+              <option value="">Chargement des pays de l’Union européenne…</option>
+            </select>
+          </label>
         </div>
         <label>Mode de livraison
           <select name="shipping_carrier_code" required disabled>
@@ -397,14 +426,33 @@ template.innerHTML = `
 `;
 
 const cartTokenKey = "euromni.cart.token";
+const localePreferenceKey = "euromni.locale";
+
+function translationForEntries(translations, locale, defaultLocale = "fr-FR", fallback = {}) {
+  const entries = Array.isArray(translations) ? translations : [];
+  const language = locale.split("-")[0].toLowerCase();
+  const defaultLanguage = defaultLocale.split("-")[0].toLowerCase();
+  return entries.find((item) => item.locale === locale)
+    || entries.find((item) => item.locale && item.locale.split("-")[0].toLowerCase() === language)
+    || entries.find((item) => item.locale === defaultLocale)
+    || entries.find((item) => item.locale && item.locale.split("-")[0].toLowerCase() === defaultLanguage)
+    || [...entries].sort((left, right) => String(left.locale).localeCompare(String(right.locale)))[0]
+    || fallback;
+}
 
 function translationFor(product, locale) {
-  const translations = Array.isArray(product.translations) ? product.translations : [];
-  const language = locale.split("-")[0].toLowerCase();
-  return translations.find((item) => item.locale === locale)
-    || translations.find((item) => item.locale && item.locale.split("-")[0].toLowerCase() === language)
-    || translations[0]
-    || { name: product.slug || "Produit", description: "" };
+  return translationForEntries(product.translations, locale, "fr-FR", {
+    name: product.slug || "Produit",
+    description: "",
+  });
+}
+
+function localeLabel(locale) {
+  try {
+    return new Intl.DisplayNames(["fr-FR"], { type: "language" }).of(locale) || locale;
+  } catch {
+    return locale;
+  }
 }
 
 function priceFor(product, locale) {
@@ -474,7 +522,10 @@ class EuromniCatalog extends HTMLElement {
     this.shippingController = null;
     this.detailController = null;
     this.categories = [];
+    this.currentProducts = [];
     this.categoryFilter = "";
+    this.availableLocales = new Set(["fr-FR"]);
+    this.savedLocalePreference = "";
     this.onPopState = () => this.showRoute();
   }
 
@@ -490,7 +541,16 @@ class EuromniCatalog extends HTMLElement {
     this.shadowRoot.querySelector('[name="shipping_carrier_code"]').addEventListener("change", () => {
       this.updateCheckoutEstimate();
     });
+    this.shadowRoot.querySelector(".locale-control select").addEventListener("change", (event) => {
+      this.changeLocale(event.currentTarget.value);
+    });
+    try {
+      this.savedLocalePreference = localStorage.getItem(localePreferenceKey) || "";
+    } catch {
+      this.setCartStatus("La préférence de langue ne peut pas être chargée depuis ce navigateur.", true);
+    }
     window.addEventListener("popstate", this.onPopState);
+    this.loadEUCountries();
     const params = new URLSearchParams(window.location.search);
     if (params.get("category")) {
       this.categoryFilter = params.get("category");
@@ -518,7 +578,11 @@ class EuromniCatalog extends HTMLElement {
   }
 
   get locale() {
-    return this.getAttribute("locale") || "fr-FR";
+    const configuredLocale = this.getAttribute("locale") || "fr-FR";
+    if (this.savedLocalePreference && this.availableLocales.has(this.savedLocalePreference)) {
+      return this.savedLocalePreference;
+    }
+    return this.availableLocales.has(configuredLocale) ? configuredLocale : "fr-FR";
   }
 
   get src() {
@@ -535,6 +599,45 @@ class EuromniCatalog extends HTMLElement {
 
   get shippingSrc() {
     return this.getAttribute("shipping-src") || "/v1/shipping-options";
+  }
+
+  async loadEUCountries() {
+    const select = this.shadowRoot.querySelector('[name="country"]');
+    const status = this.shadowRoot.querySelector(".shipping-options-status");
+    try {
+      const response = await fetch("/v1/reference/eu-countries", {
+        headers: { Accept: "application/json" },
+      });
+      let body;
+      try {
+        body = await response.json();
+      } catch {
+        throw new Error("Réponse invalide du référentiel des pays.");
+      }
+      const countries = body?.data?.countries;
+      if (!response.ok || !Array.isArray(countries) || countries.length !== 27) {
+        throw new Error(body?.error || "Le référentiel des pays est indisponible.");
+      }
+      const options = [new Option("Choisissez un pays de livraison", "")];
+      for (const country of countries) {
+        if (typeof country.code !== "string" || typeof country.name !== "string") {
+          throw new Error("Le référentiel des pays contient une entrée invalide.");
+        }
+        options.push(new Option(country.name, country.code));
+      }
+      select.replaceChildren(...options);
+      select.disabled = false;
+      select.value = countries.some((country) => country.code === "FR") ? "FR" : "";
+      if (select.value) {
+        await this.loadShippingOptions(select.value);
+      } else {
+        status.textContent = "";
+      }
+    } catch (error) {
+      select.replaceChildren(new Option("Pays indisponibles", ""));
+      select.disabled = true;
+      status.textContent = error.message || "Impossible de charger le référentiel des pays.";
+    }
   }
 
   async loadShippingOptions(countryValue) {
@@ -666,6 +769,9 @@ class EuromniCatalog extends HTMLElement {
       if (controller.signal.aborted) {
         return;
       }
+      this.currentProducts = products;
+      this.refreshAvailableLocales(products);
+      this.renderCategoryFilters();
       if (products.length === 0) {
         this.productsByVariant.clear();
         status.textContent = "Aucun produit actif.";
@@ -707,9 +813,11 @@ class EuromniCatalog extends HTMLElement {
       }
       const body = await response.json();
       this.categories = Array.isArray(body.data) ? body.data : [];
+      this.refreshAvailableLocales();
       this.renderCategoryFilters();
     } catch {
       this.categories = [];
+      this.refreshAvailableLocales();
       this.renderCategoryFilters();
     }
   }
@@ -735,7 +843,7 @@ class EuromniCatalog extends HTMLElement {
     nav.append(allButton);
 
     for (const category of this.categories) {
-      const translation = Array.isArray(category.translations) ? category.translations.find((entry) => entry.locale === this.locale) || category.translations[0] : null;
+      const translation = translationForEntries(category.translations, this.locale);
       const button = document.createElement("button");
       button.type = "button";
       button.className = "category-button";
@@ -749,6 +857,54 @@ class EuromniCatalog extends HTMLElement {
       nav.append(button);
     }
     nav.hidden = false;
+  }
+
+  refreshAvailableLocales(products = this.currentProducts) {
+    const locales = new Set(["fr-FR"]);
+    for (const entry of [...products, ...this.categories]) {
+      for (const translation of Array.isArray(entry.translations) ? entry.translations : []) {
+        if (typeof translation.locale === "string" && translation.locale) {
+          locales.add(translation.locale);
+        }
+      }
+    }
+    this.availableLocales = locales;
+    if (this.savedLocalePreference && !locales.has(this.savedLocalePreference)) {
+      this.savedLocalePreference = "";
+      try {
+        localStorage.removeItem(localePreferenceKey);
+      } catch {
+        this.setCartStatus("La préférence de langue indisponible n’a pas pu être effacée.", true);
+      }
+    }
+    const control = this.shadowRoot.querySelector(".locale-control");
+    const select = control.querySelector("select");
+    select.replaceChildren();
+    for (const locale of [...locales].sort((left, right) => left.localeCompare(right))) {
+      select.append(new Option(localeLabel(locale), locale));
+    }
+    control.hidden = locales.size < 2;
+    select.value = this.locale;
+  }
+
+  async changeLocale(locale) {
+    if (!this.availableLocales.has(locale) || locale === this.locale) {
+      return;
+    }
+    this.savedLocalePreference = locale;
+    try {
+      localStorage.setItem(localePreferenceKey, locale);
+    } catch {
+      this.setCartStatus("La langue est modifiée pour cette visite, mais la préférence ne peut pas être enregistrée.", true);
+    }
+    this.refreshAvailableLocales();
+    this.renderCategoryFilters();
+    await this.load();
+    this.renderCart(this.currentCart || { items: [], total: { amount: "0.0000", currency: "" } });
+    const country = this.shadowRoot.querySelector('[name="country"]').value;
+    if (country) {
+      await this.loadShippingOptions(country);
+    }
   }
 
   renderProduct(product) {

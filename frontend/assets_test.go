@@ -43,6 +43,13 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 	}
 	for _, feature := range []string{
 		"/v1/shipping-options",
+		"/v1/reference/eu-countries",
+		"Choisissez un pays de livraison",
+		"aucun change automatique",
+		"Langue du contenu",
+		"euromni.locale",
+		"refreshAvailableLocales",
+		"translationForEntries",
 		"shipping_carrier_code",
 		"checkout-estimate",
 		"shipping method unavailable for this destination",

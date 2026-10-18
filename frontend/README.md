@@ -35,8 +35,16 @@ Le cadrage des marchés distingue le pays de livraison, la langue, la devise,
 les taxes, le transport et le paiement. La boutique de démonstration conserve
 le français comme langue par défaut ; le code pays ne force pas la langue.
 L’extension aux 27 pays de l’UE ne les active pas automatiquement pour la vente
-ou la livraison. Voir [le modèle des marchés et localisations
-européens](../docs/marches-localisation-europe.md).
+ou la livraison. Le checkout charge les destinations depuis
+`/v1/reference/eu-countries`, présélectionne la France et n’affiche que les
+transporteurs configurés pour le pays sélectionné. Les devises indicatives et
+locales candidates du référentiel ne déclenchent ni conversion ni changement
+automatique de langue. Un sélecteur de langue du contenu n’offre que les
+locales réellement présentes dans les traductions du catalogue et les mémorise
+dans le navigateur ; le français reste le fallback déterministe. Cette
+préférence ne déduit ni ne modifie le pays de livraison et ne prétend pas
+traduire toute l’interface d’administration ou le texte fixe de la boutique.
+Voir [le modèle des marchés et localisations européens](../docs/marches-localisation-europe.md).
 
 Le seed de démonstration présente cinq produits : cabas, ceinture et chemise
 avec plusieurs tailles au choix pour les deux derniers, plus une tasse et une

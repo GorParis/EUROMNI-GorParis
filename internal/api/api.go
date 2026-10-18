@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"euromni/frontend"
+	"euromni/internal/market"
 	"euromni/internal/seed"
 	"euromni/internal/store"
 )
@@ -28,6 +29,7 @@ func currentProductReader() store.ProductReader {
 func Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", health)
 	mux.HandleFunc("GET /v1/status", status)
+	mux.HandleFunc("GET /v1/reference/eu-countries", euCountriesReference)
 	mux.HandleFunc("GET /v1/products", productsList)
 	mux.HandleFunc("GET /v1/products/{id}", productByID)
 	mux.HandleFunc("GET /v1/categories", categoriesList)
@@ -83,6 +85,15 @@ func status(w http.ResponseWriter, _ *http.Request) {
 		"api":       []string{"rest", "graphql"},
 		"abi":       "euromni.abi.v1",
 		"datastore": "postgresql",
+	})
+}
+
+func euCountriesReference(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"default_locale": "fr-FR",
+			"countries":      market.EUCountries(),
+		},
 	})
 }
 

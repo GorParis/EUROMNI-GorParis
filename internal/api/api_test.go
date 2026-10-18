@@ -44,6 +44,51 @@ func TestStorefrontServesShadowCatalog(t *testing.T) {
 	}
 }
 
+func TestEUCountriesReferenceReturnsAllMarketsAndFrenchDefault(t *testing.T) {
+	mux := http.NewServeMux()
+	Register(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/reference/eu-countries", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("EU countries reference status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body)
+	}
+	var body struct {
+		Data struct {
+			DefaultLocale string `json:"default_locale"`
+			Countries     []struct {
+				Code             string   `json:"code"`
+				Name             string   `json:"name"`
+				Currency         string   `json:"currency"`
+				LocaleCandidates []string `json:"locale_candidates"`
+			} `json:"countries"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode EU countries reference: %v", err)
+	}
+	if body.Data.DefaultLocale != "fr-FR" || len(body.Data.Countries) != 27 {
+		t.Fatalf("EU countries reference metadata = locale %q, countries %d; want fr-FR and 27",
+			body.Data.DefaultLocale, len(body.Data.Countries))
+	}
+	foundFrance, foundBulgaria, foundPoland := false, false, false
+	for _, country := range body.Data.Countries {
+		switch country.Code {
+		case "FR":
+			foundFrance = country.Name == "France" && country.Currency == "EUR" &&
+				strings.Contains(strings.Join(country.LocaleCandidates, ","), "fr-FR")
+		case "BG":
+			foundBulgaria = country.Currency == "EUR"
+		case "PL":
+			foundPoland = country.Currency == "PLN"
+		}
+	}
+	if !foundFrance || !foundBulgaria || !foundPoland {
+		t.Fatalf("EU reference missing expected locale/currency metadata: France=%t Bulgaria=%t Poland=%t",
+			foundFrance, foundBulgaria, foundPoland)
+	}
+}
+
 func TestProductsListReturnsActiveCatalog(t *testing.T) {
 	originalReader := productReader
 	SetProductReader(store.NewMemory())
