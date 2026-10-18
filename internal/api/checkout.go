@@ -17,6 +17,7 @@ type checkoutRequest struct {
 	Name                  string                `json:"name"`
 	ShippingCarrierCode   string                `json:"shipping_carrier_code"`
 	ExpectedShippingTotal string                `json:"expected_shipping_total,omitempty"`
+	ExpectedShippingQuoteID string              `json:"expected_shipping_quote_id,omitempty"`
 	ShippingAddress       store.ShippingAddress `json:"shipping_address"`
 }
 
@@ -94,6 +95,7 @@ func decodeCheckoutRequest(w http.ResponseWriter, r *http.Request) (store.Checko
 	name := strings.TrimSpace(request.Name)
 	carrierCode := strings.TrimSpace(request.ShippingCarrierCode)
 	expectedShippingTotal := strings.TrimSpace(request.ExpectedShippingTotal)
+	expectedShippingQuoteID := strings.TrimSpace(request.ExpectedShippingQuoteID)
 	parsedEmail, err := mail.ParseAddress(strings.TrimSpace(request.Email))
 	if err != nil || parsedEmail.Address == "" || len(parsedEmail.Address) > 320 || len(name) == 0 || len(name) > 120 ||
 		!shippingCodePattern.MatchString(carrierCode) ||
@@ -105,9 +107,13 @@ func decodeCheckoutRequest(w http.ResponseWriter, r *http.Request) (store.Checko
 	if expectedShippingTotal != "" && !shippingAmountPattern.MatchString(expectedShippingTotal) {
 		return store.CheckoutDetails{}, errors.New("invalid expected shipping total")
 	}
+	if expectedShippingQuoteID != "" && !shippingQuoteIDPattern.MatchString(expectedShippingQuoteID) {
+		return store.CheckoutDetails{}, errors.New("invalid expected shipping quote id")
+	}
 	return store.CheckoutDetails{
 		Email: parsedEmail.Address, Name: name, ShippingCarrierCode: carrierCode,
-		ExpectedShippingTotal: expectedShippingTotal, ShippingAddress: address,
+		ExpectedShippingTotal: expectedShippingTotal, ExpectedShippingQuoteID: expectedShippingQuoteID,
+		ShippingAddress: address,
 	}, nil
 }
 

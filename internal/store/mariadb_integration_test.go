@@ -54,6 +54,22 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	}
 
 	store := NewSQLWithDialect(database, dbdialect.MariaDB)
+	shippingConfig, err := store.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("read seeded MariaDB shipping config: %v", err)
+	}
+	for index := range shippingConfig.Carriers {
+		if shippingConfig.Carriers[index].Code == "colissimo" {
+			shippingConfig.Carriers[index].Active = true
+		}
+	}
+	shippingConfig.Rates = []ShippingRate{{
+		CarrierCode: "colissimo", ZoneCode: "france-ue", Mode: "fixed",
+		Amount: "6.90", Currency: "EUR", Active: true,
+	}}
+	if err := store.ReplaceShippingConfig(ctx, seed.ShopID, *shippingConfig); err != nil {
+		t.Fatalf("reset MariaDB integration shipping config: %v", err)
+	}
 	products, err := store.ListProducts(ctx, seed.ShopID)
 	if err != nil {
 		t.Fatalf("read seeded products: %v", err)
@@ -249,6 +265,7 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	weightedOrder, err := store.CheckoutCart(ctx, seed.ShopID, weightedTokenHash[:], CheckoutDetails{
 		Email: weightedEmail, Name: "MariaDB Weight Value",
 		ShippingCarrierCode: "colissimo", ExpectedShippingTotal: quotes[0].Amount,
+		ExpectedShippingQuoteID: quotes[0].QuoteID,
 		ShippingAddress: ShippingAddress{
 			Line1: "1 rue de test", City: "Paris", PostalCode: "75001", Country: "FR",
 		},

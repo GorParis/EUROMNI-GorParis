@@ -1127,13 +1127,15 @@ class EuromniCatalog extends HTMLElement {
     button.disabled = true;
     button.textContent = "Enregistrement…";
     const values = Object.fromEntries(new FormData(form).entries());
+    const shippingOption = this.shippingOptions.find(
+      (option) => option.carrier_code === values.shipping_carrier_code,
+    );
     const details = {
       email: values.email,
       name: values.name,
       shipping_carrier_code: values.shipping_carrier_code,
-      expected_shipping_total: this.shippingOptions.find(
-        (option) => option.carrier_code === values.shipping_carrier_code,
-      )?.amount || "",
+      expected_shipping_total: shippingOption?.amount || "",
+      expected_shipping_quote_id: shippingOption?.quote_id || "",
       shipping_address: {
         line1: values.line1,
         line2: values.line2,

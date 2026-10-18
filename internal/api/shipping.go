@@ -15,6 +15,7 @@ import (
 
 var shippingCodePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 var shippingAmountPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,14})(\.[0-9]{1,4})?$`)
+var shippingQuoteIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var shippingCountryPattern = regexp.MustCompile(`^[A-Z]{2}$`)
 var shippingCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 

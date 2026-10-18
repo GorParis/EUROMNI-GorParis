@@ -39,6 +39,7 @@ type CheckoutDetails struct {
 	Name                  string
 	ShippingCarrierCode   string
 	ExpectedShippingTotal string
+	ExpectedShippingQuoteID string
 	ShippingAddress       ShippingAddress
 }
 
@@ -234,6 +235,11 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	if err != nil {
 		return nil, err
 	}
+	shippingOption := ShippingOption{
+		CarrierCode: details.ShippingCarrierCode, CarrierName: carrierName,
+		ZoneCode: zoneCode, ZoneName: zoneName, Amount: shippingAmount,
+		Currency: currency, RateMode: rateMode,
+	}
 	var snapshotRule json.RawMessage
 	var snapshotWeight *int64
 	var snapshotSubtotal *string
@@ -251,6 +257,10 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 			return nil, ErrShippingUnavailable
 		}
 		shippingAmount = rule.Amount
+		shippingOption.Amount = rule.Amount
+		shippingOption.WeightGrams = &totalWeight
+		shippingOption.PricingSubtotal = subtotal.FloatString(4)
+		shippingOption.RateRule = rule
 		ruleJSON, err := json.Marshal(rule)
 		if err != nil {
 			return nil, err
@@ -272,6 +282,15 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	if details.ExpectedShippingTotal != "" {
 		expected, ok := new(big.Rat).SetString(details.ExpectedShippingTotal)
 		if !ok || expected.Cmp(shippingTotal) != 0 {
+			return nil, ErrShippingQuoteChanged
+		}
+	}
+	if details.ExpectedShippingQuoteID != "" {
+		quoteID, err := shippingOptionQuoteID(shippingOption)
+		if err != nil {
+			return nil, err
+		}
+		if quoteID != details.ExpectedShippingQuoteID {
 			return nil, ErrShippingQuoteChanged
 		}
 	}
@@ -423,6 +442,20 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 	}
 	if details.ShippingCarrierCode != "colissimo" || details.ShippingAddress.Country != "FR" {
 		return nil, ErrShippingUnavailable
+	}
+	shippingOption := ShippingOption{
+		CarrierCode: "colissimo", CarrierName: "Colissimo (tarif de démonstration)",
+		ZoneCode: "france-ue", ZoneName: "France et Union européenne",
+		Amount: "6.9000", Currency: cart.currency, RateMode: "fixed",
+	}
+	if details.ExpectedShippingQuoteID != "" {
+		quoteID, err := shippingOptionQuoteID(shippingOption)
+		if err != nil {
+			return nil, err
+		}
+		if quoteID != details.ExpectedShippingQuoteID {
+			return nil, ErrShippingQuoteChanged
+		}
 	}
 	variantIDs := make([]string, 0, len(cart.lines))
 	for variantID := range cart.lines {

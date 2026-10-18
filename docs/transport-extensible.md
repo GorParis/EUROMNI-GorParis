@@ -54,7 +54,13 @@ panier et un pays `{ "country": "FR" }` pour calculer les tarifs matriciels.
 Le checkout recalcule le montant. Pour les matrices, il exige le champ
 `expected_shipping_total`; tout décalage avec le devis présenté provoque un
 conflit et demande une nouvelle sélection. Le champ reste facultatif pour les
-clients historiques utilisant uniquement les forfaits.
+clients historiques utilisant uniquement les forfaits. Les options exposent
+également un `quote_id`, empreinte déterministe de l’option complète; le
+storefront le renvoie dans `expected_shipping_quote_id`. Si la règle, le libellé,
+la zone ou tout autre élément de l’option change, le checkout refuse le devis
+même si le montant reste identique. Ce champ est additif et facultatif pour les
+clients API historiques; l’empreinte détecte une évolution, elle ne remplace ni
+l’autorisation du panier ni une durée d’expiration serveur.
 
 L’admin configure les règles matricielles en JSON sous chaque tarif. Exemple :
 

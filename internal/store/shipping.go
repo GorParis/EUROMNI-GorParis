@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -75,6 +76,17 @@ type ShippingOption struct {
 	WeightGrams     *int64            `json:"weight_grams,omitempty"`
 	PricingSubtotal string            `json:"pricing_subtotal,omitempty"`
 	RateRule        *ShippingRateRule `json:"rate_rule,omitempty"`
+	QuoteID         string            `json:"quote_id,omitempty"`
+}
+
+func shippingOptionQuoteID(option ShippingOption) (string, error) {
+	option.QuoteID = ""
+	payload, err := json.Marshal(option)
+	if err != nil {
+		return "", err
+	}
+	fingerprint := sha256.Sum256(payload)
+	return hex.EncodeToString(fingerprint[:]), nil
 }
 
 func (s *Store) ListShippingOptions(ctx context.Context, shopID, country string) ([]ShippingOption, error) {
@@ -107,6 +119,11 @@ func (s *Store) ListShippingOptions(ctx context.Context, shopID, country string)
 			&option.CarrierCode, &option.CarrierName, &option.ZoneCode,
 			&option.ZoneName, &option.Amount, &option.Currency,
 		); err != nil {
+			return nil, err
+		}
+		option.RateMode = "fixed"
+		option.QuoteID, err = shippingOptionQuoteID(option)
+		if err != nil {
 			return nil, err
 		}
 		options = append(options, option)
@@ -268,6 +285,10 @@ func (s *Store) ListCartShippingOptions(ctx context.Context, shopID string, toke
 		default:
 			return nil, fmt.Errorf("unsupported shipping rate mode %q", entry.mode)
 		}
+		option.QuoteID, err = shippingOptionQuoteID(option)
+		if err != nil {
+			return nil, err
+		}
 		options = append(options, option)
 	}
 	return options, nil
@@ -340,14 +361,21 @@ func (m *Memory) ListShippingOptions(ctx context.Context, shopID, country string
 	if shopID != seed.ShopID || country != "FR" {
 		return []ShippingOption{}, nil
 	}
-	return []ShippingOption{{
+	option := ShippingOption{
 		CarrierCode: "colissimo",
 		CarrierName: "Colissimo (tarif de démonstration)",
 		ZoneCode:    "france-ue",
 		ZoneName:    "France et Union européenne",
 		Amount:      "6.9000",
 		Currency:    "EUR",
-	}}, nil
+		RateMode:    "fixed",
+	}
+	var err error
+	option.QuoteID, err = shippingOptionQuoteID(option)
+	if err != nil {
+		return nil, err
+	}
+	return []ShippingOption{option}, nil
 }
 
 func (m *Memory) ListCartShippingOptions(ctx context.Context, shopID string, tokenHash []byte, country string) ([]ShippingOption, error) {
@@ -366,7 +394,7 @@ func (m *Memory) ListCartShippingOptions(ctx context.Context, shopID string, tok
 	if country != "FR" || len(cart.lines) == 0 {
 		return []ShippingOption{}, nil
 	}
-	return []ShippingOption{{
+	option := ShippingOption{
 		CarrierCode: "colissimo",
 		CarrierName: "Colissimo (tarif de démonstration)",
 		ZoneCode:    "france-ue",
@@ -374,7 +402,13 @@ func (m *Memory) ListCartShippingOptions(ctx context.Context, shopID string, tok
 		Amount:      "6.9000",
 		Currency:    cart.currency,
 		RateMode:    "fixed",
-	}}, nil
+	}
+	quoteID, err := shippingOptionQuoteID(option)
+	if err != nil {
+		return nil, err
+	}
+	option.QuoteID = quoteID
+	return []ShippingOption{option}, nil
 }
 
 func (s *Store) GetShippingConfig(ctx context.Context, shopID string) (*ShippingConfig, error) {

@@ -290,8 +290,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err := db.SQL.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("read migration ledger: %v", err)
 	}
-	if migrationCount != 9 {
-		t.Fatalf("recorded migrations = %d, want 9", migrationCount)
+	if migrationCount != 10 {
+		t.Fatalf("recorded migrations = %d, want 10", migrationCount)
 	}
 	installedModule, err := db.GetInstalledModule(ctx, seed.ShopID, seed.ModuleID)
 	if err != nil {
@@ -647,6 +647,10 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 	if err != nil || len(options) != 1 || options[0].Amount != "7.0000" {
 		t.Fatalf("1000g quote at inclusive weight boundary = %+v, error = %v", options, err)
 	}
+	initialQuoteID := options[0].QuoteID
+	if initialQuoteID == "" {
+		t.Fatal("weight-value quote has no quote id")
+	}
 	if _, err := db.SQL.ExecContext(ctx, `UPDATE variants SET weight_grams = NULL WHERE id = $1`, seed.VariantID); err != nil {
 		t.Fatalf("remove test variant weight: %v", err)
 	}
@@ -671,6 +675,7 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 	if _, err := db.CheckoutCart(ctx, seed.ShopID, weightedToken[:], CheckoutDetails{
 		Email: weightedEmail, Name: "Weight Value Shipping",
 		ShippingCarrierCode: "custom-carrier", ExpectedShippingTotal: "7.00",
+		ExpectedShippingQuoteID: initialQuoteID,
 		ShippingAddress: ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
 	}); !errors.Is(err, ErrShippingQuoteChanged) {
 		t.Fatalf("checkout with stale quote error = %v, want quote changed", err)
@@ -679,9 +684,28 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 	if err != nil || len(options) != 1 || options[0].Amount != "8.0000" {
 		t.Fatalf("refreshed 1000g quote = %+v, error = %v", options, err)
 	}
+	priceQuoteID := options[0].QuoteID
+	changedMaxWeight := int64(2000)
+	weightedConfig.Rates[0].Rules[3].MaxWeightGrams = &changedMaxWeight
+	if err := db.ReplaceShippingConfig(ctx, seed.ShopID, weightedConfig); err != nil {
+		t.Fatalf("change weight-value rule bounds without changing price: %v", err)
+	}
+	if _, err := db.CheckoutCart(ctx, seed.ShopID, weightedToken[:], CheckoutDetails{
+		Email: weightedEmail, Name: "Weight Value Shipping",
+		ShippingCarrierCode: "custom-carrier", ExpectedShippingTotal: "8.00",
+		ExpectedShippingQuoteID: priceQuoteID,
+		ShippingAddress: ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+	}); !errors.Is(err, ErrShippingQuoteChanged) {
+		t.Fatalf("checkout with stale same-price quote error = %v, want quote changed", err)
+	}
+	options, err = db.ListCartShippingOptions(ctx, seed.ShopID, weightedToken[:], "FR")
+	if err != nil || len(options) != 1 || options[0].Amount != "8.0000" || options[0].QuoteID == priceQuoteID {
+		t.Fatalf("same-price refreshed quote = %+v, error = %v", options, err)
+	}
 	order, err := db.CheckoutCart(ctx, seed.ShopID, weightedToken[:], CheckoutDetails{
 		Email: weightedEmail, Name: "Weight Value Shipping",
 		ShippingCarrierCode: "custom-carrier", ExpectedShippingTotal: options[0].Amount,
+		ExpectedShippingQuoteID: options[0].QuoteID,
 		ShippingAddress: ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
 	})
 	if err != nil {

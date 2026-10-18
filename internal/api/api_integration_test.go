@@ -96,6 +96,15 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		!strings.Contains(shippingQuote.Body.String(), `"amount":"6.9000"`) {
 		t.Fatalf("cart shipping quote status/body = %d/%s", shippingQuote.Code, shippingQuote.Body)
 	}
+	var shippingQuoteData struct {
+		Data []struct {
+			QuoteID string `json:"quote_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(shippingQuote.Body.Bytes(), &shippingQuoteData); err != nil ||
+		len(shippingQuoteData.Data) != 1 || shippingQuoteData.Data[0].QuoteID == "" {
+		t.Fatalf("decode cart shipping quote id: %+v, error = %v", shippingQuoteData, err)
+	}
 
 	queryBody := `{"query":"{ products { slug } product(id: \"` + seed.ProductID + `\") { slug variants { prices { amount } } } categories { slug } cart { total { amount currency } } }"}`
 	graphqlResponse := performAPIRequest(mux, http.MethodPost, "/graphql", "Bearer "+created.Data.Token, queryBody)
@@ -103,7 +112,7 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		t.Fatalf("GraphQL status/body = %d/%s", graphqlResponse.Code, graphqlResponse.Body)
 	}
 
-	checkoutBody := `{"email":"checkout@example.com","name":"Checkout integration","shipping_carrier_code":"colissimo","expected_shipping_total":"6.9000","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
+	checkoutBody := `{"email":"checkout@example.com","name":"Checkout integration","shipping_carrier_code":"colissimo","expected_shipping_total":"6.9000","expected_shipping_quote_id":"` + shippingQuoteData.Data[0].QuoteID + `","shipping_address":{"line1":"1 rue du Test","city":"Paris","postal_code":"75001","country":"FR"}}`
 	checkoutResponse := performAPIRequest(mux, http.MethodPost, "/v1/checkout", "Bearer "+created.Data.Token, checkoutBody)
 	if checkoutResponse.Code != http.StatusCreated ||
 		!strings.Contains(checkoutResponse.Body.String(), `"shipping_total":"6.9000"`) ||
