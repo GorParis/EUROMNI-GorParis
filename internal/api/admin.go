@@ -189,7 +189,11 @@ func adminProducts(w http.ResponseWriter, r *http.Request) {
 	if products == nil {
 		products = []store.ProductView{}
 	}
-	writePrivateJSON(w, http.StatusOK, map[string]any{"data": products})
+	adminProducts := make([]store.AdminProductView, len(products))
+	for i, product := range products {
+		adminProducts[i] = store.AdminProduct(product)
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": adminProducts})
 }
 
 func adminCategories(w http.ResponseWriter, r *http.Request) {
@@ -557,7 +561,7 @@ func adminCreateProduct(w http.ResponseWriter, r *http.Request) {
 		writeCatalogWriteError(w, err)
 		return
 	}
-	writePrivateJSON(w, http.StatusCreated, map[string]any{"data": product})
+	writePrivateJSON(w, http.StatusCreated, map[string]any{"data": store.AdminProduct(*product)})
 }
 
 func adminUpdateProduct(w http.ResponseWriter, r *http.Request) {
@@ -586,7 +590,7 @@ func adminUpdateProduct(w http.ResponseWriter, r *http.Request) {
 		writeCatalogWriteError(w, err)
 		return
 	}
-	writePrivateJSON(w, http.StatusOK, map[string]any{"data": product})
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": store.AdminProduct(*product)})
 }
 
 func adminArchiveProduct(w http.ResponseWriter, r *http.Request) {
@@ -606,6 +610,142 @@ func adminArchiveProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func adminBrands(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.CatalogReferenceWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "catalog references unavailable"})
+		return
+	}
+	brands, err := writer.ListBrands(r.Context(), session.ShopID)
+	if err != nil {
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": brands})
+}
+
+func adminCreateBrand(w http.ResponseWriter, r *http.Request) {
+	var input store.BrandInput
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	if err := validateBrandInput(input); err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.CatalogReferenceWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "catalog references unavailable"})
+		return
+	}
+	brand, err := writer.CreateBrand(r.Context(), session.ShopID, input)
+	if err != nil {
+		writeCatalogWriteError(w, err)
+		return
+	}
+	writePrivateJSON(w, http.StatusCreated, map[string]any{"data": brand})
+}
+
+func adminUpdateBrand(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "brand id is required"})
+		return
+	}
+	var input store.BrandInput
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	if err := validateBrandInput(input); err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.CatalogReferenceWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "catalog references unavailable"})
+		return
+	}
+	brand, err := writer.UpdateBrand(r.Context(), session.ShopID, id, input)
+	if err != nil {
+		writeCatalogWriteError(w, err)
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": brand})
+}
+
+func adminSuppliers(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.CatalogReferenceWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "catalog references unavailable"})
+		return
+	}
+	suppliers, err := writer.ListSuppliers(r.Context(), session.ShopID)
+	if err != nil {
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": suppliers})
+}
+
+func adminCreateSupplier(w http.ResponseWriter, r *http.Request) {
+	var input store.SupplierInput
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	if err := validateSupplierInput(input); err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.CatalogReferenceWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "catalog references unavailable"})
+		return
+	}
+	supplier, err := writer.CreateSupplier(r.Context(), session.ShopID, input)
+	if err != nil {
+		writeCatalogWriteError(w, err)
+		return
+	}
+	writePrivateJSON(w, http.StatusCreated, map[string]any{"data": supplier})
+}
+
+func adminUpdateSupplier(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "supplier id is required"})
+		return
+	}
+	var input store.SupplierInput
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	if err := validateSupplierInput(input); err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.CatalogReferenceWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "catalog references unavailable"})
+		return
+	}
+	supplier, err := writer.UpdateSupplier(r.Context(), session.ShopID, id, input)
+	if err != nil {
+		writeCatalogWriteError(w, err)
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": supplier})
 }
 
 func adminCreateCategory(w http.ResponseWriter, r *http.Request) {
@@ -710,6 +850,25 @@ func validateProductInput(input store.ProductInput) error {
 	if len(input.Translations) == 0 || len(input.Translations) > 32 {
 		return errors.New("at least one and at most 32 translations are required")
 	}
+	if len(input.BrandID) > 64 {
+		return errors.New("brand id is invalid")
+	}
+	if err := store.ValidatePersonalizationOptions(input.PersonalizationOptions); err != nil {
+		return err
+	}
+	if len(input.SupplierIDs) > 20 {
+		return errors.New("at most 20 product suppliers are allowed")
+	}
+	productSuppliers := make(map[string]struct{}, len(input.SupplierIDs))
+	for _, supplierID := range input.SupplierIDs {
+		if strings.TrimSpace(supplierID) == "" {
+			return errors.New("supplier ids must not be empty")
+		}
+		if _, exists := productSuppliers[supplierID]; exists {
+			return errors.New("product supplier ids must be unique")
+		}
+		productSuppliers[supplierID] = struct{}{}
+	}
 	seen := make(map[string]struct{}, len(input.Translations))
 	for _, translation := range input.Translations {
 		if !validTranslation(translation.Locale, translation.Name, translation.Description) {
@@ -735,6 +894,19 @@ func validateProductInput(input store.ProductInput) error {
 		variant := input.Variants[i]
 		if !catalogSKU.MatchString(variant.SKU) {
 			return errors.New("each variant requires a valid SKU")
+		}
+		if len(variant.Suppliers) > 20 {
+			return errors.New("at most 20 suppliers are allowed per variant")
+		}
+		variantSuppliers := make(map[string]struct{}, len(variant.Suppliers))
+		for _, supplier := range variant.Suppliers {
+			if strings.TrimSpace(supplier.SupplierID) == "" || !catalogSKU.MatchString(supplier.SupplierSKU) {
+				return errors.New("variant suppliers require an id and valid supplier SKU")
+			}
+			if _, exists := variantSuppliers[supplier.SupplierID]; exists {
+				return errors.New("variant supplier ids must be unique")
+			}
+			variantSuppliers[supplier.SupplierID] = struct{}{}
 		}
 		if variant.WeightGrams != nil && (*variant.WeightGrams < 0 || *variant.WeightGrams > 2147483647) {
 			return errors.New("variant weight_grams must be between 0 and 2147483647")
@@ -802,6 +974,26 @@ func validateProductInput(input store.ProductInput) error {
 			return errors.New("category ids must be unique")
 		}
 		categories[categoryID] = struct{}{}
+	}
+	return nil
+}
+
+func validateBrandInput(input store.BrandInput) error {
+	if !catalogSlugPattern.MatchString(input.Slug) || len(input.Slug) > 128 {
+		return errors.New("brand slug must contain lowercase letters, numbers, and single hyphens")
+	}
+	if strings.TrimSpace(input.Name) != input.Name || len(input.Name) == 0 || len(input.Name) > 200 {
+		return errors.New("brand name must be between 1 and 200 bytes")
+	}
+	return nil
+}
+
+func validateSupplierInput(input store.SupplierInput) error {
+	if !catalogSKU.MatchString(input.Code) {
+		return errors.New("supplier code is invalid")
+	}
+	if strings.TrimSpace(input.Name) != input.Name || len(input.Name) == 0 || len(input.Name) > 200 {
+		return errors.New("supplier name must be between 1 and 200 bytes")
 	}
 	return nil
 }

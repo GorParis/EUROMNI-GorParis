@@ -62,15 +62,25 @@ func (s *Store) CreateProduct(ctx context.Context, shopID string, input ProductI
 	}
 	defer tx.Rollback()
 
+	if err := validateCatalogReferenceIDs(ctx, tx, shopID, input.BrandID, input.SupplierIDs, input.Variants); err != nil {
+		return nil, err
+	}
+	personalizationOptions, err := json.Marshal(input.PersonalizationOptions)
+	if err != nil {
+		return nil, err
+	}
+	if input.PersonalizationOptions == nil {
+		personalizationOptions = []byte("[]")
+	}
 	var product ProductView
 	product.ID, err = NewCatalogID()
 	if err != nil {
 		return nil, err
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO products (id, shop_id, slug, status)
-		VALUES ($1, $2, $3, $4)
-	`, product.ID, shopID, input.Slug, input.Status)
+		INSERT INTO products (id, shop_id, slug, status, brand_id, personalization_options)
+		VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, $6::jsonb)
+	`, product.ID, shopID, input.Slug, input.Status, input.BrandID, string(personalizationOptions))
 	if err != nil {
 		return nil, catalogDBError(err)
 	}
@@ -89,7 +99,10 @@ func (s *Store) CreateProduct(ctx context.Context, shopID string, input ProductI
 	if err := replaceProductMedia(ctx, tx, shopID, product.ID, input.Media); err != nil {
 		return nil, err
 	}
-	if err := replaceProductVariants(ctx, tx, product.ID, input.Variants); err != nil {
+	if err := replaceProductSuppliers(ctx, tx, product.ID, input.SupplierIDs); err != nil {
+		return nil, err
+	}
+	if err := replaceProductVariants(ctx, tx, shopID, product.ID, input.Variants); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -108,11 +121,22 @@ func (s *Store) UpdateProduct(ctx context.Context, shopID, productID string, inp
 	}
 	defer tx.Rollback()
 
+	if err := validateCatalogReferenceIDs(ctx, tx, shopID, input.BrandID, input.SupplierIDs, input.Variants); err != nil {
+		return nil, err
+	}
+	personalizationOptions, err := json.Marshal(input.PersonalizationOptions)
+	if err != nil {
+		return nil, err
+	}
+	if input.PersonalizationOptions == nil {
+		personalizationOptions = []byte("[]")
+	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE products
-		SET slug = $3, status = $4, updated_at = now()
+		SET slug = $3, status = $4, brand_id = NULLIF($5, '')::uuid,
+		    personalization_options = $6::jsonb, updated_at = now()
 		WHERE shop_id = $1 AND id = $2
-	`, shopID, productID, input.Slug, input.Status)
+	`, shopID, productID, input.Slug, input.Status, input.BrandID, string(personalizationOptions))
 	if err != nil {
 		return nil, catalogDBError(err)
 	}
@@ -140,7 +164,10 @@ func (s *Store) UpdateProduct(ctx context.Context, shopID, productID string, inp
 	if err := replaceProductMedia(ctx, tx, shopID, productID, input.Media); err != nil {
 		return nil, err
 	}
-	if err := replaceProductVariants(ctx, tx, productID, input.Variants); err != nil {
+	if err := replaceProductSuppliers(ctx, tx, productID, input.SupplierIDs); err != nil {
+		return nil, err
+	}
+	if err := replaceProductVariants(ctx, tx, shopID, productID, input.Variants); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -360,7 +387,7 @@ func replaceProductMedia(ctx context.Context, tx *sql.Tx, shopID, productID stri
 	return nil
 }
 
-func replaceProductVariants(ctx context.Context, tx *sql.Tx, productID string, inputs []VariantInput) error {
+func replaceProductVariants(ctx context.Context, tx *sql.Tx, shopID, productID string, inputs []VariantInput) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id::text, sku FROM variants WHERE product_id = $1 FOR UPDATE`, productID)
 	if err != nil {
 		return err
@@ -425,6 +452,9 @@ func replaceProductVariants(ctx context.Context, tx *sql.Tx, productID string, i
 				return catalogDBError(err)
 			}
 		}
+		if err := replaceVariantSuppliers(ctx, tx, shopID, variantID, input.Suppliers); err != nil {
+			return err
+		}
 	}
 	for sku, variantID := range existing {
 		if _, ok := kept[sku]; ok {
@@ -442,6 +472,78 @@ func replaceProductVariants(ctx context.Context, tx *sql.Tx, productID string, i
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM variants WHERE id = $1`, variantID); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func validateCatalogReferenceIDs(ctx context.Context, tx *sql.Tx, shopID, brandID string, supplierIDs []string, variants []VariantInput) error {
+	if brandID != "" {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (SELECT 1 FROM brands WHERE shop_id = $1 AND id = $2)
+		`, shopID, brandID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+	}
+	for _, supplierID := range supplierIDs {
+		if err := validateSupplierReference(ctx, tx, shopID, supplierID); err != nil {
+			return err
+		}
+	}
+	for _, variant := range variants {
+		for _, supplier := range variant.Suppliers {
+			if err := validateSupplierReference(ctx, tx, shopID, supplier.SupplierID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateSupplierReference(ctx context.Context, tx *sql.Tx, shopID, supplierID string) error {
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM suppliers WHERE shop_id = $1 AND id = $2 AND active = true)
+	`, shopID, supplierID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func replaceProductSuppliers(ctx context.Context, tx *sql.Tx, productID string, supplierIDs []string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM product_suppliers WHERE product_id = $1`, productID); err != nil {
+		return err
+	}
+	for _, supplierID := range supplierIDs {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO product_suppliers (product_id, supplier_id) VALUES ($1, $2)
+		`, productID, supplierID); err != nil {
+			return catalogDBError(err)
+		}
+	}
+	return nil
+}
+
+func replaceVariantSuppliers(ctx context.Context, tx *sql.Tx, shopID, variantID string, suppliers []VariantSupplierInput) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM variant_suppliers WHERE variant_id = $1`, variantID); err != nil {
+		return err
+	}
+	for _, supplier := range suppliers {
+		if err := validateSupplierReference(ctx, tx, shopID, supplier.SupplierID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO variant_suppliers (variant_id, supplier_id, supplier_sku)
+			VALUES ($1, $2, $3)
+		`, variantID, supplier.SupplierID, supplier.SupplierSKU); err != nil {
+			return catalogDBError(err)
 		}
 	}
 	return nil

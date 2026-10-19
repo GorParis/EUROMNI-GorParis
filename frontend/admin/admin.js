@@ -6,10 +6,16 @@
   const logoutButton = document.querySelector("#logout");
   const productForm = document.querySelector("#product-form");
   const categoryForm = document.querySelector("#category-form");
+  const brandForm = document.querySelector("#brand-form");
+  const supplierForm = document.querySelector("#supplier-form");
   const staffForm = document.querySelector("#staff-form");
   const productList = document.querySelector("#products");
   const categoryList = document.querySelector("#categories");
   const categoryOptions = document.querySelector("#category-options");
+  const brandList = document.querySelector("#brands");
+  const brandSelect = document.querySelector("#brand-select");
+  const supplierList = document.querySelector("#suppliers");
+  const productSupplierOptions = document.querySelector("#product-supplier-options");
   const staffList = document.querySelector("#staff-members");
   const orderList = document.querySelector("#orders");
   const orderDetail = document.querySelector("#order-detail");
@@ -26,7 +32,11 @@
   const shippingHistoryLimit = 25;
   let token = null;
   let categories = [];
+  let brands = [];
+  let suppliers = [];
   let editingCategory = null;
+  let editingBrand = null;
+  let editingSupplier = null;
   let currentIdentity = null;
   let shippingConfig = { carriers: [], services: [], zones: [], rates: [] };
   let shippingHistoryFilter = { carrierCode: "", serviceCode: "", zoneCode: "" };
@@ -144,7 +154,8 @@
       }
       const metadata = document.createElement("p");
       metadata.className = "muted";
-      metadata.textContent = `${product.slug} · ${product.status} · ${product.variants.length} variante(s)`;
+      metadata.textContent = `${product.slug} · ${product.status} · ${product.variants.length} variante(s)` +
+        (product.brand ? ` · ${product.brand.name}` : "");
       const actions = document.createElement("div");
       actions.className = "actions";
       const edit = document.createElement("button");
@@ -224,6 +235,97 @@
     }
   }
 
+  function renderCatalogReferences() {
+    brandList.replaceChildren();
+    brandSelect.replaceChildren(new Option("Aucune marque", ""));
+    for (const brand of brands) {
+      brandSelect.append(new Option(brand.name, brand.id));
+      const card = document.createElement("article");
+      card.className = "card";
+      const title = document.createElement("h3");
+      title.textContent = brand.name;
+      const slug = document.createElement("p");
+      slug.className = "muted";
+      slug.textContent = brand.slug;
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "secondary";
+      edit.textContent = "Modifier";
+      edit.addEventListener("click", () => editBrand(brand));
+      card.append(title, slug, edit);
+      brandList.append(card);
+    }
+
+    supplierList.replaceChildren();
+    productSupplierOptions.replaceChildren();
+    for (const supplier of suppliers) {
+      const checkboxLabel = document.createElement("label");
+      checkboxLabel.className = "category-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.name = "supplier_ids";
+      checkbox.value = supplier.id;
+      checkbox.disabled = !supplier.active;
+      const name = document.createElement("span");
+      name.textContent = `${supplier.name} (${supplier.code})${supplier.active ? "" : " · inactif"}`;
+      checkboxLabel.append(checkbox, name);
+      productSupplierOptions.append(checkboxLabel);
+
+      const card = document.createElement("article");
+      card.className = "card";
+      const title = document.createElement("h3");
+      title.textContent = supplier.name;
+      const metadata = document.createElement("p");
+      metadata.className = "muted";
+      metadata.textContent = `${supplier.code} · ${supplier.active ? "actif" : "inactif"}`;
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "secondary";
+      edit.textContent = "Modifier";
+      edit.addEventListener("click", () => editSupplier(supplier));
+      card.append(title, metadata, edit);
+      supplierList.append(card);
+    }
+  }
+
+  function editBrand(brand) {
+    editingBrand = brand;
+    brandForm.elements.id.value = brand.id;
+    brandForm.elements.slug.value = brand.slug;
+    brandForm.elements.name.value = brand.name;
+    document.querySelector("#brand-form-title").textContent = "Modifier une marque";
+    document.querySelector("#cancel-brand-edit").hidden = false;
+    brandForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function editSupplier(supplier) {
+    editingSupplier = supplier;
+    supplierForm.elements.id.value = supplier.id;
+    supplierForm.elements.code.value = supplier.code;
+    supplierForm.elements.name.value = supplier.name;
+    supplierForm.elements.active.checked = supplier.active;
+    document.querySelector("#supplier-form-title").textContent = "Modifier un fournisseur";
+    document.querySelector("#cancel-supplier-edit").hidden = false;
+    supplierForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function resetBrandForm() {
+    brandForm.reset();
+    brandForm.elements.id.value = "";
+    editingBrand = null;
+    document.querySelector("#brand-form-title").textContent = "Créer une marque";
+    document.querySelector("#cancel-brand-edit").hidden = true;
+  }
+
+  function resetSupplierForm() {
+    supplierForm.reset();
+    supplierForm.elements.id.value = "";
+    supplierForm.elements.active.checked = true;
+    editingSupplier = null;
+    document.querySelector("#supplier-form-title").textContent = "Créer un fournisseur";
+    document.querySelector("#cancel-supplier-edit").hidden = true;
+  }
+
   function renderStaff(members) {
     staffList.replaceChildren();
     for (const member of members) {
@@ -289,6 +391,14 @@
     for (const item of order.items) {
       const row = document.createElement("li");
       row.textContent = `${item.quantity} × ${item.name} (${item.sku}) · ${item.line_total} ${order.currency}`;
+      if (item.personalizations?.length) {
+        row.append(document.createElement("br"));
+        const details = document.createElement("small");
+        details.textContent = item.personalizations
+          .map((selection) => `${selection.label} : ${selection.choice_label}`)
+          .join(" · ");
+        row.append(details);
+      }
       items.append(row);
     }
     const address = document.createElement("p");
@@ -858,6 +968,8 @@
     productForm.elements.id.value = product.id;
     productForm.elements.slug.value = product.slug;
     productForm.elements.status.value = product.status;
+    productForm.elements.brand_id.value = product.brand?.id || "";
+    productForm.elements.personalization_options.value = JSON.stringify(product.personalization_options || [], null, 2);
     productForm.elements.translations.value = JSON.stringify(product.translations, null, 2);
     productForm.elements.media.value = JSON.stringify((product.media || []).map((media) => ({
       uri: media.uri,
@@ -867,9 +979,18 @@
     productForm.elements.variants.value = JSON.stringify(product.variants.map((variant) => ({
       sku: variant.sku,
       options: variant.options || {},
+      weight_grams: variant.weight_grams ?? null,
       prices: variant.prices || [],
       inventory: variant.inventory || { quantity: 0, track: true },
+      suppliers: (variant.suppliers || []).map((supplier) => ({
+        supplier_id: supplier.supplier_id,
+        supplier_sku: supplier.supplier_sku,
+      })),
     })), null, 2);
+    const supplierIDs = new Set(product.supplier_ids || []);
+    for (const checkbox of productSupplierOptions.querySelectorAll('input[name="supplier_ids"]')) {
+      checkbox.checked = supplierIDs.has(checkbox.value);
+    }
     for (const checkbox of productForm.querySelectorAll('input[name="category_ids"]')) {
       checkbox.checked = product.category_ids.includes(checkbox.value);
     }
@@ -906,8 +1027,11 @@
     productForm.elements.status.value = "draft";
     productForm.elements.translations.value = '[\n  { "locale": "fr-FR", "name": "Nom du produit", "description": "" }\n]';
     productForm.elements.media.value = "[]";
-    productForm.elements.variants.value = '[\n  {\n    "sku": "ARTICLE-001",\n    "options": {},\n    "weight_grams": null,\n    "prices": [{ "currency": "EUR", "amount": "12.0000" }],\n    "inventory": { "quantity": 10, "track": true }\n  }\n]';
+    productForm.elements.brand_id.value = "";
+    productForm.elements.personalization_options.value = "[]";
+    productForm.elements.variants.value = '[\n  {\n    "sku": "ARTICLE-001",\n    "options": {},\n    "weight_grams": null,\n    "prices": [{ "currency": "EUR", "amount": "12.0000" }],\n    "inventory": { "quantity": 10, "track": true },\n    "suppliers": []\n  }\n]';
     for (const checkbox of productForm.querySelectorAll('input[name="category_ids"]')) checkbox.checked = false;
+    for (const checkbox of productForm.querySelectorAll('input[name="supplier_ids"]')) checkbox.checked = false;
     document.querySelector("#product-form-title").textContent = "Créer un produit";
     document.querySelector("#cancel-product-edit").hidden = true;
   }
@@ -932,12 +1056,17 @@
 
   async function refresh() {
     try {
-      const [products, loadedCategories] = await Promise.all([
+      const [products, loadedCategories, loadedBrands, loadedSuppliers] = await Promise.all([
         request("/v1/admin/products"),
         request("/v1/admin/categories"),
+        request("/v1/admin/brands"),
+        request("/v1/admin/suppliers"),
       ]);
       categories = loadedCategories;
+      brands = loadedBrands;
+      suppliers = loadedSuppliers;
       renderCategories();
+      renderCatalogReferences();
       renderProducts(products);
       if (currentIdentity?.role === "owner") {
         renderStaff(await request("/v1/admin/staff"));
@@ -989,18 +1118,24 @@
     let translations;
     let media;
     let variants;
+    let personalizationOptions;
     try {
       translations = JSON.parse(form.get("translations"));
       media = JSON.parse(form.get("media"));
       variants = JSON.parse(form.get("variants"));
-      if (!Array.isArray(translations) || !Array.isArray(media) || !Array.isArray(variants)) throw new Error();
+      personalizationOptions = JSON.parse(form.get("personalization_options"));
+      if (!Array.isArray(translations) || !Array.isArray(media) || !Array.isArray(variants) ||
+          !Array.isArray(personalizationOptions)) throw new Error();
     } catch {
-      setStatus("Les traductions, images et variantes doivent être des tableaux JSON valides.", true);
+      setStatus("Les traductions, images, variantes et personnalisations doivent être des tableaux JSON valides.", true);
       return;
     }
     const product = {
       slug: form.get("slug"),
       status: form.get("status"),
+      brand_id: form.get("brand_id") || "",
+      supplier_ids: [...productForm.querySelectorAll('input[name="supplier_ids"]:checked')].map((input) => input.value),
+      personalization_options: personalizationOptions,
       translations,
       media,
       variants,
@@ -1046,6 +1181,46 @@
     }
   });
 
+  brandForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(brandForm);
+    const brand = { slug: form.get("slug"), name: form.get("name") };
+    const id = form.get("id");
+    try {
+      await request(id ? `/v1/admin/brands/${encodeURIComponent(id)}` : "/v1/admin/brands", {
+        method: id ? "PUT" : "POST",
+        body: JSON.stringify(brand),
+      });
+      resetBrandForm();
+      setStatus("Marque enregistrée.");
+      await refresh();
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+
+  supplierForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(supplierForm);
+    const id = form.get("id");
+    const supplier = {
+      code: form.get("code"),
+      name: form.get("name"),
+      active: supplierForm.elements.active.checked,
+    };
+    try {
+      await request(id ? `/v1/admin/suppliers/${encodeURIComponent(id)}` : "/v1/admin/suppliers", {
+        method: id ? "PUT" : "POST",
+        body: JSON.stringify(supplier),
+      });
+      resetSupplierForm();
+      setStatus("Fournisseur enregistré.");
+      await refresh();
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+
   staffForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(staffForm);
@@ -1073,6 +1248,8 @@
 
   document.querySelector("#cancel-product-edit").addEventListener("click", resetProductForm);
   document.querySelector("#cancel-category-edit").addEventListener("click", resetCategoryForm);
+  document.querySelector("#cancel-brand-edit").addEventListener("click", resetBrandForm);
+  document.querySelector("#cancel-supplier-edit").addEventListener("click", resetSupplierForm);
   document.querySelector("#cancel-staff-edit").addEventListener("click", resetStaffForm);
   document.querySelector("#shipping-history-previous").addEventListener("click", () => {
     shippingHistoryOffset = Math.max(0, shippingHistoryOffset - shippingHistoryLimit);

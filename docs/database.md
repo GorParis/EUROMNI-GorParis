@@ -34,7 +34,7 @@ Mapping Wasm : [`docs/abi.md`](abi.md).
 
 Les données de la base CMS locale résident dans un volume persistant. La base d’intégration utilise un projet Compose et un stockage temporaires séparés ; son nettoyage ne doit jamais viser le volume du CMS. Un volume local ne remplace pas des sauvegardes hors machine ni des tests de restauration.
 
-JSONB est réservé à ce qui est vraiment variable : `settings`, `metadata`, options de variante, config module, payload d’événement, corps de page (blocs). Le reste est normalisé.
+JSONB est réservé à ce qui est vraiment variable : `settings`, `metadata`, options de variante, choix de personnalisation déclarés sur le produit, snapshots de personnalisation des lignes panier/commande, config module, payload d’événement, corps de page (blocs). Le reste est normalisé.
 
 ## Carte des tables
 
@@ -58,7 +58,7 @@ Groupes :
 
 1. **Boutique / staff** — `shops`, `shop_locales`, `users`, `shop_members`, `sessions`
 2. **Clients** — `customers`, `addresses`, `customer_consents`
-3. **Catalogue** — `categories`, `products`, `variants`, `prices`, `inventory_items`, `media`
+3. **Catalogue** — `categories`, `products`, `brands`, `suppliers`, `product_suppliers`, `variant_suppliers`, `variants`, `prices`, `inventory_items`, `media`
 4. **Commerce** — `carts`, `orders`, `payments`, `shipments`
 5. **CMS** — `pages`, `menus`
 6. **Sandbox** — `modules`, `shop_modules`, `module_kv`, `domain_events`

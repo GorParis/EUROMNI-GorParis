@@ -958,6 +958,12 @@ class EuromniCatalog extends HTMLElement {
       this.navigateToProduct(product.id);
     });
     body.append(link);
+    if (product.brand?.name) {
+      const brand = document.createElement("span");
+      brand.className = "product-badge";
+      brand.textContent = product.brand.name;
+      body.append(brand);
+    }
     const variants = Array.isArray(product.variants) ? product.variants : [];
     const badge = document.createElement("span");
     badge.className = "product-badge";
@@ -1069,7 +1075,7 @@ class EuromniCatalog extends HTMLElement {
     this.renderCart({ items: [], total: { amount: "0", currency: "" } });
   }
 
-  async addToCart(variantID, button) {
+  async addToCart(variantID, button, personalizations = {}) {
     if (this.cartBusy) {
       return;
     }
@@ -1085,7 +1091,7 @@ class EuromniCatalog extends HTMLElement {
       const cart = await this.requestCart(`${this.cartSrc}/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ variant_id: variantID, quantity: 1 }),
+        body: JSON.stringify({ variant_id: variantID, quantity: 1, personalizations }),
       });
       this.renderCart(cart);
       this.setCartStatus("Article ajouté à votre panier.");
@@ -1195,6 +1201,13 @@ class EuromniCatalog extends HTMLElement {
       const info = document.createElement("p");
       const product = this.productsByVariant.get(item.variant_id);
       info.textContent = `${product ? product.name : item.sku} × ${item.quantity}`;
+      if (item.personalizations?.length) {
+        const choices = document.createElement("small");
+        choices.textContent = item.personalizations
+          .map((selection) => `${selection.label} : ${selection.choice_label}`)
+          .join(" · ");
+        info.append(document.createElement("br"), choices);
+      }
       const lineTotal = document.createElement("span");
       lineTotal.className = "cart-line-total";
       lineTotal.textContent = `${formatPrice(item.unit_amount, cart.total.currency, this.locale)} / unité`;
@@ -1352,6 +1365,12 @@ class EuromniCatalog extends HTMLElement {
     const title = document.createElement("h2");
     title.textContent = translation.name;
     panel.append(title);
+    if (product.brand?.name) {
+      const brand = document.createElement("p");
+      brand.className = "product-badge";
+      brand.textContent = product.brand.name;
+      panel.append(brand);
+    }
     if (translation.description) {
       const description = document.createElement("p");
       description.className = "description";
@@ -1386,6 +1405,27 @@ class EuromniCatalog extends HTMLElement {
       label.append(labelText, select);
       fields.append(label);
     }
+    const personalizationOptions = Array.isArray(product.personalization_options)
+      ? product.personalization_options : [];
+    for (const personalization of personalizationOptions) {
+      const label = document.createElement("label");
+      const labelText = document.createElement("span");
+      labelText.textContent = `${personalization.label}${personalization.required ? " *" : ""}`;
+      const select = document.createElement("select");
+      select.dataset.personalization = personalization.code;
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = personalization.required ? "Choisir une option" : "Aucune";
+      select.append(placeholder);
+      for (const choice of personalization.choices || []) {
+        const option = document.createElement("option");
+        option.value = choice.value;
+        option.textContent = choice.label;
+        select.append(option);
+      }
+      label.append(labelText, select);
+      fields.append(label);
+    }
     panel.append(fields);
 
     const price = document.createElement("p");
@@ -1401,21 +1441,28 @@ class EuromniCatalog extends HTMLElement {
     panel.append(addButton);
 
     const updateSelection = () => {
-      const selected = Object.fromEntries([...fields.querySelectorAll("select")].map((select) => [select.dataset.option, select.value]));
+      const selected = Object.fromEntries([...fields.querySelectorAll("select[data-option]")].map((select) => [select.dataset.option, select.value]));
       const variant = variants.find((candidate) => Object.entries(selected).every(([key, value]) => String(candidate.options[key]) === value));
       const variantPrice = variant && Array.isArray(variant.prices) ? variant.prices[0] : null;
       price.textContent = variantPrice ? formatPrice(variantPrice.amount, variantPrice.currency, this.locale) : "Indisponible";
-      const available = !variant || !variant.inventory.track || variant.inventory.quantity > 0;
+      const customizationComplete = personalizationOptions.every((option) => !option.required ||
+        Boolean(fields.querySelector(`select[data-personalization="${CSS.escape(option.code)}"]`)?.value));
+      const available = variant && (!variant.inventory.track || variant.inventory.quantity > 0);
       stock.textContent = !variant ? "Cette combinaison n’est pas disponible."
         : variant.inventory.track ? (available ? `${variant.inventory.quantity} en stock` : "Rupture de stock")
           : "Disponible";
-      addButton.disabled = !variant || !available;
+      addButton.disabled = !variant || !available || !customizationComplete;
       addButton.dataset.variantId = variant ? variant.id : "";
     };
     fields.addEventListener("change", updateSelection);
     addButton.addEventListener("click", () => {
       if (addButton.dataset.variantId) {
-        this.addToCart(addButton.dataset.variantId, addButton);
+        const personalizations = Object.fromEntries(
+          [...fields.querySelectorAll("select[data-personalization]")]
+            .filter((select) => select.value)
+            .map((select) => [select.dataset.personalization, select.value]),
+        );
+        this.addToCart(addButton.dataset.variantId, addButton, personalizations);
       }
     });
     updateSelection();

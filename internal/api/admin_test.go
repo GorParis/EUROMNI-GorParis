@@ -184,6 +184,28 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	if createdCategory.Data.ID == "" || createdCategory.Data.Slug != "accessoires" {
 		t.Fatalf("created category = %+v", createdCategory.Data)
 	}
+	brandCreated := performAdminRequest(mux, http.MethodPost, "/v1/admin/brands", auth.token,
+		`{"slug":"maison-test","name":"Maison Test"}`)
+	if brandCreated.Code != http.StatusCreated {
+		t.Fatalf("create brand status = %d; body=%s", brandCreated.Code, brandCreated.Body.String())
+	}
+	var createdBrand struct {
+		Data store.BrandView `json:"data"`
+	}
+	if err := json.Unmarshal(brandCreated.Body.Bytes(), &createdBrand); err != nil {
+		t.Fatalf("decode created brand: %v", err)
+	}
+	supplierCreated := performAdminRequest(mux, http.MethodPost, "/v1/admin/suppliers", auth.token,
+		`{"code":"FOURN-TEST","name":"Fournisseur Test","active":true}`)
+	if supplierCreated.Code != http.StatusCreated {
+		t.Fatalf("create supplier status = %d; body=%s", supplierCreated.Code, supplierCreated.Body.String())
+	}
+	var createdSupplier struct {
+		Data store.SupplierView `json:"data"`
+	}
+	if err := json.Unmarshal(supplierCreated.Body.Bytes(), &createdSupplier); err != nil {
+		t.Fatalf("decode created supplier: %v", err)
+	}
 	otherShopAuth := newCatalogTestAuthenticator("admin", "another-shop")
 	SetStaffAuthenticator(otherShopAuth)
 	otherShopProducts := performAdminRequest(mux, http.MethodGet, "/v1/admin/products", otherShopAuth.token, "")
@@ -201,19 +223,22 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	if updatedCategory.Code != http.StatusOK {
 		t.Fatalf("update category status = %d, want %d; body=%s", updatedCategory.Code, http.StatusOK, updatedCategory.Body.String())
 	}
-	productBody := `{"slug":"porte-cle-demo","status":"draft","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Prototype"}],"category_ids":["` + createdCategory.Data.ID + `"],"media":[{"uri":"/storefront/images/cabas-lin.svg","mime_type":"image/svg+xml","alt":"Porte-clés en lin"}],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"bleu"},"prices":[{"currency":"EUR","amount":"10.0000"}],"inventory":{"quantity":4,"track":true}}]}`
+	productBody := `{"slug":"porte-cle-demo","status":"draft","brand_id":"` + createdBrand.Data.ID + `","supplier_ids":["` + createdSupplier.Data.ID + `"],"personalization_options":[{"code":"finition","label":"Finition","required":true,"choices":[{"value":"mate","label":"Mate"},{"value":"brillante","label":"Brillante"}]}],"translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Prototype"}],"category_ids":["` + createdCategory.Data.ID + `"],"media":[{"uri":"/storefront/images/cabas-lin.svg","mime_type":"image/svg+xml","alt":"Porte-clés en lin"}],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"bleu"},"prices":[{"currency":"EUR","amount":"10.0000"}],"inventory":{"quantity":4,"track":true},"suppliers":[{"supplier_id":"` + createdSupplier.Data.ID + `","supplier_sku":"REF-FOURN-1"}]}]}`
 	productCreated := performAdminRequest(mux, http.MethodPost, "/v1/admin/products", auth.token, productBody)
 	if productCreated.Code != http.StatusCreated {
 		t.Fatalf("create product status = %d, want %d; body=%s", productCreated.Code, http.StatusCreated, productCreated.Body.String())
 	}
 	var createdProduct struct {
-		Data store.ProductView `json:"data"`
+		Data store.AdminProductView `json:"data"`
 	}
 	if err := json.Unmarshal(productCreated.Body.Bytes(), &createdProduct); err != nil {
 		t.Fatalf("decode created product: %v", err)
 	}
 	if createdProduct.Data.ID == "" || createdProduct.Data.Status != "draft" || len(createdProduct.Data.Variants) != 1 || createdProduct.Data.Variants[0].Inventory.Quantity != 4 || len(createdProduct.Data.CategoryIDs) != 1 || createdProduct.Data.CategoryIDs[0] != createdCategory.Data.ID ||
-		len(createdProduct.Data.Media) != 1 || createdProduct.Data.Media[0].URI != "/storefront/images/cabas-lin.svg" || createdProduct.Data.Media[0].Position != 0 {
+		len(createdProduct.Data.Media) != 1 || createdProduct.Data.Media[0].URI != "/storefront/images/cabas-lin.svg" || createdProduct.Data.Media[0].Position != 0 ||
+		createdProduct.Data.Brand == nil || createdProduct.Data.Brand.ID != createdBrand.Data.ID ||
+		len(createdProduct.Data.SupplierIDs) != 1 || len(createdProduct.Data.PersonalizationOptions) != 1 ||
+		len(createdProduct.Data.Variants[0].Suppliers) != 1 {
 		t.Fatalf("created product = %+v", createdProduct.Data)
 	}
 	adminList := performAdminRequest(mux, http.MethodGet, "/v1/admin/products", auth.token, "")
@@ -222,7 +247,7 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	}
 
 	updatedProduct := performAdminRequest(mux, http.MethodPut, "/v1/admin/products/"+createdProduct.Data.ID, auth.token,
-		`{"slug":"porte-cle-demo","status":"active","translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Mis à jour"}],"media":[{"uri":"https://cdn.example.test/porte-cle.webp","mime_type":"image/webp","alt":"Porte-clés rouge"}],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"rouge"},"prices":[{"currency":"EUR","amount":"12.5000"}],"inventory":{"quantity":7,"track":true}}],"category_ids":["`+createdCategory.Data.ID+`"]}`)
+		`{"slug":"porte-cle-demo","status":"active","brand_id":"`+createdBrand.Data.ID+`","supplier_ids":["`+createdSupplier.Data.ID+`"],"personalization_options":[{"code":"finition","label":"Finition","required":true,"choices":[{"value":"mate","label":"Mate"},{"value":"brillante","label":"Brillante"}]}],"translations":[{"locale":"fr-FR","name":"Porte-clés","description":"Mis à jour"}],"media":[{"uri":"https://cdn.example.test/porte-cle.webp","mime_type":"image/webp","alt":"Porte-clés rouge"}],"variants":[{"sku":"PORTE-CLE-1","options":{"color":"rouge"},"prices":[{"currency":"EUR","amount":"12.5000"}],"inventory":{"quantity":7,"track":true},"suppliers":[{"supplier_id":"`+createdSupplier.Data.ID+`","supplier_sku":"REF-FOURN-1"}]}],"category_ids":["`+createdCategory.Data.ID+`"]}`)
 	if updatedProduct.Code != http.StatusOK {
 		t.Fatalf("update product status = %d, want %d; body=%s", updatedProduct.Code, http.StatusOK, updatedProduct.Body.String())
 	}
@@ -233,6 +258,11 @@ func TestAdminCatalogCRUD(t *testing.T) {
 	publicProduct := performAdminRequest(mux, http.MethodGet, "/v1/products/"+createdProduct.Data.ID, "", "")
 	if publicProduct.Code != http.StatusOK {
 		t.Fatalf("published product status = %d, want %d; body=%s", publicProduct.Code, http.StatusOK, publicProduct.Body.String())
+	}
+	if strings.Contains(publicProduct.Body.String(), `"supplier_id"`) ||
+		strings.Contains(publicProduct.Body.String(), `"supplier_sku"`) ||
+		strings.Contains(publicProduct.Body.String(), `"supplier_name"`) {
+		t.Fatalf("public product response exposes supplier details: %s", publicProduct.Body.String())
 	}
 	archivedProduct := performAdminRequest(mux, http.MethodDelete, "/v1/admin/products/"+createdProduct.Data.ID, auth.token, "")
 	if archivedProduct.Code != http.StatusNoContent {

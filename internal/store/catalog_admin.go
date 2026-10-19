@@ -11,12 +11,15 @@ import (
 var ErrConflict = errors.New("catalog conflict")
 
 type ProductInput struct {
-	Slug         string            `json:"slug"`
-	Status       string            `json:"status"`
-	Translations []TranslationView `json:"translations"`
-	CategoryIDs  []string          `json:"category_ids"`
-	Media        []MediaInput      `json:"media"`
-	Variants     []VariantInput    `json:"variants"`
+	Slug                   string                  `json:"slug"`
+	Status                 string                  `json:"status"`
+	BrandID                string                  `json:"brand_id,omitempty"`
+	SupplierIDs            []string                `json:"supplier_ids"`
+	PersonalizationOptions []PersonalizationOption `json:"personalization_options"`
+	Translations           []TranslationView       `json:"translations"`
+	CategoryIDs            []string                `json:"category_ids"`
+	Media                  []MediaInput            `json:"media"`
+	Variants               []VariantInput          `json:"variants"`
 }
 
 type MediaInput struct {
@@ -26,11 +29,17 @@ type MediaInput struct {
 }
 
 type VariantInput struct {
-	SKU         string         `json:"sku"`
-	Options     map[string]any `json:"options"`
-	WeightGrams *int64         `json:"weight_grams,omitempty"`
-	Prices      []PriceView    `json:"prices"`
-	Inventory   InventoryView  `json:"inventory"`
+	SKU         string                 `json:"sku"`
+	Options     map[string]any         `json:"options"`
+	WeightGrams *int64                 `json:"weight_grams,omitempty"`
+	Prices      []PriceView            `json:"prices"`
+	Inventory   InventoryView          `json:"inventory"`
+	Suppliers   []VariantSupplierInput `json:"suppliers"`
+}
+
+type VariantSupplierInput struct {
+	SupplierID  string `json:"supplier_id"`
+	SupplierSKU string `json:"supplier_sku"`
 }
 
 type CategoryInput struct {
@@ -46,6 +55,39 @@ type CatalogAdminWriter interface {
 	CreateCategory(ctx context.Context, shopID string, input CategoryInput) (*CategoryView, error)
 	UpdateCategory(ctx context.Context, shopID, categoryID string, input CategoryInput) (*CategoryView, error)
 	DeleteCategory(ctx context.Context, shopID, categoryID string) error
+}
+
+type CatalogReferenceWriter interface {
+	ListBrands(ctx context.Context, shopID string) ([]BrandView, error)
+	CreateBrand(ctx context.Context, shopID string, input BrandInput) (*BrandView, error)
+	UpdateBrand(ctx context.Context, shopID, brandID string, input BrandInput) (*BrandView, error)
+	ListSuppliers(ctx context.Context, shopID string) ([]SupplierView, error)
+	CreateSupplier(ctx context.Context, shopID string, input SupplierInput) (*SupplierView, error)
+	UpdateSupplier(ctx context.Context, shopID, supplierID string, input SupplierInput) (*SupplierView, error)
+}
+
+type BrandInput struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+type BrandView struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+type SupplierInput struct {
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Active bool   `json:"active"`
+}
+
+type SupplierView struct {
+	ID     string `json:"id"`
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Active bool   `json:"active"`
 }
 
 func NewCatalogID() (string, error) {

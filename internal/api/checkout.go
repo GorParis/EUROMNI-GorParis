@@ -13,13 +13,13 @@ import (
 )
 
 type checkoutRequest struct {
-	Email                 string                `json:"email"`
-	Name                  string                `json:"name"`
-	ShippingCarrierCode   string                `json:"shipping_carrier_code"`
-	ShippingServiceCode   string                `json:"shipping_service_code,omitempty"`
-	ExpectedShippingTotal string                `json:"expected_shipping_total,omitempty"`
-	ExpectedShippingQuoteID string              `json:"expected_shipping_quote_id,omitempty"`
-	ShippingAddress       store.ShippingAddress `json:"shipping_address"`
+	Email                   string                `json:"email"`
+	Name                    string                `json:"name"`
+	ShippingCarrierCode     string                `json:"shipping_carrier_code"`
+	ShippingServiceCode     string                `json:"shipping_service_code,omitempty"`
+	ExpectedShippingTotal   string                `json:"expected_shipping_total,omitempty"`
+	ExpectedShippingQuoteID string                `json:"expected_shipping_quote_id,omitempty"`
+	ShippingAddress         store.ShippingAddress `json:"shipping_address"`
 }
 
 func checkout(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +60,8 @@ func checkout(w http.ResponseWriter, r *http.Request) {
 			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "shipping method unavailable for this destination"})
 		case errors.Is(err, store.ErrShippingQuoteChanged):
 			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "shipping quote changed"})
+		case errors.Is(err, store.ErrInvalidPersonalization):
+			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "product personalization changed; review your cart"})
 		case errors.Is(err, store.ErrNotFound):
 			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "cart contains unavailable items"})
 		default:
@@ -118,7 +120,7 @@ func decodeCheckoutRequest(w http.ResponseWriter, r *http.Request) (store.Checko
 	}
 	return store.CheckoutDetails{
 		Email: parsedEmail.Address, Name: name, ShippingCarrierCode: carrierCode,
-		ShippingServiceCode: serviceCode,
+		ShippingServiceCode:   serviceCode,
 		ExpectedShippingTotal: expectedShippingTotal, ExpectedShippingQuoteID: expectedShippingQuoteID,
 		ShippingAddress: address,
 	}, nil

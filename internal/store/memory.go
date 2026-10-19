@@ -19,6 +19,8 @@ import (
 type Memory struct {
 	products          map[string]*ProductView
 	categories        map[string]*CategoryView
+	brands            map[string]*BrandView
+	suppliers         map[string]*SupplierView
 	productCategories map[string][]string
 	mu                sync.RWMutex
 	carts             map[string]*memoryCart
@@ -26,8 +28,14 @@ type Memory struct {
 
 type memoryCart struct {
 	currency  string
-	lines     map[string]int
+	lines     map[string]memoryCartLine
 	expiresAt time.Time
+}
+
+type memoryCartLine struct {
+	variantID        string
+	quantity         int
+	personalizations []PersonalizationSelection
 }
 
 var (
@@ -169,6 +177,8 @@ func NewMemory() *Memory {
 		categories: map[string]*CategoryView{
 			seed.ShopID + "/" + seed.CategoryID: category,
 		},
+		brands:    make(map[string]*BrandView),
+		suppliers: make(map[string]*SupplierView),
 		productCategories: map[string][]string{
 			seed.ShopID + "/" + seed.CategoryID: {seed.ProductID},
 		},
@@ -325,13 +335,15 @@ func (m *Memory) CreateProduct(ctx context.Context, shopID string, input Product
 	}
 	key := shopID + "/" + id
 	product := &ProductView{
-		ID:           id,
-		Slug:         input.Slug,
-		Status:       input.Status,
-		Translations: append([]TranslationView(nil), input.Translations...),
-		CategoryIDs:  append([]string(nil), input.CategoryIDs...),
-		Media:        media,
-		Variants:     variants,
+		ID:                     id,
+		Slug:                   input.Slug,
+		Status:                 input.Status,
+		SupplierIDs:            append([]string(nil), input.SupplierIDs...),
+		PersonalizationOptions: clonePersonalizationOptions(input.PersonalizationOptions),
+		Translations:           append([]TranslationView(nil), input.Translations...),
+		CategoryIDs:            append([]string(nil), input.CategoryIDs...),
+		Media:                  media,
+		Variants:               variants,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -341,6 +353,16 @@ func (m *Memory) CreateProduct(ctx context.Context, shopID string, input Product
 		}
 	}
 	if err := m.validateMemoryCategories(shopID, input.CategoryIDs); err != nil {
+		return nil, err
+	}
+	if err := m.validateMemoryCatalogReferences(shopID, input.BrandID, input.SupplierIDs, input.Variants); err != nil {
+		return nil, err
+	}
+	if input.BrandID != "" {
+		brand := m.brands[shopID+"/"+input.BrandID]
+		product.Brand = cloneBrand(brand)
+	}
+	if err := m.attachMemoryVariantSuppliers(shopID, product.Variants, input.Variants); err != nil {
 		return nil, err
 	}
 	m.products[key] = product
@@ -379,12 +401,21 @@ func (m *Memory) UpdateProduct(ctx context.Context, shopID, productID string, in
 	if err := m.validateMemoryCategories(shopID, input.CategoryIDs); err != nil {
 		return nil, err
 	}
+	if err := m.validateMemoryCatalogReferences(shopID, input.BrandID, input.SupplierIDs, input.Variants); err != nil {
+		return nil, err
+	}
 	product.Slug = input.Slug
 	product.Status = input.Status
+	product.Brand = cloneBrand(m.brands[shopID+"/"+input.BrandID])
+	product.SupplierIDs = append([]string(nil), input.SupplierIDs...)
+	product.PersonalizationOptions = clonePersonalizationOptions(input.PersonalizationOptions)
 	product.Translations = append([]TranslationView(nil), input.Translations...)
 	product.CategoryIDs = append([]string(nil), input.CategoryIDs...)
 	product.Media = media
 	product.Variants = variants
+	if err := m.attachMemoryVariantSuppliers(shopID, product.Variants, input.Variants); err != nil {
+		return nil, err
+	}
 	m.setMemoryProductCategories(shopID, productID, input.CategoryIDs)
 	return cloneProduct(product)
 }
@@ -578,8 +609,10 @@ func (m *Memory) updatedMemoryVariants(product *ProductView, inputs []VariantInp
 			continue
 		}
 		for _, cart := range m.carts {
-			if cart.lines[variant.ID] > 0 {
-				return nil, fmt.Errorf("%w: variant %s is referenced by a cart", ErrConflict, variant.SKU)
+			for _, line := range cart.lines {
+				if line.variantID == variant.ID {
+					return nil, fmt.Errorf("%w: variant %s is referenced by a cart", ErrConflict, variant.SKU)
+				}
 			}
 		}
 	}
@@ -649,7 +682,7 @@ func (m *Memory) CreateCart(ctx context.Context, shopID string, tokenHash []byte
 	}
 	m.carts[key] = &memoryCart{
 		currency:  "EUR",
-		lines:     make(map[string]int),
+		lines:     make(map[string]memoryCartLine),
 		expiresAt: time.Now().Add(30 * 24 * time.Hour),
 	}
 	return nil
@@ -670,21 +703,23 @@ func (m *Memory) GetCart(ctx context.Context, shopID string, tokenHash []byte) (
 		return nil, ErrInvalidCartToken
 	}
 	currency := cart.currency
-	lines := make(map[string]int, len(cart.lines))
-	for variantID, quantity := range cart.lines {
-		lines[variantID] = quantity
+	lines := make(map[string]memoryCartLine, len(cart.lines))
+	for lineKey, line := range cart.lines {
+		line.personalizations = append([]PersonalizationSelection(nil), line.personalizations...)
+		lines[lineKey] = line
 	}
 	m.mu.RUnlock()
 
 	items := make([]CartLineView, 0, len(lines))
 	total := new(big.Rat)
-	variantIDs := make([]string, 0, len(lines))
-	for variantID := range lines {
-		variantIDs = append(variantIDs, variantID)
+	lineKeys := make([]string, 0, len(lines))
+	for lineKey := range lines {
+		lineKeys = append(lineKeys, lineKey)
 	}
-	sort.Strings(variantIDs)
-	for _, variantID := range variantIDs {
-		_, variant := m.findVariant(shopID, variantID)
+	sort.Strings(lineKeys)
+	for _, lineKey := range lineKeys {
+		line := lines[lineKey]
+		_, variant := m.findVariant(shopID, line.variantID)
 		if variant == nil {
 			return nil, ErrNotFound
 		}
@@ -696,13 +731,14 @@ func (m *Memory) GetCart(ctx context.Context, shopID string, tokenHash []byte) (
 		if !ok {
 			return nil, errors.New("invalid product price")
 		}
-		lineAmount := new(big.Rat).Mul(unitAmount, big.NewRat(int64(lines[variantID]), 1))
+		lineAmount := new(big.Rat).Mul(unitAmount, big.NewRat(int64(line.quantity), 1))
 		total.Add(total, lineAmount)
 		items = append(items, CartLineView{
-			VariantID:  variant.ID,
-			SKU:        variant.SKU,
-			Quantity:   lines[variantID],
-			UnitAmount: price.Amount,
+			VariantID:        variant.ID,
+			SKU:              variant.SKU,
+			Quantity:         line.quantity,
+			UnitAmount:       price.Amount,
+			Personalizations: line.personalizations,
 		})
 	}
 	return &CartView{
@@ -711,19 +747,27 @@ func (m *Memory) GetCart(ctx context.Context, shopID string, tokenHash []byte) (
 	}, nil
 }
 
-func (m *Memory) AddCartLine(ctx context.Context, shopID string, tokenHash []byte, variantID string, quantity int) (*CartView, error) {
+func (m *Memory) AddCartLine(ctx context.Context, shopID string, tokenHash []byte, variantID string, quantity int, selectionsInput ...map[string]string) (*CartView, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if quantity < 1 || quantity > maxCartLineQuantity {
 		return nil, ErrInvalidCartQuantity
 	}
+	submitted := map[string]string{}
+	if len(selectionsInput) > 0 && selectionsInput[0] != nil {
+		submitted = selectionsInput[0]
+	}
 	if shopID != seed.ShopID || len(tokenHash) != sha256.Size {
 		return nil, ErrInvalidCartToken
 	}
-	_, variant := m.findVariant(shopID, variantID)
+	product, variant := m.findVariant(shopID, variantID)
 	if variant == nil {
 		return nil, ErrNotFound
+	}
+	selections, _, personalizationHash, err := ValidatePersonalizationSelections(product.PersonalizationOptions, submitted)
+	if err != nil {
+		return nil, err
 	}
 	m.mu.Lock()
 	key := hex.EncodeToString(tokenHash)
@@ -732,7 +776,14 @@ func (m *Memory) AddCartLine(ctx context.Context, shopID string, tokenHash []byt
 		m.mu.Unlock()
 		return nil, ErrInvalidCartToken
 	}
-	currentQuantity := cart.lines[variantID]
+	currentQuantity := 0
+	for _, line := range cart.lines {
+		if line.variantID == variantID {
+			currentQuantity += line.quantity
+		}
+	}
+	lineKey := variantID + "/" + personalizationHash
+	existingLine := cart.lines[lineKey]
 	if currentQuantity+quantity > maxCartLineQuantity {
 		m.mu.Unlock()
 		return nil, ErrInvalidCartQuantity
@@ -745,7 +796,10 @@ func (m *Memory) AddCartLine(ctx context.Context, shopID string, tokenHash []byt
 		m.mu.Unlock()
 		return nil, ErrNotFound
 	}
-	cart.lines[variantID] = currentQuantity + quantity
+	existingLine.variantID = variantID
+	existingLine.quantity += quantity
+	existingLine.personalizations = selections
+	cart.lines[lineKey] = existingLine
 	m.mu.Unlock()
 	return m.GetCart(ctx, shopID, tokenHash)
 }
@@ -782,6 +836,12 @@ func cloneProduct(p *ProductView) (*ProductView, error) {
 	var out ProductView
 	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, err
+	}
+	out.SupplierIDs = append([]string(nil), p.SupplierIDs...)
+	for i := range out.Variants {
+		if i < len(p.Variants) {
+			out.Variants[i].Suppliers = append([]VariantSupplierView(nil), p.Variants[i].Suppliers...)
+		}
 	}
 	return &out, nil
 }

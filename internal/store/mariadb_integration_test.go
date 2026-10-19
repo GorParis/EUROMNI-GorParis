@@ -145,8 +145,14 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	email := "mariadb-test-" + suffix + "@example.invalid"
 	weightedTokenHash := sha256.Sum256([]byte("mariadb-weighted-cart-" + suffix))
 	weightedEmail := "mariadb-weighted-" + suffix + "@example.invalid"
+	personalizedTokenHash := sha256.Sum256([]byte("mariadb-personalized-cart-" + suffix))
+	personalizedEmail := "mariadb-personalized-" + suffix + "@example.invalid"
 	var orderID string
 	var weightedOrderID string
+	var personalizedOrderID string
+	var personalizedProductID string
+	var personalizedBrandID string
+	var personalizedSupplierID string
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
@@ -166,17 +172,43 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 				t.Errorf("clean up MariaDB weight-value order: %v", err)
 			}
 		}
+		if personalizedOrderID != "" {
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM orders WHERE id = $1`, personalizedOrderID); err != nil {
+				t.Errorf("clean up MariaDB personalized order: %v", err)
+			}
+		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM carts WHERE access_token_hash = $1`, tokenHash[:]); err != nil {
 			t.Errorf("clean up MariaDB test cart: %v", err)
 		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM carts WHERE access_token_hash = $1`, weightedTokenHash[:]); err != nil {
 			t.Errorf("clean up MariaDB weight-value cart: %v", err)
 		}
+		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM carts WHERE access_token_hash = $1`, personalizedTokenHash[:]); err != nil {
+			t.Errorf("clean up MariaDB personalized cart: %v", err)
+		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM customers WHERE shop_id = $1 AND email = $2`, seed.ShopID, email); err != nil {
 			t.Errorf("clean up MariaDB test customer: %v", err)
 		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM customers WHERE shop_id = $1 AND email = $2`, seed.ShopID, weightedEmail); err != nil {
 			t.Errorf("clean up MariaDB weight-value customer: %v", err)
+		}
+		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM customers WHERE shop_id = $1 AND email = $2`, seed.ShopID, personalizedEmail); err != nil {
+			t.Errorf("clean up MariaDB personalized customer: %v", err)
+		}
+		if personalizedProductID != "" {
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM products WHERE id = $1`, personalizedProductID); err != nil {
+				t.Errorf("clean up MariaDB personalized product: %v", err)
+			}
+		}
+		if personalizedBrandID != "" {
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM brands WHERE id = $1`, personalizedBrandID); err != nil {
+				t.Errorf("clean up MariaDB integration brand: %v", err)
+			}
+		}
+		if personalizedSupplierID != "" {
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM suppliers WHERE id = $1`, personalizedSupplierID); err != nil {
+				t.Errorf("clean up MariaDB integration supplier: %v", err)
+			}
 		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM products WHERE id = $1`, product.ID); err != nil {
 			t.Errorf("clean up MariaDB test product: %v", err)
@@ -316,6 +348,66 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 		t.Fatalf("MariaDB order snapshot after restore = %+v, error = %v; want version %s",
 			restoredOrder, err, previousRateVersion)
 	}
+
+	brand, err := store.CreateBrand(ctx, seed.ShopID, BrandInput{Slug: "mariadb-brand-" + suffix, Name: "MariaDB Brand"})
+	if err != nil {
+		t.Fatalf("create MariaDB integration brand: %v", err)
+	}
+	personalizedBrandID = brand.ID
+	supplier, err := store.CreateSupplier(ctx, seed.ShopID, SupplierInput{Code: "MDB-" + suffix, Name: "MariaDB Supplier", Active: true})
+	if err != nil {
+		t.Fatalf("create MariaDB integration supplier: %v", err)
+	}
+	personalizedSupplierID = supplier.ID
+	personalizedProduct, err := store.CreateProduct(ctx, seed.ShopID, ProductInput{
+		Slug: "mariadb-personalized-" + suffix, Status: "active",
+		BrandID: brand.ID, SupplierIDs: []string{supplier.ID},
+		PersonalizationOptions: []PersonalizationOption{{
+			Code: "finish", Label: "Finish", Required: true,
+			Choices: []PersonalizationChoice{{Value: "matte", Label: "Matte"}, {Value: "glossy", Label: "Glossy"}},
+		}},
+		Translations: []TranslationView{{Locale: "en-GB", Name: "MariaDB personalized product"}},
+		Variants: []VariantInput{{
+			SKU: "MDB-PERS-" + suffix, Options: map[string]any{}, WeightGrams: mariaDBInt64Pointer(500),
+			Prices:    []PriceView{{Currency: "EUR", Amount: "15.0000"}},
+			Inventory: InventoryView{Quantity: 5, Track: true},
+			Suppliers: []VariantSupplierInput{{SupplierID: supplier.ID, SupplierSKU: "MDB-REF-" + suffix}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create MariaDB personalized product: %v", err)
+	}
+	personalizedProductID = personalizedProduct.ID
+	if personalizedProduct.Brand == nil || personalizedProduct.Brand.ID != brand.ID ||
+		len(personalizedProduct.SupplierIDs) != 1 || len(personalizedProduct.Variants[0].Suppliers) != 1 {
+		t.Fatalf("MariaDB catalog references = %+v", personalizedProduct)
+	}
+	if err := store.CreateCart(ctx, seed.ShopID, personalizedTokenHash[:]); err != nil {
+		t.Fatalf("create MariaDB personalized cart: %v", err)
+	}
+	if _, err := store.AddCartLine(ctx, seed.ShopID, personalizedTokenHash[:], personalizedProduct.Variants[0].ID, 1); !errors.Is(err, ErrInvalidPersonalization) {
+		t.Fatalf("MariaDB missing required selection error = %v, want %v", err, ErrInvalidPersonalization)
+	}
+	if _, err := store.AddCartLine(ctx, seed.ShopID, personalizedTokenHash[:], personalizedProduct.Variants[0].ID, 1, map[string]string{"finish": "matte"}); err != nil {
+		t.Fatalf("add MariaDB personalized cart line: %v", err)
+	}
+	personalizedCart, err := store.GetCart(ctx, seed.ShopID, personalizedTokenHash[:])
+	if err != nil || len(personalizedCart.Items) != 1 ||
+		len(personalizedCart.Items[0].Personalizations) != 1 ||
+		personalizedCart.Items[0].Personalizations[0].ChoiceLabel != "Matte" {
+		t.Fatalf("MariaDB personalized cart = %+v, error = %v", personalizedCart, err)
+	}
+	personalizedOrder, err := store.CheckoutCart(ctx, seed.ShopID, personalizedTokenHash[:], CheckoutDetails{
+		Email: personalizedEmail, Name: "MariaDB Personalization",
+		ShippingCarrierCode: "colissimo", ShippingServiceCode: "home",
+		ShippingAddress: ShippingAddress{Line1: "1 rue de test", City: "Paris", PostalCode: "75001", Country: "FR"},
+	})
+	if err != nil || len(personalizedOrder.Items) != 1 ||
+		len(personalizedOrder.Items[0].Personalizations) != 1 ||
+		personalizedOrder.Items[0].Personalizations[0].ChoiceLabel != "Matte" {
+		t.Fatalf("MariaDB personalized order = %+v, error = %v", personalizedOrder, err)
+	}
+	personalizedOrderID = personalizedOrder.ID
 }
 
 func mariaDBInt64Pointer(value int64) *int64 { return &value }

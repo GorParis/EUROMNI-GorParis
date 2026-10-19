@@ -1,5 +1,26 @@
 # État du projet EUROMNI
 
+## Reprise en cours — référentiels du catalogue et personnalisations
+
+Le catalogue est en cours d’enrichissement avant l’élargissement des modules
+Wasm : marques simples, fournisseurs associés au produit et à ses variantes,
+et personnalisations par choix prédéfinis sans texte libre ni supplément de
+prix automatique. Les choix sont validés à l’ajout au panier et au checkout ;
+les lignes panier et commande conservent un snapshot, et les références
+fournisseur ne sont exposées que dans l’API d’administration.
+
+Les migrations PostgreSQL, MariaDB et SQLite, les stores, les APIs REST et
+GraphQL, l’administration et la vitrine ont été adaptés. Les tests mémoire,
+SQLite, API et PostgreSQL passent avec `go test ./...`, `go vet ./...` et les
+vérifications JavaScript. Le test d’intégration PostgreSQL passe également.
+La validation MariaDB dédiée reste à effectuer : `MARIADB_TEST_DATABASE_URL`
+n’était pas configurée dans cet environnement et le test d’intégration a été
+ignoré. Ces changements ne sont ni commités ni poussés.
+
+**Prochaine étape** : appliquer et exercer la migration MariaDB sur une base
+d’intégration dédiée, puis faire une dernière revue fonctionnelle du CMS et de
+la vitrine avant d’élargir les tunnels Wasm.
+
 ## Dernier point de reprise — sauvegarde MariaDB (19 octobre 2026)
 
 Point de sauvegarde fonctionnel précédent : commit `6518a0e` (`Add shipping rate

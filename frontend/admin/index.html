@@ -114,6 +114,7 @@
             <div class="form-grid">
               <label>Slug<input name="slug" maxlength="128" pattern="[a-z0-9]+(-[a-z0-9]+)*" required /></label>
               <label>Statut<select name="status"><option value="draft">Brouillon</option><option value="active">Actif</option><option value="archived">Archivé</option></select></label>
+              <label>Marque<select id="brand-select" name="brand_id"><option value="">Aucune marque</option></select></label>
               <label class="wide">Traductions — JSON
                 <textarea name="translations" spellcheck="false">[
   { "locale": "fr-FR", "name": "Nom du produit", "description": "" }
@@ -122,6 +123,10 @@
               <fieldset class="wide">
                 <legend>Catégories</legend>
                 <div id="category-options" class="category-options"></div>
+              </fieldset>
+              <fieldset class="wide">
+                <legend>Fournisseurs du produit</legend>
+                <div id="product-supplier-options" class="category-options"></div>
               </fieldset>
               <label class="wide">Images — JSON
                 <textarea name="media" spellcheck="false">[]</textarea>
@@ -134,9 +139,14 @@
     "options": {},
     "weight_grams": null,
     "prices": [{ "currency": "EUR", "amount": "12.0000" }],
-    "inventory": { "quantity": 10, "track": true }
+    "inventory": { "quantity": 10, "track": true },
+    "suppliers": []
   }
 ]</textarea>
+              </label>
+              <label class="wide">Options de personnalisation — JSON
+                <textarea name="personalization_options" spellcheck="false">[]</textarea>
+                <span class="muted">Options à choix prédéfinis ; aucun supplément de prix ni texte libre dans cette version.</span>
               </label>
             </div>
             <div class="actions">
@@ -148,6 +158,39 @@
         <section class="panel">
           <h2>Catégories</h2>
           <div id="categories" class="category-list"></div>
+        </section>
+        <section class="panel">
+          <h2>Marques</h2>
+          <div id="brands" class="category-list"></div>
+          <h3 id="brand-form-title">Créer une marque</h3>
+          <form id="brand-form">
+            <input name="id" type="hidden" />
+            <div class="form-grid">
+              <label>Slug<input name="slug" maxlength="128" pattern="[a-z0-9]+(-[a-z0-9]+)*" required /></label>
+              <label>Nom<input name="name" maxlength="200" required /></label>
+            </div>
+            <div class="actions">
+              <button type="submit">Enregistrer la marque</button>
+              <button id="cancel-brand-edit" class="secondary" type="button" hidden>Annuler</button>
+            </div>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>Fournisseurs</h2>
+          <div id="suppliers" class="category-list"></div>
+          <h3 id="supplier-form-title">Créer un fournisseur</h3>
+          <form id="supplier-form">
+            <input name="id" type="hidden" />
+            <div class="form-grid">
+              <label>Code<input name="code" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" required /></label>
+              <label>Nom<input name="name" maxlength="200" required /></label>
+              <label class="category-option"><input name="active" type="checkbox" checked /> Actif</label>
+            </div>
+            <div class="actions">
+              <button type="submit">Enregistrer le fournisseur</button>
+              <button id="cancel-supplier-edit" class="secondary" type="button" hidden>Annuler</button>
+            </div>
+          </form>
         </section>
         <section class="panel">
           <h3 id="category-form-title">Créer une catégorie</h3>

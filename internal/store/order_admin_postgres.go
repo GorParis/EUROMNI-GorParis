@@ -110,7 +110,7 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 		}
 	}
 	rows, err := s.SQL.QueryContext(ctx, `
-		SELECT sku, name, quantity, unit_price::text, line_total::text
+		SELECT sku, name, quantity, unit_price::text, line_total::text, personalization_snapshot::text
 		FROM order_lines
 		WHERE order_id = $1
 		ORDER BY id
@@ -121,9 +121,17 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 	order.Items = make([]OrderLineView, 0)
 	for rows.Next() {
 		var item OrderLineView
-		if err := rows.Scan(&item.SKU, &item.Name, &item.Quantity, &item.UnitPrice, &item.LineTotal); err != nil {
+		var personalizationJSON string
+		if err := rows.Scan(&item.SKU, &item.Name, &item.Quantity, &item.UnitPrice, &item.LineTotal, &personalizationJSON); err != nil {
 			_ = rows.Close()
 			return nil, err
+		}
+		if err := json.Unmarshal([]byte(personalizationJSON), &item.Personalizations); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if item.Personalizations == nil {
+			item.Personalizations = []PersonalizationSelection{}
 		}
 		order.Items = append(order.Items, item)
 	}

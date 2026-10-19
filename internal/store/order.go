@@ -35,13 +35,13 @@ type OrderAdminReader interface {
 }
 
 type CheckoutDetails struct {
-	Email                 string
-	Name                  string
-	ShippingCarrierCode   string
-	ShippingServiceCode   string
-	ExpectedShippingTotal string
+	Email                   string
+	Name                    string
+	ShippingCarrierCode     string
+	ShippingServiceCode     string
+	ExpectedShippingTotal   string
 	ExpectedShippingQuoteID string
-	ShippingAddress       ShippingAddress
+	ShippingAddress         ShippingAddress
 }
 
 type ShippingAddress struct {
@@ -75,11 +75,12 @@ type OrderView struct {
 }
 
 type OrderLineView struct {
-	SKU       string `json:"sku"`
-	Name      string `json:"name"`
-	Quantity  int    `json:"quantity"`
-	UnitPrice string `json:"unit_price"`
-	LineTotal string `json:"line_total"`
+	SKU              string                     `json:"sku"`
+	Name             string                     `json:"name"`
+	Quantity         int                        `json:"quantity"`
+	UnitPrice        string                     `json:"unit_price"`
+	LineTotal        string                     `json:"line_total"`
+	Personalizations []PersonalizationSelection `json:"personalizations"`
 }
 
 type AdminOrderView struct {
@@ -164,7 +165,8 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT v.id::text, v.sku, cl.quantity, COALESCE(pt.name, pr.slug), p.amount::text, v.weight_grams
+		SELECT v.id::text, v.sku, cl.quantity, COALESCE(pt.name, pr.slug), p.amount::text,
+		       v.weight_grams, cl.personalizations, pr.personalization_options
 		FROM cart_lines cl
 		JOIN variants v ON v.id = cl.variant_id
 		JOIN products pr ON pr.id = v.product_id
@@ -186,7 +188,26 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	weightKnown := true
 	for rows.Next() {
 		var line checkoutLine
-		if err := rows.Scan(&line.variantID, &line.SKU, &line.Quantity, &line.Name, &line.UnitPrice, &line.weightGrams); err != nil {
+		var personalizationsJSON, optionJSON []byte
+		if err := rows.Scan(
+			&line.variantID, &line.SKU, &line.Quantity, &line.Name, &line.UnitPrice,
+			&line.weightGrams, &personalizationsJSON, &optionJSON,
+		); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		options, err := decodePersonalizationOptions(optionJSON)
+		if err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		selections, err := personalizationValues(personalizationsJSON)
+		if err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		line.Personalizations, _, _, err = ValidatePersonalizationSelections(options, selections)
+		if err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -398,10 +419,17 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		return nil, err
 	}
 	for _, line := range lines {
+		personalizationJSON, err := json.Marshal(line.Personalizations)
+		if err != nil {
+			return nil, err
+		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO order_lines (order_id, variant_id, sku, name, quantity, unit_price, line_total)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-		`, persistedOrderID, line.variantID, line.SKU, line.Name, line.Quantity, line.UnitPrice, line.LineTotal); err != nil {
+			INSERT INTO order_lines (
+				order_id, variant_id, sku, name, quantity, unit_price, line_total, personalization_snapshot
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+		`, persistedOrderID, line.variantID, line.SKU, line.Name, line.Quantity, line.UnitPrice,
+			line.LineTotal, string(personalizationJSON)); err != nil {
 			return nil, err
 		}
 	}
@@ -484,26 +512,34 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 			return nil, ErrShippingQuoteChanged
 		}
 	}
-	variantIDs := make([]string, 0, len(cart.lines))
-	for variantID := range cart.lines {
-		variantIDs = append(variantIDs, variantID)
+	lineKeys := make([]string, 0, len(cart.lines))
+	for lineKey := range cart.lines {
+		lineKeys = append(lineKeys, lineKey)
 	}
-	sort.Strings(variantIDs)
-	lines := make([]checkoutLine, 0, len(variantIDs))
+	sort.Strings(lineKeys)
+	lines := make([]checkoutLine, 0, len(lineKeys))
 	subtotal := new(big.Rat)
-	variants := make([]*VariantView, 0, len(variantIDs))
-	for _, variantID := range variantIDs {
+	variants := make(map[string]*VariantView, len(lineKeys))
+	variantQuantities := make(map[string]int, len(lineKeys))
+	for _, lineKey := range lineKeys {
+		cartLine := cart.lines[lineKey]
+		variantID := cartLine.variantID
 		product, variant := m.findVariant(shopID, variantID)
 		if variant == nil {
 			return nil, ErrNotFound
 		}
-		quantity := cart.lines[variantID]
-		if variant.Inventory.Track && variant.Inventory.Quantity < quantity {
-			return nil, ErrOutOfStock
-		}
+		quantity := cartLine.quantity
 		price, ok := priceForCurrency(variant, cart.currency)
 		if !ok {
 			return nil, ErrNotFound
+		}
+		selections := make(map[string]string, len(cartLine.personalizations))
+		for _, selection := range cartLine.personalizations {
+			selections[selection.Code] = selection.Value
+		}
+		normalizedSelections, _, _, err := ValidatePersonalizationSelections(product.PersonalizationOptions, selections)
+		if err != nil {
+			return nil, err
 		}
 		unitPrice, ok := new(big.Rat).SetString(price.Amount)
 		if !ok {
@@ -522,17 +558,25 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 			OrderLineView: OrderLineView{
 				SKU: variant.SKU, Name: lineName, Quantity: quantity,
 				UnitPrice: price.Amount, LineTotal: lineAmount.FloatString(4),
+				Personalizations: normalizedSelections,
 			},
 		})
-		variants = append(variants, variant)
+		variants[variantID] = variant
+		variantQuantities[variantID] += quantity
 		subtotal.Add(subtotal, lineAmount)
+	}
+	for variantID, quantity := range variantQuantities {
+		variant := variants[variantID]
+		if variant.Inventory.Track && variant.Inventory.Quantity < quantity {
+			return nil, ErrOutOfStock
+		}
 	}
 	shippingTotal := "6.9000"
 	shippingAmount, _ := new(big.Rat).SetString(shippingTotal)
 	total := new(big.Rat).Add(subtotal, shippingAmount).FloatString(4)
-	for i, variant := range variants {
+	for variantID, variant := range variants {
 		if variant.Inventory.Track {
-			variant.Inventory.Quantity -= lines[i].Quantity
+			variant.Inventory.Quantity -= variantQuantities[variantID]
 		}
 	}
 	clear(cart.lines)
@@ -542,7 +586,7 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 		ShippingCarrierCode: "colissimo", ShippingCarrierName: "Colissimo (tarif de démonstration)",
 		ShippingServiceCode: "legacy", ShippingServiceName: "Offre historique",
 		ShippingRateVersion: legacyShippingRateVersion,
-		GrandTotal: total,
-		Items:      orderLines(lines),
+		GrandTotal:          total,
+		Items:               orderLines(lines),
 	}, nil
 }

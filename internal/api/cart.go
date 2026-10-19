@@ -18,8 +18,9 @@ import (
 const maxCartRequestBytes = 16 << 10
 
 type cartAddRequest struct {
-	VariantID string `json:"variant_id"`
-	Quantity  int    `json:"quantity"`
+	VariantID        string            `json:"variant_id"`
+	Quantity         int               `json:"quantity"`
+	Personalizations map[string]string `json:"personalizations,omitempty"`
 }
 
 func cartCreate(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +86,7 @@ func cartAdd(w http.ResponseWriter, r *http.Request) {
 		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid cart item"})
 		return
 	}
-	cart, err := reader.AddCartLine(r.Context(), seed.ShopID, tokenHash, request.VariantID, request.Quantity)
+	cart, err := reader.AddCartLine(r.Context(), seed.ShopID, tokenHash, request.VariantID, request.Quantity, request.Personalizations)
 	if err != nil {
 		writeCartError(w, err)
 		return
@@ -139,6 +140,8 @@ func writeCartError(w http.ResponseWriter, err error) {
 		writePrivateJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid cart authorization"})
 	case errors.Is(err, store.ErrInvalidCartQuantity):
 		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid cart quantity"})
+	case errors.Is(err, store.ErrInvalidPersonalization):
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid product personalization"})
 	case errors.Is(err, store.ErrOutOfStock):
 		writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "insufficient inventory"})
 	case errors.Is(err, store.ErrNotFound):

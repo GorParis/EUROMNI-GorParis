@@ -290,8 +290,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err := db.SQL.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("read migration ledger: %v", err)
 	}
-	if migrationCount != 11 {
-		t.Fatalf("recorded migrations = %d, want 11", migrationCount)
+	if migrationCount != 12 {
+		t.Fatalf("recorded migrations = %d, want 12", migrationCount)
 	}
 	installedModule, err := db.GetInstalledModule(ctx, seed.ShopID, seed.ModuleID)
 	if err != nil {
@@ -310,6 +310,67 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		if !found {
 			t.Errorf("installed module missing capability %q: %v", capability, installedModule.Capabilities)
 		}
+	}
+
+	brand, err := db.CreateBrand(ctx, seed.ShopID, BrandInput{Slug: "integration-brand", Name: "Integration Brand"})
+	if err != nil {
+		t.Fatalf("create integration brand: %v", err)
+	}
+	supplier, err := db.CreateSupplier(ctx, seed.ShopID, SupplierInput{Code: "INTEGRATION-SUPPLIER", Name: "Integration Supplier", Active: true})
+	if err != nil {
+		t.Fatalf("create integration supplier: %v", err)
+	}
+	personalizedProduct, err := db.CreateProduct(ctx, seed.ShopID, ProductInput{
+		Slug: "integration-personalized", Status: "active", BrandID: brand.ID,
+		SupplierIDs: []string{supplier.ID},
+		PersonalizationOptions: []PersonalizationOption{{
+			Code: "finish", Label: "Finish", Required: true,
+			Choices: []PersonalizationChoice{{Value: "matte", Label: "Matte"}, {Value: "glossy", Label: "Glossy"}},
+		}},
+		Translations: []TranslationView{{Locale: "en-GB", Name: "Personalized product"}},
+		Variants: []VariantInput{{
+			SKU: "INTEGRATION-PERSONALIZED", Options: map[string]any{},
+			Prices:    []PriceView{{Currency: "EUR", Amount: "10.0000"}},
+			Inventory: InventoryView{Quantity: 5, Track: true},
+			Suppliers: []VariantSupplierInput{{SupplierID: supplier.ID, SupplierSKU: "SUPPLIER-SKU-1"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create personalized integration product: %v", err)
+	}
+	if personalizedProduct.Brand == nil || personalizedProduct.Brand.ID != brand.ID ||
+		len(personalizedProduct.SupplierIDs) != 1 || len(personalizedProduct.Variants[0].Suppliers) != 1 ||
+		personalizedProduct.Variants[0].Suppliers[0].SupplierSKU != "SUPPLIER-SKU-1" {
+		t.Fatalf("unexpected integration catalog references: %+v", personalizedProduct)
+	}
+	if _, err := db.UpdateSupplier(ctx, seed.ShopID, supplier.ID, SupplierInput{Code: supplier.Code, Name: supplier.Name, Active: false}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("deactivate assigned integration supplier error = %v, want %v", err, ErrConflict)
+	}
+	personalizedTokenHash := sha256.Sum256([]byte("postgres integration personalized cart"))
+	if err := db.CreateCart(ctx, seed.ShopID, personalizedTokenHash[:]); err != nil {
+		t.Fatalf("create personalized integration cart: %v", err)
+	}
+	if _, err := db.AddCartLine(ctx, seed.ShopID, personalizedTokenHash[:], personalizedProduct.Variants[0].ID, 1); !errors.Is(err, ErrInvalidPersonalization) {
+		t.Fatalf("missing required integration selection error = %v, want %v", err, ErrInvalidPersonalization)
+	}
+	if _, err := db.AddCartLine(ctx, seed.ShopID, personalizedTokenHash[:], personalizedProduct.Variants[0].ID, 1, map[string]string{"finish": "matte"}); err != nil {
+		t.Fatalf("add personalized integration cart line: %v", err)
+	}
+	personalizedCart, err := db.GetCart(ctx, seed.ShopID, personalizedTokenHash[:])
+	if err != nil || len(personalizedCart.Items) != 1 ||
+		len(personalizedCart.Items[0].Personalizations) != 1 ||
+		personalizedCart.Items[0].Personalizations[0].ChoiceLabel != "Matte" {
+		t.Fatalf("personalized integration cart = %+v, error = %v", personalizedCart, err)
+	}
+	personalizedOrder, err := db.CheckoutCart(ctx, seed.ShopID, personalizedTokenHash[:], CheckoutDetails{
+		Email: "personalized-integration@example.com", Name: "Personalization Integration",
+		ShippingCarrierCode: "colissimo",
+		ShippingAddress:     ShippingAddress{Line1: "1 Test Street", City: "Paris", PostalCode: "75001", Country: "FR"},
+	})
+	if err != nil || len(personalizedOrder.Items) != 1 ||
+		len(personalizedOrder.Items[0].Personalizations) != 1 ||
+		personalizedOrder.Items[0].Personalizations[0].ChoiceLabel != "Matte" {
+		t.Fatalf("personalized integration order = %+v, error = %v", personalizedOrder, err)
 	}
 
 	rawToken := make([]byte, 32)

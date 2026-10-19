@@ -9,13 +9,35 @@ import (
 var ErrNotFound = errors.New("not found")
 
 type ProductView struct {
-	ID           string            `json:"id"`
-	Slug         string            `json:"slug"`
-	Status       string            `json:"status"`
-	Translations []TranslationView `json:"translations"`
-	CategoryIDs  []string          `json:"category_ids"`
-	Media        []MediaView       `json:"media"`
-	Variants     []VariantView     `json:"variants"`
+	ID                     string                  `json:"id"`
+	Slug                   string                  `json:"slug"`
+	Status                 string                  `json:"status"`
+	Brand                  *BrandView              `json:"brand,omitempty"`
+	SupplierIDs            []string                `json:"-"`
+	PersonalizationOptions []PersonalizationOption `json:"personalization_options"`
+	Translations           []TranslationView       `json:"translations"`
+	CategoryIDs            []string                `json:"category_ids"`
+	Media                  []MediaView             `json:"media"`
+	Variants               []VariantView           `json:"variants"`
+}
+
+type PersonalizationOption struct {
+	Code     string                  `json:"code"`
+	Label    string                  `json:"label"`
+	Required bool                    `json:"required"`
+	Choices  []PersonalizationChoice `json:"choices"`
+}
+
+type PersonalizationChoice struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+type PersonalizationSelection struct {
+	Code        string `json:"code"`
+	Label       string `json:"label"`
+	Value       string `json:"value"`
+	ChoiceLabel string `json:"choice_label"`
 }
 
 type TranslationView struct {
@@ -33,12 +55,45 @@ type MediaView struct {
 }
 
 type VariantView struct {
-	ID          string         `json:"id"`
-	SKU         string         `json:"sku"`
-	Options     map[string]any `json:"options"`
-	WeightGrams *int64         `json:"weight_grams,omitempty"`
-	Prices      []PriceView    `json:"prices"`
-	Inventory   InventoryView  `json:"inventory"`
+	ID          string                `json:"id"`
+	SKU         string                `json:"sku"`
+	Options     map[string]any        `json:"options"`
+	WeightGrams *int64                `json:"weight_grams,omitempty"`
+	Prices      []PriceView           `json:"prices"`
+	Inventory   InventoryView         `json:"inventory"`
+	Suppliers   []VariantSupplierView `json:"-"`
+}
+
+type AdminProductView struct {
+	ProductView
+	SupplierIDs []string           `json:"supplier_ids"`
+	Variants    []AdminVariantView `json:"variants"`
+}
+
+type AdminVariantView struct {
+	VariantView
+	Suppliers []VariantSupplierView `json:"suppliers"`
+}
+
+func AdminProduct(product ProductView) AdminProductView {
+	admin := AdminProductView{
+		ProductView: product,
+		SupplierIDs: append([]string(nil), product.SupplierIDs...),
+		Variants:    make([]AdminVariantView, len(product.Variants)),
+	}
+	for i, variant := range product.Variants {
+		admin.Variants[i] = AdminVariantView{
+			VariantView: variant,
+			Suppliers:   append([]VariantSupplierView(nil), variant.Suppliers...),
+		}
+	}
+	return admin
+}
+
+type VariantSupplierView struct {
+	SupplierID   string `json:"supplier_id"`
+	SupplierName string `json:"supplier_name"`
+	SupplierSKU  string `json:"supplier_sku"`
 }
 
 type PriceView struct {
@@ -155,19 +210,69 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	}
 
 	var p ProductView
+	var brandID sql.NullString
+	var personalizationOptions []byte
 	query := `
-		SELECT id::text, slug, status::text
+		SELECT id::text, slug, status::text, brand_id::text, personalization_options
 		FROM products
 		WHERE shop_id = $1 AND id = $2
 	`
 	if activeOnly {
 		query += ` AND status = 'active'`
 	}
-	err := s.SQL.QueryRowContext(ctx, query, shopID, productID).Scan(&p.ID, &p.Slug, &p.Status)
+	err := s.SQL.QueryRowContext(ctx, query, shopID, productID).Scan(
+		&p.ID, &p.Slug, &p.Status, &brandID, &personalizationOptions,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
+		return nil, err
+	}
+	p.PersonalizationOptions, err = decodePersonalizationOptions(personalizationOptions)
+	if err != nil {
+		return nil, err
+	}
+	if brandID.Valid {
+		var brand BrandView
+		err := s.SQL.QueryRowContext(ctx, `
+			SELECT id::text, slug, name
+			FROM brands
+			WHERE shop_id = $1 AND id = $2
+		`, shopID, brandID.String).Scan(&brand.ID, &brand.Slug, &brand.Name)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("product references a brand outside its shop")
+		}
+		if err != nil {
+			return nil, err
+		}
+		p.Brand = &brand
+	}
+
+	supplierRows, err := s.SQL.QueryContext(ctx, `
+		SELECT product_supplier.supplier_id::text
+		FROM product_suppliers product_supplier
+		JOIN suppliers supplier
+		  ON supplier.id = product_supplier.supplier_id AND supplier.shop_id = $2
+		WHERE product_supplier.product_id = $1
+		ORDER BY product_supplier.supplier_id
+	`, productID, shopID)
+	if err != nil {
+		return nil, err
+	}
+	for supplierRows.Next() {
+		var supplierID string
+		if err := supplierRows.Scan(&supplierID); err != nil {
+			_ = supplierRows.Close()
+			return nil, err
+		}
+		p.SupplierIDs = append(p.SupplierIDs, supplierID)
+	}
+	if err := supplierRows.Err(); err != nil {
+		_ = supplierRows.Close()
+		return nil, err
+	}
+	if err := supplierRows.Close(); err != nil {
 		return nil, err
 	}
 
@@ -280,6 +385,10 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 			return nil, err
 		}
 		variants[i].Prices = prices
+		variants[i].Suppliers, err = s.variantSuppliersFor(ctx, shopID, variants[i].ID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	p.Variants = variants
 	if p.Translations == nil {
@@ -294,7 +403,38 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	if p.Variants == nil {
 		p.Variants = []VariantView{}
 	}
+	if p.SupplierIDs == nil {
+		p.SupplierIDs = []string{}
+	}
 	return &p, nil
+}
+
+func (s *Store) variantSuppliersFor(ctx context.Context, shopID, variantID string) ([]VariantSupplierView, error) {
+	rows, err := s.SQL.QueryContext(ctx, `
+		SELECT supplier.id::text, supplier.name, variant_supplier.supplier_sku
+		FROM variant_suppliers variant_supplier
+		JOIN suppliers supplier ON supplier.id = variant_supplier.supplier_id
+		JOIN variants variant ON variant.id = variant_supplier.variant_id
+		JOIN products product ON product.id = variant.product_id
+		WHERE variant_supplier.variant_id = $1 AND product.shop_id = $2 AND supplier.shop_id = $2
+		ORDER BY supplier.code, supplier.id
+	`, variantID, shopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	suppliers := make([]VariantSupplierView, 0)
+	for rows.Next() {
+		var supplier VariantSupplierView
+		if err := rows.Scan(&supplier.SupplierID, &supplier.SupplierName, &supplier.SupplierSKU); err != nil {
+			return nil, err
+		}
+		suppliers = append(suppliers, supplier)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return suppliers, nil
 }
 
 func (s *Store) pricesFor(ctx context.Context, variantID string) ([]PriceView, error) {

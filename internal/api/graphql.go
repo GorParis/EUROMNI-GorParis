@@ -178,15 +178,57 @@ func getGraphQLSchema() (gql.Schema, error) {
 				"inventory": &gql.Field{Type: gql.NewNonNull(inventoryType)},
 			},
 		})
+		brandType := gql.NewObject(gql.ObjectConfig{
+			Name: "Brand",
+			Fields: gql.Fields{
+				"id":   &gql.Field{Type: gql.NewNonNull(gql.ID)},
+				"slug": &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"name": &gql.Field{Type: gql.NewNonNull(gql.String)},
+			},
+		})
+		personalizationChoiceType := gql.NewObject(gql.ObjectConfig{
+			Name: "PersonalizationChoice",
+			Fields: gql.Fields{
+				"value": &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"label": &gql.Field{Type: gql.NewNonNull(gql.String)},
+			},
+		})
+		personalizationOptionType := gql.NewObject(gql.ObjectConfig{
+			Name: "PersonalizationOption",
+			Fields: gql.Fields{
+				"code":     &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"label":    &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"required": &gql.Field{Type: gql.NewNonNull(gql.Boolean)},
+				"choices":  &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(personalizationChoiceType)))},
+			},
+		})
+		personalizationSelectionType := gql.NewObject(gql.ObjectConfig{
+			Name: "PersonalizationSelection",
+			Fields: gql.Fields{
+				"code":        &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"label":       &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"value":       &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"choiceLabel": &gql.Field{Type: gql.NewNonNull(gql.String)},
+			},
+		})
+		personalizationInputType := gql.NewInputObject(gql.InputObjectConfig{
+			Name: "PersonalizationInput",
+			Fields: gql.InputObjectConfigFieldMap{
+				"code":  &gql.InputObjectFieldConfig{Type: gql.NewNonNull(gql.String)},
+				"value": &gql.InputObjectFieldConfig{Type: gql.NewNonNull(gql.String)},
+			},
+		})
 		productType := gql.NewObject(gql.ObjectConfig{
 			Name: "Product",
 			Fields: gql.Fields{
-				"id":           &gql.Field{Type: gql.NewNonNull(gql.ID)},
-				"slug":         &gql.Field{Type: gql.NewNonNull(gql.String)},
-				"status":       &gql.Field{Type: gql.NewNonNull(gql.String)},
-				"translations": &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(translationType)))},
-				"media":        &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(mediaType)))},
-				"variants":     &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(variantType)))},
+				"id":                     &gql.Field{Type: gql.NewNonNull(gql.ID)},
+				"slug":                   &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"status":                 &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"brand":                  &gql.Field{Type: brandType},
+				"personalizationOptions": &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(personalizationOptionType)))},
+				"translations":           &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(translationType)))},
+				"media":                  &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(mediaType)))},
+				"variants":               &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(variantType)))},
 			},
 		})
 		categoryType := gql.NewObject(gql.ObjectConfig{
@@ -200,10 +242,11 @@ func getGraphQLSchema() (gql.Schema, error) {
 		cartItemType := gql.NewObject(gql.ObjectConfig{
 			Name: "CartItem",
 			Fields: gql.Fields{
-				"variantId":  &gql.Field{Type: gql.NewNonNull(gql.ID)},
-				"sku":        &gql.Field{Type: gql.NewNonNull(gql.String)},
-				"quantity":   &gql.Field{Type: gql.NewNonNull(gql.Int)},
-				"unitAmount": &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"variantId":        &gql.Field{Type: gql.NewNonNull(gql.ID)},
+				"sku":              &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"quantity":         &gql.Field{Type: gql.NewNonNull(gql.Int)},
+				"unitAmount":       &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"personalizations": &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(personalizationSelectionType)))},
 			},
 		})
 		cartTotalType := gql.NewObject(gql.ObjectConfig{
@@ -341,8 +384,9 @@ func getGraphQLSchema() (gql.Schema, error) {
 				"addCartLine": &gql.Field{
 					Type: cartType,
 					Args: gql.FieldConfigArgument{
-						"variantId": &gql.ArgumentConfig{Type: gql.NewNonNull(gql.ID)},
-						"quantity":  &gql.ArgumentConfig{Type: gql.NewNonNull(gql.Int)},
+						"variantId":        &gql.ArgumentConfig{Type: gql.NewNonNull(gql.ID)},
+						"quantity":         &gql.ArgumentConfig{Type: gql.NewNonNull(gql.Int)},
+						"personalizations": &gql.ArgumentConfig{Type: gql.NewList(gql.NewNonNull(personalizationInputType))},
 					},
 					Resolve: func(params gql.ResolveParams) (interface{}, error) {
 						reader, tokenHash, err := graphQLCartAccess(params)
@@ -351,7 +395,11 @@ func getGraphQLSchema() (gql.Schema, error) {
 						}
 						variantID, _ := params.Args["variantId"].(string)
 						quantity, _ := params.Args["quantity"].(int)
-						cart, err := reader.AddCartLine(params.Context, seed.ShopID, tokenHash, variantID, quantity)
+						personalizations, err := graphQLPersonalizationValues(params.Args["personalizations"])
+						if err != nil {
+							return nil, err
+						}
+						cart, err := reader.AddCartLine(params.Context, seed.ShopID, tokenHash, variantID, quantity, personalizations)
 						if err != nil {
 							return nil, graphQLCartError(err)
 						}
@@ -423,14 +471,32 @@ func productGraphQLValue(product *store.ProductView) map[string]interface{} {
 			},
 		})
 	}
+	var brand interface{}
+	if product.Brand != nil {
+		brand = map[string]interface{}{
+			"id": product.Brand.ID, "slug": product.Brand.Slug, "name": product.Brand.Name,
+		}
+	}
+	personalizationOptions := make([]interface{}, 0, len(product.PersonalizationOptions))
+	for _, option := range product.PersonalizationOptions {
+		choices := make([]interface{}, 0, len(option.Choices))
+		for _, choice := range option.Choices {
+			choices = append(choices, map[string]interface{}{"value": choice.Value, "label": choice.Label})
+		}
+		personalizationOptions = append(personalizationOptions, map[string]interface{}{
+			"code": option.Code, "label": option.Label, "required": option.Required, "choices": choices,
+		})
+	}
 
 	return map[string]interface{}{
-		"id":           product.ID,
-		"slug":         product.Slug,
-		"status":       product.Status,
-		"translations": translations,
-		"media":        media,
-		"variants":     variants,
+		"id":                     product.ID,
+		"slug":                   product.Slug,
+		"status":                 product.Status,
+		"brand":                  brand,
+		"personalizationOptions": personalizationOptions,
+		"translations":           translations,
+		"media":                  media,
+		"variants":               variants,
 	}
 }
 
@@ -449,6 +515,8 @@ func graphQLCartError(err error) error {
 		return errors.New("cart authorization required")
 	case errors.Is(err, store.ErrInvalidCartQuantity):
 		return errors.New("invalid cart quantity")
+	case errors.Is(err, store.ErrInvalidPersonalization):
+		return errors.New("invalid product personalization")
 	case errors.Is(err, store.ErrOutOfStock):
 		return errors.New("insufficient inventory")
 	case errors.Is(err, store.ErrNotFound):
@@ -461,11 +529,19 @@ func graphQLCartError(err error) error {
 func cartGraphQLValue(cart *store.CartView) map[string]interface{} {
 	items := make([]interface{}, 0, len(cart.Items))
 	for _, item := range cart.Items {
+		personalizations := make([]interface{}, 0, len(item.Personalizations))
+		for _, selection := range item.Personalizations {
+			personalizations = append(personalizations, map[string]interface{}{
+				"code": selection.Code, "label": selection.Label,
+				"value": selection.Value, "choiceLabel": selection.ChoiceLabel,
+			})
+		}
 		items = append(items, map[string]interface{}{
-			"variantId":  item.VariantID,
-			"sku":        item.SKU,
-			"quantity":   item.Quantity,
-			"unitAmount": item.UnitAmount,
+			"variantId":        item.VariantID,
+			"sku":              item.SKU,
+			"quantity":         item.Quantity,
+			"unitAmount":       item.UnitAmount,
+			"personalizations": personalizations,
 		})
 	}
 	return map[string]interface{}{
@@ -475,6 +551,33 @@ func cartGraphQLValue(cart *store.CartView) map[string]interface{} {
 			"currency": cart.Total.Currency,
 		},
 	}
+}
+
+func graphQLPersonalizationValues(raw interface{}) (map[string]string, error) {
+	values := make(map[string]string)
+	if raw == nil {
+		return values, nil
+	}
+	entries, ok := raw.([]interface{})
+	if !ok {
+		return nil, errors.New("invalid product personalization")
+	}
+	for _, entry := range entries {
+		fields, ok := entry.(map[string]interface{})
+		if !ok {
+			return nil, errors.New("invalid product personalization")
+		}
+		code, codeOK := fields["code"].(string)
+		value, valueOK := fields["value"].(string)
+		if !codeOK || !valueOK || code == "" || value == "" {
+			return nil, errors.New("invalid product personalization")
+		}
+		if _, exists := values[code]; exists {
+			return nil, errors.New("duplicate product personalization")
+		}
+		values[code] = value
+	}
+	return values, nil
 }
 
 func categoryGraphQLValue(category *store.CategoryView) map[string]interface{} {

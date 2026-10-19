@@ -87,6 +87,103 @@ func TestMemoryCartIsolationTotalsAndInventory(t *testing.T) {
 	}
 }
 
+func TestMemoryCatalogReferencesAndPersonalizationSnapshots(t *testing.T) {
+	ctx := context.Background()
+	memory := NewMemory()
+	brand, err := memory.CreateBrand(ctx, seed.ShopID, BrandInput{Slug: "atelier-test", Name: "Atelier Test"})
+	if err != nil {
+		t.Fatalf("create brand: %v", err)
+	}
+	supplier, err := memory.CreateSupplier(ctx, seed.ShopID, SupplierInput{Code: "FOURN-1", Name: "Fournisseur 1", Active: true})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	options := []PersonalizationOption{{
+		Code: "emballage", Label: "Emballage cadeau", Required: true,
+		Choices: []PersonalizationChoice{
+			{Value: "gift", Label: "Avec papier cadeau"},
+			{Value: "plain", Label: "Sans papier cadeau"},
+		},
+	}}
+	product, err := memory.CreateProduct(ctx, seed.ShopID, ProductInput{
+		Slug: "objet-personnalisable", Status: "active", BrandID: brand.ID,
+		SupplierIDs: []string{supplier.ID}, PersonalizationOptions: options,
+		Translations: []TranslationView{{Locale: "fr-FR", Name: "Objet personnalisable"}},
+		Variants: []VariantInput{{
+			SKU: "OBJET-1", Options: map[string]any{}, Prices: []PriceView{{Currency: "EUR", Amount: "10.0000"}},
+			Inventory: InventoryView{Quantity: 5, Track: true},
+			Suppliers: []VariantSupplierInput{{SupplierID: supplier.ID, SupplierSKU: "REF-FOURN-1"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create personalized product: %v", err)
+	}
+	if product.Brand == nil || product.Brand.ID != brand.ID || len(product.SupplierIDs) != 1 ||
+		len(product.Variants[0].Suppliers) != 1 || product.Variants[0].Suppliers[0].SupplierSKU != "REF-FOURN-1" {
+		t.Fatalf("catalog references were not returned: %+v", product)
+	}
+	if _, err := memory.UpdateSupplier(ctx, seed.ShopID, supplier.ID, SupplierInput{Code: supplier.Code, Name: supplier.Name, Active: false}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("deactivating an assigned supplier error = %v, want conflict", err)
+	}
+
+	tokenHash := sha256.Sum256([]byte("personalization cart"))
+	if err := memory.CreateCart(ctx, seed.ShopID, tokenHash[:]); err != nil {
+		t.Fatalf("create cart: %v", err)
+	}
+	if _, err := memory.AddCartLine(ctx, seed.ShopID, tokenHash[:], product.Variants[0].ID, 1); !errors.Is(err, ErrInvalidPersonalization) {
+		t.Fatalf("missing required selection error = %v, want invalid personalization", err)
+	}
+	for _, selection := range []string{"gift", "gift", "plain"} {
+		if _, err := memory.AddCartLine(ctx, seed.ShopID, tokenHash[:], product.Variants[0].ID, 1, map[string]string{"emballage": selection}); err != nil {
+			t.Fatalf("add customized variant %q: %v", selection, err)
+		}
+	}
+	cart, err := memory.GetCart(ctx, seed.ShopID, tokenHash[:])
+	if err != nil {
+		t.Fatalf("read personalized cart: %v", err)
+	}
+	if len(cart.Items) != 2 {
+		t.Fatalf("personalized cart lines = %d, want two distinct configurations", len(cart.Items))
+	}
+	for _, item := range cart.Items {
+		if len(item.Personalizations) != 1 || item.Personalizations[0].Label != "Emballage cadeau" {
+			t.Fatalf("cart personalization snapshot = %+v", item.Personalizations)
+		}
+	}
+
+	memory.mu.Lock()
+	memory.products[seed.ShopID+"/"+product.ID].PersonalizationOptions[0].Choices = []PersonalizationChoice{{Value: "plain", Label: "Sans papier cadeau"}}
+	memory.mu.Unlock()
+	details := CheckoutDetails{
+		Email: "buyer@example.com", Name: "Client",
+		ShippingCarrierCode: "colissimo",
+		ShippingAddress:     ShippingAddress{Line1: "1 rue Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+	}
+	if _, err := memory.CheckoutCart(ctx, seed.ShopID, tokenHash[:], details); !errors.Is(err, ErrInvalidPersonalization) {
+		t.Fatalf("checkout after choice removal error = %v, want invalid personalization", err)
+	}
+	memory.mu.Lock()
+	memory.products[seed.ShopID+"/"+product.ID].PersonalizationOptions = clonePersonalizationOptions(options)
+	memory.mu.Unlock()
+	order, err := memory.CheckoutCart(ctx, seed.ShopID, tokenHash[:], details)
+	if err != nil {
+		t.Fatalf("checkout personalized cart: %v", err)
+	}
+	if len(order.Items) != 2 || order.Subtotal != "30.0000" {
+		t.Fatalf("customized order = %+v, want two lines and EUR 30.0000 subtotal", order)
+	}
+	values := make(map[string]int)
+	for _, item := range order.Items {
+		if len(item.Personalizations) != 1 {
+			t.Fatalf("order personalization snapshot = %+v", item.Personalizations)
+		}
+		values[item.Personalizations[0].Value] = item.Quantity
+	}
+	if values["gift"] != 2 || values["plain"] != 1 {
+		t.Fatalf("order personalization quantities = %v", values)
+	}
+}
+
 func TestMemoryCheckoutConsumesStockAndEmptiesCart(t *testing.T) {
 	ctx := context.Background()
 	memory := NewMemory()

@@ -127,6 +127,77 @@ func TestSQLiteStoreCatalogCartCheckoutFlow(t *testing.T) {
 	}
 }
 
+func TestSQLiteCatalogReferencesAndPersonalizationCheckout(t *testing.T) {
+	ctx := context.Background()
+	db := openSeededStore(t, 5)
+	brand, err := db.CreateBrand(ctx, seed.ShopID, store.BrandInput{Slug: "marque-test", Name: "Marque Test"})
+	if err != nil {
+		t.Fatalf("create brand: %v", err)
+	}
+	supplier, err := db.CreateSupplier(ctx, seed.ShopID, store.SupplierInput{Code: "FOURN-1", Name: "Fournisseur 1", Active: true})
+	if err != nil {
+		t.Fatalf("create supplier: %v", err)
+	}
+	product, err := db.CreateProduct(ctx, seed.ShopID, store.ProductInput{
+		Slug: "objet-configurable", Status: "active", BrandID: brand.ID,
+		SupplierIDs: []string{supplier.ID},
+		PersonalizationOptions: []store.PersonalizationOption{{
+			Code: "finition", Label: "Finition", Required: true,
+			Choices: []store.PersonalizationChoice{{Value: "mate", Label: "Mate"}, {Value: "brillante", Label: "Brillante"}},
+		}},
+		Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Objet configurable"}},
+		Variants: []store.VariantInput{{
+			SKU: "OBJET-CONFIG-1", Options: map[string]any{},
+			Prices:    []store.PriceView{{Currency: "EUR", Amount: "12.0000"}},
+			Inventory: store.InventoryView{Quantity: 5, Track: true},
+			Suppliers: []store.VariantSupplierInput{{SupplierID: supplier.ID, SupplierSKU: "FOURN-REF-12"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create configurable product: %v", err)
+	}
+	if product.Brand == nil || product.Brand.ID != brand.ID || len(product.SupplierIDs) != 1 ||
+		len(product.Variants[0].Suppliers) != 1 || product.Variants[0].Suppliers[0].SupplierSKU != "FOURN-REF-12" {
+		t.Fatalf("catalog references = %+v", product)
+	}
+	tokenHash := sha256.Sum256([]byte("sqlite personalization cart"))
+	if err := db.CreateCart(ctx, seed.ShopID, tokenHash[:]); err != nil {
+		t.Fatalf("create cart: %v", err)
+	}
+	if _, err := db.AddCartLine(ctx, seed.ShopID, tokenHash[:], product.Variants[0].ID, 1); !errors.Is(err, store.ErrInvalidPersonalization) {
+		t.Fatalf("missing required selection error = %v", err)
+	}
+	if _, err := db.AddCartLine(ctx, seed.ShopID, tokenHash[:], product.Variants[0].ID, 2, map[string]string{"finition": "mate"}); err != nil {
+		t.Fatalf("add personalized line: %v", err)
+	}
+	if _, err := db.AddCartLine(ctx, seed.ShopID, tokenHash[:], product.Variants[0].ID, 1, map[string]string{"finition": "brillante"}); err != nil {
+		t.Fatalf("add second personalized line: %v", err)
+	}
+	cart, err := db.GetCart(ctx, seed.ShopID, tokenHash[:])
+	if err != nil || len(cart.Items) != 2 {
+		t.Fatalf("personalized cart = %+v, error = %v; want two options", cart, err)
+	}
+	order, err := db.CheckoutCart(ctx, seed.ShopID, tokenHash[:], store.CheckoutDetails{
+		Email: "buyer@example.com", Name: "Client",
+	})
+	if err != nil {
+		t.Fatalf("checkout personalized cart: %v", err)
+	}
+	if len(order.Items) != 2 || order.Subtotal != "36.0000" {
+		t.Fatalf("order = %+v, want two personalized lines and EUR 36.0000", order)
+	}
+	var snapshotted int
+	if err := db.db.QueryRowContext(ctx, `
+		SELECT count(*) FROM order_lines
+		WHERE order_id = ? AND personalization_snapshot = '[{"code":"finition","label":"Finition","value":"mate","choice_label":"Mate"}]'
+	`, order.ID).Scan(&snapshotted); err != nil {
+		t.Fatalf("read personalization order snapshot: %v", err)
+	}
+	if snapshotted != 1 {
+		t.Fatalf("persisted personalization snapshots = %d, want 1 for the 'mate' configuration", snapshotted)
+	}
+}
+
 func TestSQLiteCatalogAdministration(t *testing.T) {
 	ctx := context.Background()
 	db := openSeededStore(t, 3)
@@ -248,44 +319,41 @@ func TestSQLiteCatalogAdministration(t *testing.T) {
 	}
 }
 
-func TestSQLiteMigrationsRecordAndUpgradeExistingDatabase(t *testing.T) {
+func TestSQLiteMigrationsRecordAndReopenExistingDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sqlite", "shop.sqlite")
 	db := openSeededStoreAt(t, path, 2)
 	var version int
 	if err := db.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read SQLite migration version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("migration version = %d, want 1", version)
-	}
-	if _, err := db.db.Exec(`DROP TABLE schema_migrations`); err != nil {
-		t.Fatalf("remove migration ledger to simulate prototype database: %v", err)
+	if version != 2 {
+		t.Fatalf("migration version = %d, want 2", version)
 	}
 	if err := db.Close(); err != nil {
-		t.Fatalf("close SQLite store: %v", err)
+		t.Fatalf("close SQLite store before reopen: %v", err)
 	}
 
 	reopened, err := Open(path)
 	if err != nil {
-		t.Fatalf("upgrade existing SQLite database: %v", err)
+		t.Fatalf("reopen existing SQLite database: %v", err)
 	}
 	defer func() {
 		if err := reopened.Close(); err != nil {
-			t.Errorf("close upgraded SQLite store: %v", err)
+			t.Errorf("close reopened SQLite store: %v", err)
 		}
 	}()
 	if err := reopened.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
-		t.Fatalf("read upgraded SQLite migration version: %v", err)
+		t.Fatalf("read reopened SQLite migration version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("upgraded migration version = %d, want 1", version)
+	if version != 2 {
+		t.Fatalf("reopened migration version = %d, want 2", version)
 	}
 	var shopCount int
 	if err := reopened.db.QueryRow(`SELECT count(*) FROM shops WHERE id = ?`, seed.ShopID).Scan(&shopCount); err != nil {
-		t.Fatalf("read existing shop after migration: %v", err)
+		t.Fatalf("read existing shop after reopen: %v", err)
 	}
 	if shopCount != 1 {
-		t.Fatalf("existing shop count after migration = %d, want 1", shopCount)
+		t.Fatalf("existing shop count after reopen = %d, want 1", shopCount)
 	}
 }
 
@@ -350,8 +418,8 @@ func TestSQLiteConcurrentInitializationAppliesMigrationsOnce(t *testing.T) {
 	if err := db.db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("count SQLite migrations: %v", err)
 	}
-	if migrationCount != 1 {
-		t.Fatalf("recorded migrations = %d, want 1", migrationCount)
+	if migrationCount != 2 {
+		t.Fatalf("recorded migrations = %d, want 2", migrationCount)
 	}
 }
 

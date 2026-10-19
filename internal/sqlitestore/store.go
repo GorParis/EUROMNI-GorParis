@@ -388,17 +388,64 @@ func (s *Store) GetProduct(ctx context.Context, shopID, productID string) (*stor
 
 func (s *Store) getProduct(ctx context.Context, shopID, productID string, activeOnly bool) (*store.ProductView, error) {
 	var product store.ProductView
+	var brandID sql.NullString
+	var personalizationOptions []byte
 	query := `
-		SELECT id, slug, status FROM products
+		SELECT id, slug, status, brand_id, personalization_options FROM products
 		WHERE shop_id = ? AND id = ?
 	`
 	if activeOnly {
 		query += ` AND status = 'active'`
 	}
-	if err := s.db.QueryRowContext(ctx, query, shopID, productID).Scan(&product.ID, &product.Slug, &product.Status); err != nil {
+	if err := s.db.QueryRowContext(ctx, query, shopID, productID).Scan(
+		&product.ID, &product.Slug, &product.Status, &brandID, &personalizationOptions,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, store.ErrNotFound
 		}
+		return nil, err
+	}
+	product.PersonalizationOptions = make([]store.PersonalizationOption, 0)
+	if err := json.Unmarshal(personalizationOptions, &product.PersonalizationOptions); err != nil {
+		return nil, fmt.Errorf("decode personalization options: %w", err)
+	}
+	if product.PersonalizationOptions == nil {
+		product.PersonalizationOptions = []store.PersonalizationOption{}
+	}
+	if brandID.Valid {
+		var brand store.BrandView
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT id, slug, name FROM brands WHERE shop_id = ? AND id = ?
+		`, shopID, brandID.String).Scan(&brand.ID, &brand.Slug, &brand.Name); err != nil {
+			return nil, err
+		}
+		product.Brand = &brand
+	}
+	product.SupplierIDs = make([]string, 0)
+	supplierRows, err := s.db.QueryContext(ctx, `
+		SELECT product_supplier.supplier_id
+		FROM product_suppliers product_supplier
+		JOIN suppliers supplier
+		  ON supplier.id = product_supplier.supplier_id AND supplier.shop_id = ?
+		WHERE product_supplier.product_id = ?
+		ORDER BY product_supplier.supplier_id
+	`, shopID, productID)
+	if err != nil {
+		return nil, err
+	}
+	for supplierRows.Next() {
+		var supplierID string
+		if err := supplierRows.Scan(&supplierID); err != nil {
+			_ = supplierRows.Close()
+			return nil, err
+		}
+		product.SupplierIDs = append(product.SupplierIDs, supplierID)
+	}
+	if err := supplierRows.Err(); err != nil {
+		_ = supplierRows.Close()
+		return nil, err
+	}
+	if err := supplierRows.Close(); err != nil {
 		return nil, err
 	}
 
@@ -516,8 +563,37 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 			return nil, err
 		}
 		product.Variants[i].Prices = prices
+		product.Variants[i].Suppliers, err = s.variantSuppliersFor(ctx, shopID, product.Variants[i].ID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &product, nil
+}
+
+func (s *Store) variantSuppliersFor(ctx context.Context, shopID, variantID string) ([]store.VariantSupplierView, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT supplier.id, supplier.name, variant_supplier.supplier_sku
+		FROM variant_suppliers variant_supplier
+		JOIN suppliers supplier ON supplier.id = variant_supplier.supplier_id
+		JOIN variants variant ON variant.id = variant_supplier.variant_id
+		JOIN products product ON product.id = variant.product_id
+		WHERE variant_supplier.variant_id = ? AND product.shop_id = ? AND supplier.shop_id = ?
+		ORDER BY supplier.code, supplier.id
+	`, variantID, shopID, shopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	suppliers := make([]store.VariantSupplierView, 0)
+	for rows.Next() {
+		var supplier store.VariantSupplierView
+		if err := rows.Scan(&supplier.SupplierID, &supplier.SupplierName, &supplier.SupplierSKU); err != nil {
+			return nil, err
+		}
+		suppliers = append(suppliers, supplier)
+	}
+	return suppliers, rows.Err()
 }
 
 func (s *Store) pricesFor(ctx context.Context, variantID string) ([]store.PriceView, error) {
@@ -642,7 +718,7 @@ func (s *Store) GetCart(ctx context.Context, shopID string, tokenHash []byte) (*
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT v.id, v.sku, cl.quantity, p.amount
+		SELECT v.id, v.sku, cl.quantity, p.amount, cl.personalizations
 		FROM cart_lines cl
 		JOIN variants v ON v.id = cl.variant_id
 		JOIN products pdt ON pdt.id = v.product_id
@@ -657,9 +733,17 @@ func (s *Store) GetCart(ctx context.Context, shopID string, tokenHash []byte) (*
 	total := new(big.Rat)
 	for rows.Next() {
 		var item store.CartLineView
-		if err := rows.Scan(&item.VariantID, &item.SKU, &item.Quantity, &item.UnitAmount); err != nil {
+		var personalizations []byte
+		if err := rows.Scan(&item.VariantID, &item.SKU, &item.Quantity, &item.UnitAmount, &personalizations); err != nil {
 			_ = rows.Close()
 			return nil, err
+		}
+		if err := json.Unmarshal(personalizations, &item.Personalizations); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if item.Personalizations == nil {
+			item.Personalizations = []store.PersonalizationSelection{}
 		}
 		price, ok := new(big.Rat).SetString(item.UnitAmount)
 		if !ok {
@@ -682,12 +766,16 @@ func (s *Store) GetCart(ctx context.Context, shopID string, tokenHash []byte) (*
 	}, nil
 }
 
-func (s *Store) AddCartLine(ctx context.Context, shopID string, tokenHash []byte, variantID string, quantity int) (*store.CartView, error) {
+func (s *Store) AddCartLine(ctx context.Context, shopID string, tokenHash []byte, variantID string, quantity int, submittedSelections ...map[string]string) (*store.CartView, error) {
 	if len(tokenHash) != 32 {
 		return nil, store.ErrInvalidCartToken
 	}
 	if quantity < 1 || quantity > maxCartLineQuantity {
 		return nil, store.ErrInvalidCartQuantity
+	}
+	submitted := map[string]string{}
+	if len(submittedSelections) > 0 && submittedSelections[0] != nil {
+		submitted = submittedSelections[0]
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -709,23 +797,32 @@ func (s *Store) AddCartLine(ctx context.Context, shopID string, tokenHash []byte
 		return nil, err
 	}
 	var inventory, tracked int
+	var optionJSON []byte
 	err = tx.QueryRowContext(ctx, `
-		SELECT COALESCE(i.quantity, 0), COALESCE(i.track, 1)
+		SELECT COALESCE(i.quantity, 0), COALESCE(i.track, 1), p.personalization_options
 		FROM variants v
 		JOIN products p ON p.id = v.product_id
 		JOIN prices pr ON pr.variant_id = v.id AND pr.currency = ?
 		LEFT JOIN inventory_items i ON i.variant_id = v.id
 		WHERE v.id = ? AND p.shop_id = ? AND p.status = 'active'
-	`, currency, variantID, shopID).Scan(&inventory, &tracked)
+	`, currency, variantID, shopID).Scan(&inventory, &tracked, &optionJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	var options []store.PersonalizationOption
+	if err := json.Unmarshal(optionJSON, &options); err != nil {
+		return nil, err
+	}
+	_, snapshot, personalizationHash, err := store.ValidatePersonalizationSelections(options, submitted)
+	if err != nil {
+		return nil, err
+	}
 	var current int
 	err = tx.QueryRowContext(ctx, `
-		SELECT quantity FROM cart_lines WHERE cart_id = ? AND variant_id = ?
+		SELECT COALESCE(SUM(quantity), 0) FROM cart_lines WHERE cart_id = ? AND variant_id = ?
 	`, cartID, variantID).Scan(&current)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
@@ -736,11 +833,23 @@ func (s *Store) AddCartLine(ctx context.Context, shopID string, tokenHash []byte
 	if tracked != 0 && current+quantity > inventory {
 		return nil, store.ErrOutOfStock
 	}
+	var currentLine int
+	err = tx.QueryRowContext(ctx, `
+		SELECT quantity FROM cart_lines
+		WHERE cart_id = ? AND variant_id = ? AND personalization_hash = ?
+	`, cartID, variantID, personalizationHash).Scan(&currentLine)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if currentLine+quantity > maxCartLineQuantity {
+		return nil, store.ErrInvalidCartQuantity
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO cart_lines (cart_id, variant_id, quantity) VALUES (?, ?, ?)
-		ON CONFLICT (cart_id, variant_id)
+		INSERT INTO cart_lines (cart_id, variant_id, quantity, personalizations, personalization_hash)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (cart_id, variant_id, personalization_hash)
 		DO UPDATE SET quantity = cart_lines.quantity + excluded.quantity
-	`, cartID, variantID, quantity); err != nil {
+	`, cartID, variantID, quantity, snapshot, personalizationHash); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -774,14 +883,15 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		return nil, err
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT v.id, v.sku, cl.quantity, COALESCE(pt.name, p.slug), pr.amount
+		SELECT v.id, v.sku, cl.quantity, COALESCE(pt.name, p.slug), pr.amount,
+		       cl.personalizations, p.personalization_options
 		FROM cart_lines cl
 		JOIN variants v ON v.id = cl.variant_id
 		JOIN products p ON p.id = v.product_id
 		JOIN prices pr ON pr.variant_id = v.id AND pr.currency = ?
 		LEFT JOIN product_translations pt ON pt.product_id = p.id AND pt.locale = ?
 		WHERE cl.cart_id = ? AND p.shop_id = ? AND p.status = 'active'
-		ORDER BY v.id
+		ORDER BY v.id, cl.personalization_hash
 	`, currency, locale, cartID, shopID)
 	if err != nil {
 		return nil, err
@@ -790,7 +900,30 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	subtotal := new(big.Rat)
 	for rows.Next() {
 		var line checkoutLine
-		if err := rows.Scan(&line.variantID, &line.SKU, &line.Quantity, &line.Name, &line.UnitPrice); err != nil {
+		var personalizationsJSON, optionJSON []byte
+		if err := rows.Scan(
+			&line.variantID, &line.SKU, &line.Quantity, &line.Name, &line.UnitPrice,
+			&personalizationsJSON, &optionJSON,
+		); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		var options []store.PersonalizationOption
+		if err := json.Unmarshal(optionJSON, &options); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		var snapshot []store.PersonalizationSelection
+		if err := json.Unmarshal(personalizationsJSON, &snapshot); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		selections := make(map[string]string, len(snapshot))
+		for _, selection := range snapshot {
+			selections[selection.Code] = selection.Value
+		}
+		line.Personalizations, _, _, err = store.ValidatePersonalizationSelections(options, selections)
+		if err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -821,11 +954,15 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	if count != len(lines) {
 		return nil, store.ErrNotFound
 	}
+	quantities := make(map[string]int, len(lines))
 	for _, line := range lines {
+		quantities[line.variantID] += line.Quantity
+	}
+	for variantID, quantity := range quantities {
 		result, err := tx.ExecContext(ctx, `
 			UPDATE inventory_items SET quantity = quantity - ?
 			WHERE variant_id = ? AND track = 1 AND quantity >= ?
-		`, line.Quantity, line.variantID, line.Quantity)
+		`, quantity, variantID, quantity)
 		if err != nil {
 			return nil, err
 		}
@@ -835,7 +972,7 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		}
 		if updated == 0 {
 			var tracked int
-			err := tx.QueryRowContext(ctx, `SELECT track FROM inventory_items WHERE variant_id = ?`, line.variantID).Scan(&tracked)
+			err := tx.QueryRowContext(ctx, `SELECT track FROM inventory_items WHERE variant_id = ?`, variantID).Scan(&tracked)
 			if errors.Is(err, sql.ErrNoRows) || tracked != 0 {
 				return nil, store.ErrOutOfStock
 			}
@@ -867,10 +1004,16 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		return nil, err
 	}
 	for _, line := range lines {
+		personalizationJSON, err := json.Marshal(line.Personalizations)
+		if err != nil {
+			return nil, err
+		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO order_lines (order_id, variant_id, sku, name, quantity, unit_price, line_total)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, orderID, line.variantID, line.SKU, line.Name, line.Quantity, line.UnitPrice, line.LineTotal); err != nil {
+			INSERT INTO order_lines (
+				order_id, variant_id, sku, name, quantity, unit_price, line_total, personalization_snapshot
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, orderID, line.variantID, line.SKU, line.Name, line.Quantity, line.UnitPrice, line.LineTotal, string(personalizationJSON)); err != nil {
 			return nil, err
 		}
 	}
