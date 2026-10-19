@@ -226,6 +226,63 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		!strings.Contains(replaceShipping.Body.String(), `"rate_version":"`) {
 		t.Fatalf("admin shipping update status/body = %d/%s; want saved tariff", replaceShipping.Code, replaceShipping.Body)
 	}
+	historyPath := "/v1/admin/shipping/versions?carrier_code=colissimo&service_code=home&zone_code=france-ue"
+	shippingHistory := performAPIRequest(mux, http.MethodGet, historyPath, staffAuthorization, "")
+	if shippingHistory.Code != http.StatusOK || !strings.Contains(shippingHistory.Body.String(), homeQuote.RateVersion) {
+		t.Fatalf("admin shipping history status/body = %d/%s; want original home version", shippingHistory.Code, shippingHistory.Body)
+	}
+	shippingHistoryTargets := performAPIRequest(mux, http.MethodGet,
+		"/v1/admin/shipping/versions/targets", staffAuthorization, "")
+	if shippingHistoryTargets.Code != http.StatusOK ||
+		!strings.Contains(shippingHistoryTargets.Body.String(), `"service_code":"home"`) {
+		t.Fatalf("admin shipping history targets status/body = %d/%s; want historical service target",
+			shippingHistoryTargets.Code, shippingHistoryTargets.Body)
+	}
+	invalidShippingHistory := performAPIRequest(mux, http.MethodGet,
+		"/v1/admin/shipping/versions?carrier_code=colissimo", staffAuthorization, "")
+	if invalidShippingHistory.Code != http.StatusBadRequest {
+		t.Fatalf("incomplete shipping history query status/body = %d/%s; want 400",
+			invalidShippingHistory.Code, invalidShippingHistory.Body)
+	}
+	invalidShippingHistoryLimit := performAPIRequest(mux, http.MethodGet,
+		historyPath+"&limit=101", staffAuthorization, "")
+	if invalidShippingHistoryLimit.Code != http.StatusBadRequest {
+		t.Fatalf("invalid shipping history limit status/body = %d/%s; want 400",
+			invalidShippingHistoryLimit.Code, invalidShippingHistoryLimit.Body)
+	}
+	restorePath := "/v1/admin/shipping/versions/" + homeQuote.RateVersion + "/restore"
+	restoreShipping := performAPIRequest(mux, http.MethodPost, restorePath, staffAuthorization, "")
+	if restoreShipping.Code != http.StatusOK {
+		t.Fatalf("admin shipping restore status/body = %d/%s; want 200", restoreShipping.Code, restoreShipping.Body)
+	}
+	var restoredShipping struct {
+		Data struct {
+			RateVersion string `json:"rate_version"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(restoreShipping.Body).Decode(&restoredShipping); err != nil ||
+		restoredShipping.Data.RateVersion == "" || restoredShipping.Data.RateVersion == homeQuote.RateVersion {
+		t.Fatalf("admin shipping restore response = %+v, error = %v; want a new rate version", restoredShipping, err)
+	}
+	missingShippingVersion := performAPIRequest(mux, http.MethodPost,
+		"/v1/admin/shipping/versions/00000000-0000-4000-8000-000000000000/restore", staffAuthorization, "")
+	if missingShippingVersion.Code != http.StatusNotFound {
+		t.Fatalf("missing shipping version status/body = %d/%s; want 404",
+			missingShippingVersion.Code, missingShippingVersion.Body)
+	}
+	restoredShippingConfig := performAPIRequest(mux, http.MethodGet, "/v1/admin/shipping", staffAuthorization, "")
+	if restoredShippingConfig.Code != http.StatusOK ||
+		!strings.Contains(restoredShippingConfig.Body.String(), `"rate_version":"`+restoredShipping.Data.RateVersion+`"`) {
+		t.Fatalf("shipping config after restore status/body = %d/%s; want restored revision",
+			restoredShippingConfig.Code, restoredShippingConfig.Body)
+	}
+	orderAfterShippingRestore := performAPIRequest(mux, http.MethodGet,
+		"/v1/admin/orders/"+createdOrder.Data.ID, staffAuthorization, "")
+	if orderAfterShippingRestore.Code != http.StatusOK ||
+		!strings.Contains(orderAfterShippingRestore.Body.String(), `"shipping_rate_version":"`+homeQuote.RateVersion+`"`) {
+		t.Fatalf("order after shipping restore status/body = %d/%s; want original order snapshot",
+			orderAfterShippingRestore.Code, orderAfterShippingRestore.Body)
+	}
 
 	adminCategory := performAPIRequest(mux, http.MethodPost, "/v1/admin/categories", staffAuthorization,
 		`{"slug":"integration-accessoires","translations":[{"locale":"fr-FR","name":"Accessoires"}]}`)
@@ -272,6 +329,14 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	editorShippingWrite := performAPIRequest(mux, http.MethodPut, "/v1/admin/shipping", "Bearer "+editorSession.Data.Token, `{}`)
 	if editorShippingWrite.Code != http.StatusForbidden {
 		t.Fatalf("editor shipping-write status/body = %d/%s; want 403", editorShippingWrite.Code, editorShippingWrite.Body)
+	}
+	editorShippingHistory := performAPIRequest(mux, http.MethodGet, historyPath, "Bearer "+editorSession.Data.Token, "")
+	if editorShippingHistory.Code != http.StatusForbidden {
+		t.Fatalf("editor shipping-history status/body = %d/%s; want 403", editorShippingHistory.Code, editorShippingHistory.Body)
+	}
+	editorShippingRestore := performAPIRequest(mux, http.MethodPost, restorePath, "Bearer "+editorSession.Data.Token, "")
+	if editorShippingRestore.Code != http.StatusForbidden {
+		t.Fatalf("editor shipping-restore status/body = %d/%s; want 403", editorShippingRestore.Code, editorShippingRestore.Body)
 	}
 	staffList := performAPIRequest(mux, http.MethodGet, "/v1/admin/staff", staffAuthorization, "")
 	if staffList.Code != http.StatusOK || !strings.Contains(staffList.Body.String(), "integration-editor@example.com") {

@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"euromni/internal/seed"
@@ -137,6 +138,92 @@ func adminShippingConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writePrivateJSON(w, http.StatusOK, map[string]any{"data": savedConfig})
+}
+
+func adminShippingRateVersions(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	carrierCode := strings.TrimSpace(r.URL.Query().Get("carrier_code"))
+	serviceCode := strings.TrimSpace(r.URL.Query().Get("service_code"))
+	zoneCode := strings.TrimSpace(r.URL.Query().Get("zone_code"))
+	if !shippingCodePattern.MatchString(carrierCode) ||
+		!shippingCodePattern.MatchString(serviceCode) ||
+		!shippingCodePattern.MatchString(zoneCode) {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "valid carrier_code, service_code and zone_code are required"})
+		return
+	}
+	limit := 25
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "limit must be between 1 and 100"})
+			return
+		}
+		limit = parsed
+	}
+	offset := 0
+	if rawOffset := r.URL.Query().Get("offset"); rawOffset != "" {
+		parsed, err := strconv.Atoi(rawOffset)
+		if err != nil || parsed < 0 || parsed > 10000 {
+			writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "offset must be between 0 and 10000"})
+			return
+		}
+		offset = parsed
+	}
+	reader, ok := currentProductReader().(store.ShippingRateVersionReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "shipping rate history unavailable"})
+		return
+	}
+	versions, err := reader.ListShippingRateVersions(
+		r.Context(), session.ShopID, carrierCode, serviceCode, zoneCode, limit, offset,
+	)
+	if err != nil {
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "shipping rate history could not be read"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": versions})
+}
+
+func adminShippingRateVersionTargets(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	reader, ok := currentProductReader().(store.ShippingRateVersionReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "shipping rate history unavailable"})
+		return
+	}
+	targets, err := reader.ListShippingRateVersionTargets(r.Context(), session.ShopID)
+	if err != nil {
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "shipping rate history could not be read"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": targets})
+}
+
+func adminRestoreShippingRateVersion(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	rateVersion := strings.TrimSpace(r.PathValue("rateVersion"))
+	if rateVersion == "" {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "shipping rate version is required"})
+		return
+	}
+	reader, ok := currentProductReader().(store.ShippingRateVersionReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "shipping rate history unavailable"})
+		return
+	}
+	newRateVersion, err := reader.RestoreShippingRateVersion(r.Context(), session.ShopID, rateVersion)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "shipping rate version not found"})
+		case errors.Is(err, store.ErrShippingRateRestoreUnavailable):
+			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "the service or zone for this version is no longer available"})
+		default:
+			writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "shipping rate version could not be restored"})
+		}
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"rate_version": newRateVersion}})
 }
 
 func validateShippingConfig(config *store.ShippingConfig) string {

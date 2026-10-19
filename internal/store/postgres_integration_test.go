@@ -681,7 +681,7 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 		Email: weightedEmail, Name: "Weight Value Shipping",
 		ShippingCarrierCode: "custom-carrier", ShippingServiceCode: "home", ExpectedShippingTotal: "7.00",
 		ExpectedShippingQuoteID: initialQuoteID,
-		ShippingAddress: ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+		ShippingAddress:         ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
 	}); !errors.Is(err, ErrShippingQuoteChanged) {
 		t.Fatalf("checkout with stale quote error = %v, want quote changed", err)
 	}
@@ -704,7 +704,7 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 		Email: weightedEmail, Name: "Weight Value Shipping",
 		ShippingCarrierCode: "custom-carrier", ShippingServiceCode: "home", ExpectedShippingTotal: "8.00",
 		ExpectedShippingQuoteID: priceQuoteID,
-		ShippingAddress: ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+		ShippingAddress:         ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
 	}); !errors.Is(err, ErrShippingQuoteChanged) {
 		t.Fatalf("checkout with stale same-price quote error = %v, want quote changed", err)
 	}
@@ -717,7 +717,7 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 		Email: weightedEmail, Name: "Weight Value Shipping",
 		ShippingCarrierCode: "custom-carrier", ShippingServiceCode: "home", ExpectedShippingTotal: options[0].Amount,
 		ExpectedShippingQuoteID: options[0].QuoteID,
-		ShippingAddress: ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+		ShippingAddress:         ShippingAddress{Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR"},
 	})
 	if err != nil {
 		t.Fatalf("checkout with current weight-value quote: %v", err)
@@ -735,6 +735,52 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 		adminSnapshot.ShippingRateVersion != options[0].RateVersion ||
 		adminSnapshot.ShippingWeightGrams == nil || *adminSnapshot.ShippingWeightGrams != 1000 {
 		t.Fatalf("weight-value admin snapshot = %+v, error = %v", adminSnapshot, err)
+	}
+	versions, err := db.ListShippingRateVersions(ctx, seed.ShopID, "custom-carrier", "home", "france", 10, 0)
+	if err != nil || len(versions) != 3 || versions[2].RateVersion != initialRateVersion ||
+		len(versions[2].Rules) != 4 || versions[2].Rules[3].Amount != "7.0000" {
+		t.Fatalf("shipping rate history = %+v, error = %v; want three immutable revisions", versions, err)
+	}
+	previousOrderVersion := adminSnapshot.ShippingRateVersion
+	restoredRateVersion, err := db.RestoreShippingRateVersion(ctx, seed.ShopID, initialRateVersion)
+	if err != nil || restoredRateVersion == initialRateVersion || restoredRateVersion == previousOrderVersion {
+		t.Fatalf("restored rate version = %q, error = %v; want a new revision", restoredRateVersion, err)
+	}
+	restoredConfig, err := db.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil || len(restoredConfig.Rates) != 1 ||
+		restoredConfig.Rates[0].RateVersion != restoredRateVersion ||
+		len(restoredConfig.Rates[0].Rules) != 4 || restoredConfig.Rates[0].Rules[3].Amount != "7.0000" {
+		t.Fatalf("restored shipping configuration = %+v, error = %v", restoredConfig, err)
+	}
+	restoredSnapshot, err := db.GetAdminOrder(ctx, seed.ShopID, order.ID)
+	if err != nil || restoredSnapshot.ShippingRateVersion != previousOrderVersion {
+		t.Fatalf("order shipping snapshot after restore = %+v, error = %v; want original version %s",
+			restoredSnapshot, err, previousOrderVersion)
+	}
+	var preservedInitialVersionCount int
+	if err := db.SQL.QueryRowContext(ctx,
+		`SELECT count(*) FROM shipping_rate_versions WHERE rate_version = $1`, initialRateVersion,
+	).Scan(&preservedInitialVersionCount); err != nil || preservedInitialVersionCount != 1 {
+		t.Fatalf("restored historical version count = %d, error = %v; want 1", preservedInitialVersionCount, err)
+	}
+	restoredConfig.Services = []ShippingService{}
+	restoredConfig.Rates = []ShippingRate{}
+	if err := db.ReplaceShippingConfig(ctx, seed.ShopID, *restoredConfig); err != nil {
+		t.Fatalf("remove service after restore: %v", err)
+	}
+	targets, err := db.ListShippingRateVersionTargets(ctx, seed.ShopID)
+	archivedTargetFound := false
+	for _, target := range targets {
+		if target.CarrierCode == "custom-carrier" && target.ServiceCode == "home" && target.ZoneCode == "france" {
+			archivedTargetFound = true
+			break
+		}
+	}
+	if err != nil || !archivedTargetFound {
+		t.Fatalf("archived shipping history targets = %+v, error = %v; want removed service target", targets, err)
+	}
+	if _, err := db.RestoreShippingRateVersion(ctx, seed.ShopID, initialRateVersion); !errors.Is(err, ErrShippingRateRestoreUnavailable) {
+		t.Fatalf("restore after service deletion error = %v, want %v", err, ErrShippingRateRestoreUnavailable)
 	}
 
 	otherShop, err := db.GetShippingConfig(ctx, "e0e00000-0001-4000-8000-000000000099")

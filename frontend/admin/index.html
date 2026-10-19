@@ -219,6 +219,15 @@
           <div class="actions" style="margin-top: 1rem">
             <button id="save-shipping" type="button">Enregistrer la configuration transport</button>
           </div>
+          <h3>Historique des tarifs</h3>
+          <p class="muted">Les anciennes versions sont conservées. Une restauration publie une nouvelle version et ne modifie pas les commandes déjà passées.</p>
+          <div id="shipping-history-filters" class="actions"></div>
+          <div id="shipping-history" class="product-list"></div>
+          <div id="shipping-history-pagination" class="actions" hidden>
+            <button id="shipping-history-previous" class="secondary" type="button">Versions plus récentes</button>
+            <button id="shipping-history-next" class="secondary" type="button">Versions plus anciennes</button>
+          </div>
+          <section id="shipping-history-comparison" class="card" hidden aria-live="polite"></section>
         </section>
         </section>
     </main>

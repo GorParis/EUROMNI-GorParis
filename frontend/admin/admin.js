@@ -19,11 +19,24 @@
   const shippingZones = document.querySelector("#shipping-zones");
   const shippingRates = document.querySelector("#shipping-rates");
   const saveShippingButton = document.querySelector("#save-shipping");
+  const shippingHistoryFilters = document.querySelector("#shipping-history-filters");
+  const shippingHistoryList = document.querySelector("#shipping-history");
+  const shippingHistoryPagination = document.querySelector("#shipping-history-pagination");
+  const shippingHistoryComparison = document.querySelector("#shipping-history-comparison");
+  const shippingHistoryLimit = 25;
   let token = null;
   let categories = [];
   let editingCategory = null;
   let currentIdentity = null;
   let shippingConfig = { carriers: [], services: [], zones: [], rates: [] };
+  let shippingHistoryFilter = { carrierCode: "", serviceCode: "", zoneCode: "" };
+  let shippingHistoryOffset = 0;
+  let shippingHistoryRequest = 0;
+  let shippingHistoryTargets = null;
+  let shippingHistoryTargetsPromise = null;
+  let shippingHistoryTargetsPromiseShopID = null;
+  let shippingHistoryTargetsShopID = null;
+  let shippingHistoryTargetsGeneration = 0;
 
   function setStatus(message, isError = false) {
     status.textContent = message;
@@ -46,6 +59,14 @@
   }
 
   function showDashboard(identity) {
+    if (currentIdentity?.shop_id !== identity.shop_id) {
+      shippingHistoryTargets = null;
+      shippingHistoryTargetsPromise = null;
+      shippingHistoryTargetsPromiseShopID = null;
+      shippingHistoryTargetsShopID = null;
+      shippingHistoryTargetsGeneration += 1;
+      shippingHistoryRequest += 1;
+    }
     currentIdentity = identity;
     loginPanel.hidden = true;
     dashboard.hidden = false;
@@ -60,6 +81,12 @@
 
   function clearSession() {
     token = null;
+    shippingHistoryTargets = null;
+    shippingHistoryTargetsPromise = null;
+    shippingHistoryTargetsPromiseShopID = null;
+    shippingHistoryTargetsShopID = null;
+    shippingHistoryTargetsGeneration += 1;
+    shippingHistoryRequest += 1;
     try {
       sessionStorage.removeItem(tokenKey);
     } catch {
@@ -624,6 +651,207 @@
       card.append(remove);
       shippingRates.append(card);
     });
+    const shopID = currentIdentity?.shop_id;
+    ensureShippingHistoryTargets().then(() => {
+      if (shopID !== currentIdentity?.shop_id) return;
+      renderShippingHistoryFilters();
+      refreshShippingHistory();
+    }).catch((error) => setStatus(error.message, true));
+  }
+
+  async function ensureShippingHistoryTargets() {
+    const shopID = currentIdentity?.shop_id;
+    if (shippingHistoryTargets !== null && shippingHistoryTargetsShopID === shopID) return;
+    if (!shippingHistoryTargetsPromise || shippingHistoryTargetsPromiseShopID !== shopID) {
+      const generation = shippingHistoryTargetsGeneration;
+      shippingHistoryTargetsPromiseShopID = shopID;
+      shippingHistoryTargetsPromise = request("/v1/admin/shipping/versions/targets").then((targets) => {
+        if (generation === shippingHistoryTargetsGeneration && shopID === currentIdentity?.shop_id) {
+          shippingHistoryTargets = targets;
+          shippingHistoryTargetsShopID = shopID;
+        }
+      });
+    }
+    const pending = shippingHistoryTargetsPromise;
+    try {
+      await pending;
+    } catch (error) {
+      if (pending === shippingHistoryTargetsPromise) {
+        shippingHistoryTargetsPromise = null;
+        shippingHistoryTargetsPromiseShopID = null;
+      }
+      throw error;
+    }
+  }
+
+  function renderShippingHistoryFilters() {
+    shippingHistoryFilters.replaceChildren();
+    const targets = shippingHistoryTargetsShopID === currentIdentity?.shop_id ? shippingHistoryTargets || [] : [];
+    const carrierNames = new Map(shippingConfig.carriers.map((carrier) => [carrier.code, carrier.name || carrier.code]));
+    const serviceNames = new Map(shippingConfig.services.map((service) => [
+      `${service.carrier_code}\u0000${service.code}`,
+      service.name || service.code,
+    ]));
+    const choicesFrom = (items, key, label) => [...new Map(items.map((item) => [item[key], [item[key], label(item)]])).values()];
+    const choices = [
+      {
+        key: "carrierCode",
+        label: "Transporteur",
+        values: choicesFrom(
+          [...shippingConfig.carriers, ...targets.map((target) => ({ code: target.carrier_code }))],
+          "code",
+          (carrier) => carrierNames.get(carrier.code) || carrier.code,
+        ),
+      },
+      {
+        key: "serviceCode",
+        label: "Service",
+        values: choicesFrom([
+          ...shippingConfig.services.filter((service) => service.carrier_code === shippingHistoryFilter.carrierCode),
+          ...targets
+            .filter((target) => target.carrier_code === shippingHistoryFilter.carrierCode)
+            .map((target) => ({ carrier_code: target.carrier_code, code: target.service_code })),
+        ], "code", (service) => serviceNames.get(`${shippingHistoryFilter.carrierCode}\u0000${service.code}`) || service.code),
+      },
+      {
+        key: "zoneCode",
+        label: "Zone",
+        values: choicesFrom([
+          ...shippingConfig.zones,
+          ...targets
+            .filter((target) =>
+              target.carrier_code === shippingHistoryFilter.carrierCode &&
+              target.service_code === shippingHistoryFilter.serviceCode)
+            .map((target) => ({ code: target.zone_code })),
+        ], "code", (zone) => zone.name || zone.code),
+      },
+    ];
+    for (const choice of choices) {
+      const label = document.createElement("label");
+      label.textContent = choice.label;
+      const select = document.createElement("select");
+      select.disabled = choice.values.length === 0;
+      for (const [value, text] of choice.values) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        select.append(option);
+      }
+      if (!choice.values.some(([value]) => value === shippingHistoryFilter[choice.key])) {
+        shippingHistoryFilter[choice.key] = choice.values[0]?.[0] || "";
+      }
+      select.value = shippingHistoryFilter[choice.key];
+      select.addEventListener("change", () => {
+        shippingHistoryFilter[choice.key] = select.value;
+        if (choice.key === "carrierCode") {
+          shippingHistoryFilter.serviceCode = "";
+        }
+        shippingHistoryOffset = 0;
+        shippingHistoryComparison.hidden = true;
+        renderShippingHistoryFilters();
+        refreshShippingHistory();
+      });
+      label.append(select);
+      shippingHistoryFilters.append(label);
+    }
+  }
+
+  async function refreshShippingHistory() {
+    const requestNumber = ++shippingHistoryRequest;
+    shippingHistoryList.replaceChildren();
+    shippingHistoryPagination.hidden = true;
+    if (!shippingHistoryFilter.carrierCode || !shippingHistoryFilter.serviceCode || !shippingHistoryFilter.zoneCode) {
+      shippingHistoryList.textContent = "Ajoutez un transporteur, un service et une zone pour consulter l’historique.";
+      return;
+    }
+    const query = new URLSearchParams({
+      carrier_code: shippingHistoryFilter.carrierCode,
+      service_code: shippingHistoryFilter.serviceCode,
+      zone_code: shippingHistoryFilter.zoneCode,
+      limit: String(shippingHistoryLimit),
+      offset: String(shippingHistoryOffset),
+    });
+    try {
+      const versions = await request(`/v1/admin/shipping/versions?${query}`);
+      if (requestNumber !== shippingHistoryRequest) return;
+      if (!versions.length) {
+        shippingHistoryList.textContent = "Aucune version enregistrée pour ce service et cette zone.";
+        return;
+      }
+      const currentRate = shippingConfig.rates.find((rate) =>
+        rate.carrier_code === shippingHistoryFilter.carrierCode &&
+        rate.service_code === shippingHistoryFilter.serviceCode &&
+        rate.zone_code === shippingHistoryFilter.zoneCode);
+      versions.forEach((version) => {
+        const card = document.createElement("article");
+        card.className = "card";
+        const heading = document.createElement("h4");
+        heading.textContent = `${version.service_name} · ${version.amount} ${version.currency}`;
+        const metadata = document.createElement("p");
+        metadata.className = "muted";
+        metadata.textContent = `Version ${version.rate_version} · ${new Date(version.created_at).toLocaleString()} · ${version.mode}${version.active ? "" : " · inactive"}`;
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const compare = document.createElement("button");
+        compare.type = "button";
+        compare.className = "secondary";
+        compare.textContent = "Comparer au tarif actif";
+        compare.disabled = !currentRate;
+        compare.addEventListener("click", () => {
+          shippingHistoryComparison.replaceChildren();
+          const title = document.createElement("h4");
+          title.textContent = "Comparaison avec le tarif actif";
+          const selectedTitle = document.createElement("h5");
+          selectedTitle.textContent = `Version sélectionnée · ${version.rate_version}`;
+          const selected = document.createElement("pre");
+          selected.textContent = JSON.stringify(version, null, 2);
+          const currentTitle = document.createElement("h5");
+          currentTitle.textContent = `Version active · ${currentRate?.rate_version || "aucune"}`;
+          const current = document.createElement("pre");
+          current.textContent = currentRate
+            ? JSON.stringify({
+              rate_version: currentRate.rate_version,
+              mode: currentRate.mode,
+              amount: currentRate.amount,
+              currency: currentRate.currency,
+              active: currentRate.active,
+              rules: currentRate.rules || [],
+            }, null, 2)
+            : "Aucun tarif actuellement configuré.";
+          shippingHistoryComparison.append(title, selectedTitle, selected, currentTitle, current);
+          shippingHistoryComparison.hidden = false;
+        });
+        const restore = document.createElement("button");
+        restore.type = "button";
+        restore.textContent = "Restaurer cette version";
+        restore.addEventListener("click", async () => {
+          if (!window.confirm("Ce tarif sera publié comme une nouvelle version active. Les commandes existantes ne seront pas modifiées. Continuer ?")) return;
+          restore.disabled = true;
+          try {
+            await request(`/v1/admin/shipping/versions/${encodeURIComponent(version.rate_version)}/restore`, {
+              method: "POST",
+            });
+            renderShipping(await request("/v1/admin/shipping"));
+            setStatus("Tarif restauré dans une nouvelle version.");
+          } catch (error) {
+            setStatus(error.message, true);
+          } finally {
+            restore.disabled = false;
+          }
+        });
+        actions.append(compare, restore);
+        card.append(heading, metadata, actions);
+        shippingHistoryList.append(card);
+      });
+      shippingHistoryPagination.hidden = false;
+      document.querySelector("#shipping-history-previous").disabled = shippingHistoryOffset === 0;
+      document.querySelector("#shipping-history-next").disabled = versions.length < shippingHistoryLimit;
+    } catch (error) {
+      if (requestNumber === shippingHistoryRequest) {
+        shippingHistoryList.textContent = error.message;
+        setStatus(error.message, true);
+      }
+    }
   }
 
   function editProduct(product) {
@@ -846,6 +1074,14 @@
   document.querySelector("#cancel-product-edit").addEventListener("click", resetProductForm);
   document.querySelector("#cancel-category-edit").addEventListener("click", resetCategoryForm);
   document.querySelector("#cancel-staff-edit").addEventListener("click", resetStaffForm);
+  document.querySelector("#shipping-history-previous").addEventListener("click", () => {
+    shippingHistoryOffset = Math.max(0, shippingHistoryOffset - shippingHistoryLimit);
+    refreshShippingHistory();
+  });
+  document.querySelector("#shipping-history-next").addEventListener("click", () => {
+    shippingHistoryOffset += shippingHistoryLimit;
+    refreshShippingHistory();
+  });
   document.querySelector("#add-shipping-carrier").addEventListener("click", () => {
     shippingConfig.carriers.push({ code: "", name: "", active: false });
     renderShipping(shippingConfig);

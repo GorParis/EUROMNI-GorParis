@@ -301,6 +301,21 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	).Scan(&archivedVersionCount); err != nil || archivedVersionCount != 1 {
 		t.Fatalf("previous MariaDB rate version count = %d, error = %v; want 1", archivedVersionCount, err)
 	}
+	restoredVersion, err := store.RestoreShippingRateVersion(ctx, seed.ShopID, previousRateVersion)
+	if err != nil || restoredVersion == previousRateVersion {
+		t.Fatalf("restore MariaDB shipping rate version = %q, error = %v; want new version", restoredVersion, err)
+	}
+	restoredConfig, err := store.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil || len(restoredConfig.Rates) != 1 ||
+		restoredConfig.Rates[0].RateVersion != restoredVersion ||
+		restoredConfig.Rates[0].Rules[0].Amount != "4.5000" {
+		t.Fatalf("restored MariaDB shipping configuration = %+v, error = %v", restoredConfig, err)
+	}
+	restoredOrder, err := store.GetAdminOrder(ctx, seed.ShopID, weightedOrderID)
+	if err != nil || restoredOrder.ShippingRateVersion != previousRateVersion {
+		t.Fatalf("MariaDB order snapshot after restore = %+v, error = %v; want version %s",
+			restoredOrder, err, previousRateVersion)
+	}
 }
 
 func mariaDBInt64Pointer(value int64) *int64 { return &value }

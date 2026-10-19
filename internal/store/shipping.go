@@ -21,6 +21,12 @@ type ShippingConfigReader interface {
 	ReplaceShippingConfig(ctx context.Context, shopID string, config ShippingConfig) error
 }
 
+type ShippingRateVersionReader interface {
+	ListShippingRateVersionTargets(ctx context.Context, shopID string) ([]ShippingRateVersionTarget, error)
+	ListShippingRateVersions(ctx context.Context, shopID, carrierCode, serviceCode, zoneCode string, limit, offset int) ([]ShippingRateVersion, error)
+	RestoreShippingRateVersion(ctx context.Context, shopID, rateVersion string) (string, error)
+}
+
 type ShippingOptionReader interface {
 	ListShippingOptions(ctx context.Context, shopID, country string) ([]ShippingOption, error)
 }
@@ -76,6 +82,26 @@ type ShippingRateRule struct {
 	Amount         string  `json:"amount"`
 }
 
+type ShippingRateVersion struct {
+	RateVersion string             `json:"rate_version"`
+	CarrierCode string             `json:"carrier_code"`
+	ServiceCode string             `json:"service_code"`
+	ServiceName string             `json:"service_name"`
+	ZoneCode    string             `json:"zone_code"`
+	Mode        string             `json:"mode"`
+	Amount      string             `json:"amount"`
+	Currency    string             `json:"currency"`
+	Active      bool               `json:"active"`
+	CreatedAt   time.Time          `json:"created_at"`
+	Rules       []ShippingRateRule `json:"rules"`
+}
+
+type ShippingRateVersionTarget struct {
+	CarrierCode string `json:"carrier_code"`
+	ServiceCode string `json:"service_code"`
+	ZoneCode    string `json:"zone_code"`
+}
+
 type ShippingOption struct {
 	CarrierCode     string            `json:"carrier_code"`
 	CarrierName     string            `json:"carrier_name"`
@@ -94,6 +120,8 @@ type ShippingOption struct {
 }
 
 const legacyShippingRateVersion = "00000000-0000-4000-8000-000000000001"
+
+var ErrShippingRateRestoreUnavailable = errors.New("shipping rate version cannot be restored because its service or zone is unavailable")
 
 func shippingOptionQuoteID(option ShippingOption) (string, error) {
 	option.QuoteID = ""
@@ -301,7 +329,7 @@ func (s *Store) ListCartShippingOptions(ctx context.Context, shopID string, toke
 		return nil, err
 	}
 	type candidate struct {
-		carrierCode, carrierName, serviceCode, serviceName string
+		carrierCode, carrierName, serviceCode, serviceName      string
 		zoneCode, zoneName, mode, amount, currency, rateVersion string
 	}
 	candidates := make([]candidate, 0)
@@ -643,6 +671,242 @@ func (s *Store) GetShippingConfig(ctx context.Context, shopID string) (*Shipping
 	return config, nil
 }
 
+func (s *Store) ListShippingRateVersions(
+	ctx context.Context,
+	shopID, carrierCode, serviceCode, zoneCode string,
+	limit, offset int,
+) ([]ShippingRateVersion, error) {
+	if s == nil || s.SQL == nil {
+		return nil, errors.New("store not configured")
+	}
+	rows, err := s.SQL.QueryContext(ctx, `
+		SELECT rate_version, carrier_code, service_code, service_name, zone_code,
+		       rate_mode, amount::text, currency::text, active, created_at
+		FROM shipping_rate_versions
+		WHERE shop_id = $1 AND carrier_code = $2 AND service_code = $3 AND zone_code = $4
+		ORDER BY created_at DESC, rate_version DESC
+		LIMIT $5 OFFSET $6
+	`, shopID, carrierCode, serviceCode, zoneCode, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	versions := make([]ShippingRateVersion, 0)
+	for rows.Next() {
+		var version ShippingRateVersion
+		if err := rows.Scan(
+			&version.RateVersion, &version.CarrierCode, &version.ServiceCode, &version.ServiceName,
+			&version.ZoneCode, &version.Mode, &version.Amount, &version.Currency, &version.Active,
+			&version.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		version.Rules = []ShippingRateRule{}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	for index := range versions {
+		version := &versions[index]
+		rules, err := s.SQL.QueryContext(ctx, `
+			SELECT min_weight_grams, max_weight_grams, min_subtotal::text, max_subtotal::text, amount::text
+			FROM shipping_rate_version_rules
+			WHERE rate_version = $1
+			ORDER BY min_weight_grams, min_subtotal
+		`, version.RateVersion)
+		if err != nil {
+			return nil, err
+		}
+		for rules.Next() {
+			var rule ShippingRateRule
+			var maxWeight sql.NullInt64
+			var maxSubtotal sql.NullString
+			if err := rules.Scan(&rule.MinWeightGrams, &maxWeight, &rule.MinSubtotal, &maxSubtotal, &rule.Amount); err != nil {
+				_ = rules.Close()
+				return nil, err
+			}
+			if maxWeight.Valid {
+				rule.MaxWeightGrams = &maxWeight.Int64
+			}
+			if maxSubtotal.Valid {
+				rule.MaxSubtotal = &maxSubtotal.String
+			}
+			version.Rules = append(version.Rules, rule)
+		}
+		if err := rules.Err(); err != nil {
+			_ = rules.Close()
+			return nil, err
+		}
+		if err := rules.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return versions, nil
+}
+
+func (s *Store) ListShippingRateVersionTargets(ctx context.Context, shopID string) ([]ShippingRateVersionTarget, error) {
+	if s == nil || s.SQL == nil {
+		return nil, errors.New("store not configured")
+	}
+	rows, err := s.SQL.QueryContext(ctx, `
+		SELECT DISTINCT carrier_code, service_code, zone_code
+		FROM shipping_rate_versions
+		WHERE shop_id = $1
+		ORDER BY carrier_code, service_code, zone_code
+	`, shopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	targets := make([]ShippingRateVersionTarget, 0)
+	for rows.Next() {
+		var target ShippingRateVersionTarget
+		if err := rows.Scan(&target.CarrierCode, &target.ServiceCode, &target.ZoneCode); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return targets, nil
+}
+
+func (s *Store) RestoreShippingRateVersion(ctx context.Context, shopID, rateVersion string) (string, error) {
+	if s == nil || s.SQL == nil {
+		return "", errors.New("store not configured")
+	}
+	tx, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if s.Dialect == dbdialect.MariaDB {
+		var lockedShopID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM shops WHERE id = $1 FOR UPDATE`, shopID).Scan(&lockedShopID); err != nil {
+			return "", err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, shopID); err != nil {
+			return "", err
+		}
+	}
+
+	var version ShippingRateVersion
+	if err := tx.QueryRowContext(ctx, `
+		SELECT carrier_code, service_code, zone_code, rate_mode, amount::text, currency::text, active
+		FROM shipping_rate_versions
+		WHERE shop_id = $1 AND rate_version = $2
+	`, shopID, rateVersion).Scan(
+		&version.CarrierCode, &version.ServiceCode, &version.ZoneCode,
+		&version.Mode, &version.Amount, &version.Currency, &version.Active,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+
+	var serviceCode string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT code FROM shipping_services
+		WHERE shop_id = $1 AND carrier_code = $2 AND code = $3
+	`, shopID, version.CarrierCode, version.ServiceCode).Scan(&serviceCode); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrShippingRateRestoreUnavailable
+		}
+		return "", err
+	}
+	var zoneCode string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT code FROM shipping_zones WHERE shop_id = $1 AND code = $2
+	`, shopID, version.ZoneCode).Scan(&zoneCode); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrShippingRateRestoreUnavailable
+		}
+		return "", err
+	}
+
+	newRateVersion, err := newShippingRateVersion()
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO shipping_rate_versions (
+			rate_version, shop_id, carrier_code, service_code, service_name, zone_code,
+			rate_mode, amount, currency, active
+		)
+		SELECT $1, shop_id, carrier_code, service_code, service_name, zone_code,
+		       rate_mode, amount, currency, active
+		FROM shipping_rate_versions
+		WHERE shop_id = $2 AND rate_version = $3
+	`, newRateVersion, shopID, rateVersion); err != nil {
+		return "", err
+	}
+	var currentRateVersion string
+	err = tx.QueryRowContext(ctx, `
+		SELECT rate_version FROM shipping_rates
+		WHERE shop_id = $1 AND carrier_code = $2 AND service_code = $3 AND zone_code = $4
+		FOR UPDATE
+	`, shopID, version.CarrierCode, version.ServiceCode, version.ZoneCode).Scan(&currentRateVersion)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO shipping_rates (
+				shop_id, carrier_code, service_code, zone_code, rate_version, rate_mode, amount, currency, active
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, shopID, version.CarrierCode, version.ServiceCode, version.ZoneCode, newRateVersion,
+			version.Mode, version.Amount, version.Currency, version.Active)
+	case err == nil:
+		_, err = tx.ExecContext(ctx, `
+			UPDATE shipping_rates
+			SET rate_version = $5, rate_mode = $6, amount = $7, currency = $8, active = $9
+			WHERE shop_id = $1 AND carrier_code = $2 AND service_code = $3 AND zone_code = $4
+		`, shopID, version.CarrierCode, version.ServiceCode, version.ZoneCode, newRateVersion,
+			version.Mode, version.Amount, version.Currency, version.Active)
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM shipping_rate_rules
+		WHERE shop_id = $1 AND carrier_code = $2 AND service_code = $3 AND zone_code = $4
+	`, shopID, version.CarrierCode, version.ServiceCode, version.ZoneCode); err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO shipping_rate_rules (
+			shop_id, carrier_code, service_code, zone_code, min_weight_grams, max_weight_grams,
+			min_subtotal, max_subtotal, amount
+		)
+		SELECT $1, $2, $3, $4, min_weight_grams, max_weight_grams, min_subtotal, max_subtotal, amount
+		FROM shipping_rate_version_rules
+		WHERE rate_version = $5
+	`, shopID, version.CarrierCode, version.ServiceCode, version.ZoneCode, rateVersion); err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO shipping_rate_version_rules (
+			rate_version, min_weight_grams, max_weight_grams, min_subtotal, max_subtotal, amount
+		)
+		SELECT $1, min_weight_grams, max_weight_grams, min_subtotal, max_subtotal, amount
+		FROM shipping_rate_version_rules
+		WHERE rate_version = $2
+	`, newRateVersion, rateVersion); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return newRateVersion, nil
+}
+
 func (s *Store) ReplaceShippingConfig(ctx context.Context, shopID string, config ShippingConfig) error {
 	if s == nil || s.SQL == nil {
 		return errors.New("store not configured")
@@ -767,6 +1031,7 @@ func (s *Store) ReplaceShippingConfig(ctx context.Context, shopID string, config
 }
 
 var _ ShippingConfigReader = (*Store)(nil)
+var _ ShippingRateVersionReader = (*Store)(nil)
 var _ ShippingOptionReader = (*Store)(nil)
 var _ ShippingOptionReader = (*Memory)(nil)
 var _ ShippingQuoteReader = (*Store)(nil)

@@ -1,6 +1,6 @@
 # État du projet EUROMNI
 
-## Reprise en cours — historique des tarifs (18 octobre 2026)
+## Dernier point de reprise — historique des tarifs (18 octobre 2026)
 
 Point de sauvegarde publié : commit `0b9c7a6` (`Separate shipping services and
 rate versions`) sur `main`, poussé vers `origin/main`. Le transport distingue
@@ -11,10 +11,22 @@ enregistre sa version UUID. Les tarifs préexistants sont migrés vers le servic
 Les tables `shipping_rate_versions` et `shipping_rate_version_rules` sont un
 historique append-only. Chaque sauvegarde de configuration crée une nouvelle
 version et copie les règles; les commandes pointent vers la version sélectionnée.
-L’admin expose la version courante, mais ne propose pas encore la consultation,
-la comparaison ou la restauration de versions antérieures.
+L’admin permet maintenant de parcourir l’historique paginé, y compris les
+combinaisons qui ne sont plus dans la configuration courante, de comparer un
+snapshot au tarif actif et de restaurer une révision comme nouvelle version.
+Les lectures et restaurations sont réservées aux owners/admins. Une restauration
+est transactionnelle et refusée si le service ou la zone requis a été supprimé.
+Les snapshots historiques et les commandes déjà passées restent inchangés.
 
-Validations réellement exécutées pour le checkpoint :
+Routes d’administration ajoutées :
+
+- `GET /v1/admin/shipping/versions/targets` : combinaisons ayant un historique.
+- `GET /v1/admin/shipping/versions?carrier_code=…&service_code=…&zone_code=…&limit=…&offset=…`
+  : snapshots et règles d’un service/zone.
+- `POST /v1/admin/shipping/versions/{rateVersion}/restore` : publication d’une
+  nouvelle version depuis le snapshot désigné.
+
+Validations du checkpoint précédent :
 
 - `go test -count=1 ./...` : 233 tests passent.
 - `go test -tags integration -count=1 ./internal/store -run TestPostgresStoreIntegration` : passe sur PostgreSQL embarqué.
@@ -22,15 +34,28 @@ Validations réellement exécutées pour le checkpoint :
 - `go test -v -tags integration -count=1 ./internal/store -run TestMariaDBMigrationAndCommerceFlow` : passe sur MariaDB 11.8.2 et une base locale dédiée.
 - `node --check frontend/admin/admin.js` et `node --check frontend/euromni-catalog.js` : passent.
 
-L’instance MariaDB portable est arrêtée; ses binaires et son datadir dédié sont
-conservés sous `%LOCALAPPDATA%`. La validation ci-dessus couvre les parcours
-testés, pas une qualification générale de MariaDB sur l’hébergeur IONOS.
+Validations de cette reprise :
 
-**Prochaine reprise recommandée**: exposer l’historique par service et zone dans
-l’admin, comparer les versions et permettre une restauration non destructive.
-La restauration doit publier une nouvelle révision; aucune version historique
-ne doit être modifiée ou supprimée. Les tests doivent prouver que la commande
-existante reste attachée à sa version d’origine après une restauration.
+- `go test -tags integration -count=1 ./internal/store -run TestPostgresStoreIntegration` : passe; vérifie l’historique, la restauration, les règles, le snapshot de commande et l’indisponibilité après suppression du service.
+- `go test -tags integration -count=1 ./internal/api -run TestPostgresAPIEndToEnd` : passe; vérifie les routes protégées, la pagination/validation et la conservation du snapshot de commande.
+- `go test ./...` : passe après l’ajout de l’historique/restauration.
+- `node --check frontend/admin/admin.js` et `git diff --check` : passent.
+
+L’instance MariaDB portable validée au checkpoint précédent était arrêtée; ses
+binaires et son datadir dédié étaient conservés sous `%LOCALAPPDATA%`. La
+validation précédente couvre les parcours testés, pas une qualification générale
+de MariaDB sur l’hébergeur IONOS.
+
+**Prochaine reprise recommandée**: effectuer une validation MariaDB dédiée du
+nouveau flux de restauration et poursuivre les autres priorités du projet. Le
+parcours PostgreSQL vérifie déjà la création d’une nouvelle révision, la
+réapplication des règles, la conservation des snapshots historiques et le
+maintien de la version d’origine sur une commande existante.
+
+La validation MariaDB du flux de restauration n’a pas été exécutée dans cette
+reprise : `MARIADB_TEST_DATABASE_URL` n’est pas défini et le service local est
+inactif. Le test d’intégration MariaDB est modifié mais doit être rejoué sur une
+base de test dédiée avant de considérer cette parité validée.
 
 ## Vision cible
 
