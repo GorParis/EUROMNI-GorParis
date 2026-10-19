@@ -1,0 +1,91 @@
+services:
+  database:
+    image: docker.io/library/mariadb@sha256:1cc14cc479613f2925315a5da7aa0eb5288f938565d94b56cd137b724d2ea12b
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: euromni-local-pilot-only
+      MARIADB_ROOT_PASSWORD: euromni-local-pilot-root-only
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - default
+
+  wordpress:
+    image: docker.io/library/wordpress@sha256:9167bf101163c0dab98a218975bff0da08aab45ae9b5dd5ea3c7671e6095b774
+    environment:
+      WORDPRESS_DB_HOST: database:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: euromni-local-pilot-only
+      WORDPRESS_DEBUG: "1"
+    volumes:
+      - wordpress-data:/var/www/html
+      - ${PILOT_DIR:?}/plugins/woocommerce:/var/www/html/wp-content/plugins/woocommerce:ro,z
+      - ${PILOT_DIR:?}/plugins/selfnamed-cosmetics-on-demand:/var/www/html/wp-content/plugins/selfnamed-cosmetics-on-demand:ro,z
+    depends_on:
+      database:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - default
+
+  cli:
+    image: docker.io/library/wordpress@sha256:07e56f9242a5c5e194bb0191c0f95a07fd1eefe712a231fc444d67eb51bb01e8
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: database:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: euromni-local-pilot-only
+    volumes:
+      - wordpress-data:/var/www/html
+      - ${PILOT_DIR:?}/plugins/woocommerce:/var/www/html/wp-content/plugins/woocommerce:ro,z
+      - ${PILOT_DIR:?}/plugins/selfnamed-cosmetics-on-demand:/var/www/html/wp-content/plugins/selfnamed-cosmetics-on-demand:ro,z
+      - ./order-flow.php:/opt/pilot/order-flow.php:ro,z
+    depends_on:
+      database:
+        condition: service_healthy
+      wordpress:
+        condition: service_started
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - default
+    entrypoint: ["sleep"]
+    command: ["infinity"]
+
+  mock-api:
+    image: docker.io/library/python@sha256:2055081c860db8c842b663415b795b026e7e5cc63b59c5193fcc9997713ea5b8
+    command: ["python", "-B", "/app/mock_api.py"]
+    volumes:
+      - ./mock_api.py:/app/mock_api.py:ro,z
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    networks:
+      - default
+
+networks:
+  default:
+    internal: true
+
+volumes:
+  wordpress-data:

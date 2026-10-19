@@ -52,16 +52,49 @@ Les essais ont été limités aux modules et fonctionnalités hors paiement :
 - `go test -count=1 ./internal/pipeline -run '^(TestAnalyzeRealNonPaymentWooCommerceFixture|TestAnalyzeRealPrestaShopFixtures)$'` : réussi. Analyse statique de `woocommerce-extra-product-sorting-options` (tri catalogue, GPL-3.0) et `ps_newproducts` (bloc catalogue, AFL-3.0), en plus des fixtures PrestaShop déjà présentes. La forme PrestaShop `WidgetInterface` associe `displayHome` à `renderWidget`.
 - `go test -tags=integration -count=1 ./internal/pipeline -run '^TestIRGeneratedWasmRunsAsInstalledModule$'` : réussi. Le pilote WooCommerce `woocommerce_product_query` traverse analyse, lowering IR, compilation Wasm, publication en base PostgreSQL et exécution installée avec capability catalogue. La source PHP du test est une fixture synthétique, pas un plugin WooCommerce réel.
 
-Ces essais ne chargent ni n’exécutent les sources PHP tierces. Ils valident
-l’analyse déclarative de plusieurs références réelles et un seul chemin
-complet de pilote catalogue à partir d’une source synthétique. Les nouveaux
-modules réels sont épinglés dans `pipeline/fixtures/`, mais ne passent pas
-encore par l’importateur EUROMNI : ils n’ont pas de manifeste EUROMNI et le
-validateur d’archive actuel n’accepte pas directement leurs paquets. QP-08
-reste en cours : il faut définir des lowerings et oracles fidèles pour le tri
-WooCommerce et le bloc des seuls nouveaux produits PrestaShop, puis tester leur
-publication/exécution avec la même ABI. Les fixtures WooCommerce Stripe et
-PrestaShop `ps_cashondelivery` ne sont pas incluses dans cette campagne.
+Ces tests de pipeline valident l’analyse déclarative de plusieurs références
+réelles et un seul chemin complet de pilote catalogue à partir d’une source
+synthétique. Les nouveaux modules réels sont épinglés dans `pipeline/fixtures/`,
+mais ne passent pas encore par l’importateur EUROMNI : ils n’ont pas de
+manifeste EUROMNI et le validateur d’archive actuel n’accepte pas directement
+leurs paquets. QP-08 reste en cours : il faut définir des lowerings et oracles
+fidèles pour le tri WooCommerce et le bloc des seuls nouveaux produits
+PrestaShop, puis tester leur publication/exécution avec la même ABI. Les
+fixtures WooCommerce Stripe et PrestaShop `ps_cashondelivery` ne sont pas
+incluses dans cette campagne.
+
+## Pilote natif isolé transport/commande : Selfnamed WooCommerce
+
+Le plugin officiel « Selfnamed: Cosmetics on demand » est publié en version
+`2.1.0`, sous GPLv3 ou ultérieure (archive SHA-256
+`f6bc806ec3f33e67edc085b46703e02666e431fe3ff351056928691bd91e7e5c`;
+[fiche WordPress.org](https://wordpress.org/plugins/selfnamed-cosmetics-on-demand/),
+[readme](https://plugins.svn.wordpress.org/selfnamed-cosmetics-on-demand/trunk/readme.txt)).
+Son API est configurée par une option WordPress ; l’essai garde le code du
+plugin inchangé et dirige cette URL vers un mock exclusivement local.
+
+`./pipeline/selfnamed-pilot/run.sh` télécharge les archives WooCommerce `10.9.0`
+(SHA-256 `d19a480cd2d936165c26a487a52723c527091fd0410353f45e06477434c3dccc`)
+et Selfnamed depuis WordPress.org et valide leurs SHA-256 avant extraction. La
+stack utilise WordPress `6.9.2`, PHP `8.3`, WooCommerce `10.9.0`,
+MariaDB `11.8.3` et des images OCI épinglées par digest. Elle tourne sous
+Podman sur un réseau `internal`, sans port publié ; plugin et WooCommerce sont
+montés en lecture seule, la base est éphémère et l’ensemble est supprimé à la
+fin. Elle ne contient aucun credential Selfnamed : un bearer token fictif est
+accepté seulement par le mock. Les commandes et coordonnées sont synthétiques,
+les emails WooCommerce désactivés et aucune connexion au service externe n’est
+permise.
+
+**Résultat :** le plugin réel s’active dans WordPress, récupère les données
+synthétiques d’un produit par le mock et soumet une commande avec groupe de
+livraison ; le test confirme les champs attendus, l’identifiant et le statut
+retournés, ainsi que l’absence de doublon lors d’une deuxième synchronisation.
+C’est une preuve d’intégration native WordPress/WooCommerce, pas une importation
+ou traduction EUROMNI, pas un test Wasm et pas une véritable commande,
+expédition ou synchronisation Selfnamed. Toute expérience ultérieure avec des
+credentials réels est reportée à une décision distincte et devra utiliser des
+credentials de test, des données synthétiques et une sortie réseau explicitement
+autorisée et limitée.
 
 Les fixtures PrestaShop sont des snapshots des dépôts officiels GitHub, épinglés aux commits `359cd5c86c498964d9c38c97db9fcd13d73be3fe`, `d1bac20a8b5a4664759db5c6775be9b426ad4b62` et `72e9476406319cbb91ac383121ca9967dc61f277`. Elles valident l'analyse statique des fichiers PHP réels ; elles ne valident pas encore l'ingestion d'un package PrestaShop Addons ni la traduction en Wasm.
 

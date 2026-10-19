@@ -1,6 +1,6 @@
 # Modules PHP de référence
 
-Les sources et archives ci-dessous servent de fixtures réelles pour le pipeline EUROMNI. Aucun module n'est installé ni exécuté.
+Les sources et archives ci-dessous servent de fixtures réelles pour le pipeline EUROMNI. Elles sont analysées comme données ; aucun module de ces fixtures n'est installé ni exécuté par le pipeline EUROMNI.
 
 ## WooCommerce
 
@@ -54,7 +54,7 @@ Les ZIP de sources GitHub PrestaShop ne sont pas les packages de distribution Ad
 
 ## Shopify et Magento
 
-Les quatre snapshots suivants sont intégrés sous `real-modules/` afin que les tests soient autonomes. Les sources et leurs licences sont conservées ; les modules ne sont jamais installés ni exécutés.
+Les quatre snapshots suivants sont intégrés sous `real-modules/` afin que les tests soient autonomes. Les sources et leurs licences sont conservées ; ces modules ne sont jamais installés ni exécutés par le pipeline EUROMNI. Le [pilote natif séparé Selfnamed](../selfnamed-pilot/run.sh) n'utilise pas ces snapshots et exécute le plugin seulement dans une stack éphémère à réseau interne.
 
 1. Shopify `function-examples`, commit `19ccafceda1d0052c2c90c0a1e4db3fe37b16c27` : Discount Function JavaScript, licence MIT.
 2. Shopify `checkout-ui-extensions-po-box-validator`, commit `f1d35d27575b8024113096c3c6f7892ab63a482e` : extension UI de checkout, licence MIT.

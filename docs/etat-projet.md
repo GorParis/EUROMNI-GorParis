@@ -68,7 +68,7 @@ financiers WooCommerce `woocommerce-extra-product-sorting-options` et PrestaShop
 `ps_newproducts`, ainsi que sur PrestaShop `ps_emailalerts`, Shopify Discount
 et checkout UI, et Magento Japan Tax et gRPC. Le test de bout en bout du pilote
 catalogue WooCommerce passe sur PostgreSQL avec une source synthétique. Ces
-preuves n’exécutent pas les sources PHP tierces : les nouveaux paquets amont
+tests du pipeline EUROMNI n’exécutent pas les sources PHP tierces : les nouveaux paquets amont
 n’ont pas de manifeste EUROMNI et ne sont pas encore pris en charge par
 l’importateur actuel. Des lowerings/oracles fidèles et deux publications
 exécutées via Wasm restent à démontrer. Les fixtures de paiement WooCommerce
@@ -117,6 +117,44 @@ dans les fixtures est actuellement classé `other`, sans sémantique de paiement
 Il est donc préférable de réussir d’abord plusieurs imports non liés au
 paiement, puis d’ajouter éventuellement ce module comme fixture d’analyse
 statique, sans accès réseau ni secrets et sans encaissement.
+
+## Pilote natif isolé — Selfnamed WooCommerce (transport et commandes)
+
+Le plugin public « Selfnamed: Cosmetics on demand » constitue désormais un
+premier pilote natif utile hors paiement : sa fiche WordPress.org
+annonce l’import/synchronisation de produits, la prise en charge de méthodes de
+livraison WooCommerce et la synchronisation de commandes vers Selfnamed pour le
+dropshipping. La version publique consultée est `2.1.0`, annoncée sous GPLv3+
+([fiche officielle](https://wordpress.org/plugins/selfnamed-cosmetics-on-demand/),
+[readme officiel](https://plugins.svn.wordpress.org/selfnamed-cosmetics-on-demand/trunk/readme.txt)).
+
+Le module mettrait à l’épreuve des frontières plus utiles que le tri seul :
+import produit, méthode/choix de transport, rattachement de lignes de commande
+et export d’une commande. La fiche indique aussi un service externe : à la
+commande, nom, coordonnées, produits et informations de livraison sont transmis
+à Selfnamed. Cela rend le cas particulièrement instructif pour détecter et
+isoler les effets réseau, secrets, données personnelles et responsabilités de
+traitement. Ce n’est pas un processeur de paiement et il ne doit pas être
+interprété comme un test d’encaissement.
+
+Décision prise : commencer par le plugin original dans une stack éphémère
+WordPress/WooCommerce distincte d’EUROMNI, avec la version 2.1.0 téléchargée
+depuis WordPress.org et vérifiée par SHA-256. Le lanceur
+[`pipeline/selfnamed-pilot/run.sh`](../pipeline/selfnamed-pilot/run.sh) épingle
+les images de base, n’expose aucun port, exige un réseau Podman interne et
+remplace l’API Selfnamed par un mock local. Il n’utilise qu’un bearer token
+explicitement fictif, un acheteur et un marchand synthétiques (`.invalid`), et
+désactive les courriels ; volumes et sources téléchargées sont supprimés à la
+fin. Aucun credential Selfnamed ni accès externe n’est utilisé pendant
+l’exécution.
+
+Le premier essai a passé la synchronisation locale d’une commande avec groupe
+de livraison, ainsi qu’une seconde synchronisation qui n’a pas créé de doublon.
+Il confirme le comportement du plugin WooCommerce original face au mock, pas
+l’ingestion, la traduction ou l’exécution Wasm par EUROMNI ; il ne simule pas
+un achat ou une expédition chez Selfnamed. Toute étape ultérieure avec des
+credentials réels exigera une décision distincte, des credentials de test et
+une politique d’accès réseau explicitement limitée.
 
 ## Service de courriel intégré — à concevoir
 
