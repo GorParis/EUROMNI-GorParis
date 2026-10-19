@@ -20,6 +20,25 @@ une base vide, l’outil installe le schéma et le catalogue exemple ; sur les
 démarrages suivants, il n’applique que les nouvelles migrations. Le registre
 `schema_migrations` est vérifié à chaque passage.
 
+### Utiliser Podman
+
+Les mêmes profils Compose peuvent être lancés avec Podman :
+
+```sh
+podman compose --profile cms up -d --wait
+podman compose --podman-run-args=--userns=keep-id \
+  --profile integration run --rm integration-test
+```
+
+Fedora utilise le fournisseur externe `podman-compose`. Le fichier Compose
+active CGo pour Wasmtime, et ses montages de sources utilisent le label SELinux
+partageable `z`. La variable `EUROMNI_DB_PASSWORD` doit aussi être définie dans
+`.env` ou l’environnement lors de l’utilisation du profil d’intégration, car
+Compose évalue les substitutions du profil CMS même si celui-ci n’est pas
+démarré. L’option `keep-id` mappe l’utilisateur du conteneur de test sur le
+compte Fedora courant pour que l’instance PostgreSQL embarquée puisse écrire
+dans son répertoire temporaire rootless.
+
 ## Lancer sans Docker
 
 Installer et démarrer PostgreSQL comme service sur la machine, puis créer une

@@ -18,18 +18,19 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   cms:
-    image: golang:1.23-alpine
+    image: golang:1.23-bookworm
     profiles: [cms]
     working_dir: /workspace
     environment:
       DATABASE_URL: postgres://euromni:${EUROMNI_DB_PASSWORD:?Set EUROMNI_DB_PASSWORD or configure .env}@postgres:5432/euromni?sslmode=disable
+      CGO_ENABLED: "1"
       GOCACHE: /tmp/go-build-cache
       GOMODCACHE: /tmp/go-mod-cache
       GOTOOLCHAIN: local
       PORT: "8081"
       LISTEN_ADDR: "0.0.0.0:8081"
     volumes:
-      - .:/workspace:ro
+      - .:/workspace:ro,z
     ports:
       - "127.0.0.1::8081"
     depends_on:
@@ -39,20 +40,25 @@ services:
     restart: unless-stopped
 
   integration-test:
-    image: golang:1.23-alpine
+    image: golang:1.23-bookworm
     profiles: [integration]
     user: "1000:1000"
     working_dir: /workspace
     environment:
+      CGO_ENABLED: "1"
       GOCACHE: /tmp/go-build-cache
       GOMODCACHE: /tmp/go-mod-cache
       GOTOOLCHAIN: local
       GOFLAGS: -mod=readonly
     volumes:
-      - .:/workspace:ro
+      - .:/workspace:ro,z
     tmpfs:
-      - /workspace/.tmp:uid=1000,gid=1000,mode=0700
-    command: ["go", "test", "-tags=integration", "-count=1", "./..."]
+      - /workspace/.tmp:mode=1777
+      - /workspace/.tmp/embedded-postgres:mode=1777
+    command:
+      - sh
+      - -c
+      - rm -rf .tmp/postgresql-16-tools && exec go test -p 1 -tags=integration -count=1 ./...
 
 volumes:
   postgres-data:
