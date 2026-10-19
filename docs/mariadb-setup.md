@@ -47,7 +47,8 @@ validation status.
 
 The opt-in Go integration test applies the MariaDB migrations when needed and
 exercises catalog reads/writes, category and module fixtures, shipping JSON
-lookup, cart checkout, order reading, and cancellation:
+lookup, cart checkout, manual and simulated payment transitions, idempotent
+result replay, stock restoration, order fulfillment, and cancellation:
 
 ```powershell
 $env:MARIADB_TEST_DATABASE_URL = "mariadb://USER:PASSWORD@HOST:3306/DEDICATED_TEST_DATABASE?tls=true"

@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-
-	"euromni/internal/dbdialect"
 )
 
 var _ OrderAdminReader = (*Store)(nil)
@@ -285,32 +283,7 @@ func (s *Store) CancelAdminOrder(ctx context.Context, shopID, orderID string) er
 	`, shopID, orderID); err != nil {
 		return err
 	}
-	if s.Dialect == dbdialect.MariaDB {
-		_, err = tx.ExecContext(ctx, `
-			UPDATE inventory_items inventory
-			JOIN (
-				SELECT variant_id, SUM(quantity) AS quantity
-				FROM order_lines
-				WHERE order_id = $1 AND variant_id IS NOT NULL
-				GROUP BY variant_id
-			) lines ON inventory.variant_id = lines.variant_id
-			SET inventory.quantity = inventory.quantity + lines.quantity, inventory.updated_at = now()
-			WHERE inventory.track = true
-		`, orderID)
-	} else {
-		_, err = tx.ExecContext(ctx, `
-			UPDATE inventory_items inventory
-			SET quantity = inventory.quantity + lines.quantity, updated_at = now()
-			FROM (
-				SELECT variant_id, sum(quantity)::integer AS quantity
-				FROM order_lines
-				WHERE order_id = $1 AND variant_id IS NOT NULL
-				GROUP BY variant_id
-			) lines
-			WHERE inventory.variant_id = lines.variant_id AND inventory.track = true
-		`, orderID)
-	}
-	if err != nil {
+	if err := restockCancelledOrder(ctx, tx, s.Dialect, orderID); err != nil {
 		return err
 	}
 	return tx.Commit()

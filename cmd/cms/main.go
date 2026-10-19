@@ -8,11 +8,15 @@ import (
 	"strings"
 
 	"euromni/internal/api"
+	"euromni/internal/payment"
 	"euromni/internal/store"
 	"euromni/internal/wasm"
 )
 
 func main() {
+	if err := configureDevelopmentPaymentProvider(); err != nil {
+		log.Fatal(err)
+	}
 	reader, closeReader, err := configuredProductReader()
 	if err != nil {
 		log.Fatal(err)
@@ -34,6 +38,22 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func configureDevelopmentPaymentProvider() error {
+	api.SetDevelopmentPaymentProcessor(nil)
+	provider := strings.TrimSpace(os.Getenv("EUROMNI_PAYMENT_PROVIDER"))
+	if provider == "" {
+		return nil
+	}
+	if provider != "development-fake" {
+		return fmt.Errorf("unsupported EUROMNI_PAYMENT_PROVIDER %q", provider)
+	}
+	if strings.TrimSpace(os.Getenv("EUROMNI_ENVIRONMENT")) != "development" {
+		return fmt.Errorf("EUROMNI_PAYMENT_PROVIDER=development-fake requires EUROMNI_ENVIRONMENT=development")
+	}
+	api.SetDevelopmentPaymentProcessor(payment.DevelopmentFake{})
+	return nil
 }
 
 func configureShippingPricingPolicy(reader store.ProductReader) (func(), error) {

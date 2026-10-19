@@ -2,24 +2,25 @@
 
 ## Prochaine étape engagée — cycle de paiement de développement (19 octobre 2026)
 
-La prochaine tranche fonctionnelle retenue est de relier un résultat de
-paiement à la commande, puis à son admissibilité à l’expédition, au moyen d’un
-prestataire fictif réservé au développement et aux tests. La décision de
-périmètre est actée ; son implémentation n’a pas encore commencé.
+La tranche retenue est implémentée : elle relie un résultat de paiement à la
+commande, puis à son admissibilité à l’expédition, au moyen d’un prestataire
+fictif réservé au développement et aux tests.
 
 Le scénario cible est le suivant : le serveur crée une tentative de paiement
 pour une commande en attente ; l’adaptateur fictif produit un résultat
-déterministe accepté ou refusé ; le serveur vérifie et applique ce résultat ;
-seule une commande effectivement payée peut ensuite être déclarée expédiée.
-Le flux existant de paiement manuel reste disponible.
+déterministe accepté, refusé ou abandonné ; le serveur vérifie et applique ce
+résultat ; seule une commande effectivement payée peut ensuite être déclarée
+expédiée. Le flux existant de paiement manuel reste disponible.
 
 Le faux prestataire doit exercer les mêmes frontières que celles attendues
 d’un prestataire réel : résultat communiqué au serveur, et non une commande
 « payé » affirmée par le navigateur ; vérification de la commande, du montant
 et de la devise ; transitions d’état explicites ; traitement idempotent des
 notifications répétées ; journalisation de la tentative. Il doit être
-impossible d’activer cet adaptateur en production par simple choix du client.
-Les secrets et les appels externes resteront du côté hôte, jamais dans Wasm.
+impossible d’activer cet adaptateur en production par simple choix du client :
+le serveur doit être explicitement configuré avec
+`EUROMNI_ENVIRONMENT=development` et `EUROMNI_PAYMENT_PROVIDER=development-fake`.
+Les secrets et les appels externes restent du côté hôte, jamais dans Wasm.
 
 Critères de validation de cette tranche :
 
@@ -30,8 +31,8 @@ Critères de validation de cette tranche :
   résultat rejeté ou sans effet supplémentaire ;
 - réservation de stock cohérente après un refus ou un abandon, sans perte ni
   double restitution du stock ;
-- tests couvrant les transitions et protections en mémoire et sur PostgreSQL ;
-  parité MariaDB exercée si une base d’intégration dédiée est disponible.
+- tests couvrant les transitions et protections en mémoire, PostgreSQL et
+  MariaDB 11.8.8 sur des bases d’intégration dédiées.
 
 Cette étape n’inclut pas encore de prestataire réel, d’encaissement, de
 remboursement, de paiement différé ni d’intégration transporteur. Elle vise à

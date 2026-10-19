@@ -20,6 +20,7 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read default shipping configuration: %v", err)
 	}
+
 	carrierCode := "colissimo"
 	for index := range shippingConfig.Carriers {
 		if shippingConfig.Carriers[index].Code == carrierCode {
@@ -290,8 +291,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err := db.SQL.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("read migration ledger: %v", err)
 	}
-	if migrationCount != 13 {
-		t.Fatalf("recorded migrations = %d, want 13", migrationCount)
+	if migrationCount != 14 {
+		t.Fatalf("recorded migrations = %d, want 14", migrationCount)
 	}
 	installedModule, err := db.GetInstalledModule(ctx, seed.ShopID, seed.ModuleID)
 	if err != nil {
@@ -882,3 +883,117 @@ func TestPostgresShippingConfiguration(t *testing.T) {
 }
 
 func storeInt64Pointer(value int64) *int64 { return &value }
+
+func TestPostgresDevelopmentPaymentLifecycle(t *testing.T) {
+	ctx := context.Background()
+	db := NewSQL(testdb.Start(t))
+	config, err := db.GetShippingConfig(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("read shipping configuration: %v", err)
+	}
+	for i := range config.Carriers {
+		if config.Carriers[i].Code == "colissimo" {
+			config.Carriers[i].Active = true
+		}
+	}
+	config.Rates = []ShippingRate{{
+		CarrierCode: "colissimo", ZoneCode: config.Zones[0].Code,
+		Amount: "6.90", Currency: "EUR", Active: true,
+	}}
+	if err := db.ReplaceShippingConfig(ctx, seed.ShopID, *config); err != nil {
+		t.Fatalf("configure shipping: %v", err)
+	}
+	for _, test := range []struct {
+		outcome       string
+		paymentStatus string
+		orderStatus   string
+		fulfill       bool
+	}{
+		{outcome: "accepted", paymentStatus: "captured", orderStatus: "paid", fulfill: true},
+		{outcome: "declined", paymentStatus: "failed", orderStatus: "cancelled"},
+		{outcome: "abandoned", paymentStatus: "cancelled", orderStatus: "cancelled"},
+	} {
+		t.Run(test.outcome, func(t *testing.T) {
+			cartHash := sha256.Sum256([]byte("postgres development payment " + test.outcome))
+			if err := db.CreateCart(ctx, seed.ShopID, cartHash[:]); err != nil {
+				t.Fatalf("create cart: %v", err)
+			}
+			if _, err := db.AddCartLine(ctx, seed.ShopID, cartHash[:], seed.VariantID, 1); err != nil {
+				t.Fatalf("add cart line: %v", err)
+			}
+			var stockBefore int
+			if err := db.SQL.QueryRowContext(ctx, `
+				SELECT quantity FROM inventory_items WHERE variant_id::text = $1
+			`, seed.VariantID).Scan(&stockBefore); err != nil {
+				t.Fatalf("read inventory before checkout: %v", err)
+			}
+			order, err := db.CheckoutCart(ctx, seed.ShopID, cartHash[:], CheckoutDetails{
+				Email: "payment-" + test.outcome + "@example.com", Name: "Development payment",
+				ShippingCarrierCode: "colissimo",
+				ShippingAddress: ShippingAddress{
+					Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+				},
+			})
+			if err != nil {
+				t.Fatalf("checkout: %v", err)
+			}
+			attempt, err := db.CreateDevelopmentPaymentAttempt(ctx, seed.ShopID, order.ID)
+			if err != nil {
+				t.Fatalf("create payment attempt: %v", err)
+			}
+			result := PaymentResult{
+				PaymentID: attempt.ID, OrderID: order.ID, Provider: attempt.Provider,
+				Amount: attempt.Amount, Currency: attempt.Currency, Outcome: test.outcome,
+				EventID: "postgres-event-" + attempt.ID, Reference: "postgres-reference-" + attempt.ID,
+			}
+			tampered := result
+			tampered.Currency = "USD"
+			if err := db.ApplyDevelopmentPaymentResult(ctx, seed.ShopID, tampered); !errors.Is(err, ErrInvalidPaymentResult) {
+				t.Fatalf("inconsistent currency result error = %v, want ErrInvalidPaymentResult", err)
+			}
+			tampered = result
+			tampered.Amount = "0.0100"
+			if err := db.ApplyDevelopmentPaymentResult(ctx, seed.ShopID, tampered); !errors.Is(err, ErrInvalidPaymentResult) {
+				t.Fatalf("inconsistent amount result error = %v, want ErrInvalidPaymentResult", err)
+			}
+			if err := db.ApplyDevelopmentPaymentResult(ctx, seed.ShopID, result); err != nil {
+				t.Fatalf("apply %s result: %v", test.outcome, err)
+			}
+			if err := db.ApplyDevelopmentPaymentResult(ctx, seed.ShopID, result); err != nil {
+				t.Fatalf("replay %s result: %v, want idempotent success", test.outcome, err)
+			}
+			var savedPaymentStatus, savedOrderStatus string
+			if err := db.SQL.QueryRowContext(ctx, `
+				SELECT p.status::text, o.status::text
+				FROM payments p JOIN orders o ON o.id = p.order_id
+				WHERE p.id::text = $1
+			`, attempt.ID).Scan(&savedPaymentStatus, &savedOrderStatus); err != nil {
+				t.Fatalf("read applied payment state: %v", err)
+			}
+			if savedPaymentStatus != test.paymentStatus || savedOrderStatus != test.orderStatus {
+				t.Fatalf("payment/order state = %s/%s, want %s/%s", savedPaymentStatus, savedOrderStatus,
+					test.paymentStatus, test.orderStatus)
+			}
+			var stockAfter int
+			if err := db.SQL.QueryRowContext(ctx, `
+				SELECT quantity FROM inventory_items WHERE variant_id::text = $1
+			`, seed.VariantID).Scan(&stockAfter); err != nil {
+				t.Fatalf("read inventory after result: %v", err)
+			}
+			wantStock := stockBefore - 1
+			if !test.fulfill {
+				wantStock = stockBefore
+			}
+			if stockAfter != wantStock {
+				t.Fatalf("inventory after %s result/replay = %d, want %d", test.outcome, stockAfter, wantStock)
+			}
+			if test.fulfill {
+				if err := db.FulfillAdminOrder(ctx, seed.ShopID, order.ID, "DEV-TRACK"); err != nil {
+					t.Fatalf("fulfill accepted order: %v", err)
+				}
+			} else if err := db.FulfillAdminOrder(ctx, seed.ShopID, order.ID, ""); !errors.Is(err, ErrOrderTransition) {
+				t.Fatalf("fulfill unpaid order error = %v, want ErrOrderTransition", err)
+			}
+		})
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"euromni/internal/api"
 	"euromni/internal/store"
 )
 
@@ -58,5 +59,29 @@ func TestListenAddressDefaultsToLoopbackAndAcceptsOverride(t *testing.T) {
 	t.Setenv("LISTEN_ADDR", "0.0.0.0:8081")
 	if got := listenAddress(); got != "0.0.0.0:8081" {
 		t.Fatalf("explicit listen address = %q, want 0.0.0.0:8081", got)
+	}
+}
+
+func TestDevelopmentPaymentProviderRequiresExplicitDevelopmentEnvironment(t *testing.T) {
+	t.Cleanup(func() { api.SetDevelopmentPaymentProcessor(nil) })
+	for _, test := range []struct {
+		name        string
+		environment string
+		provider    string
+		wantError   bool
+	}{
+		{name: "disabled by default", environment: "production"},
+		{name: "enabled in development", environment: "development", provider: "development-fake"},
+		{name: "blocked outside development", environment: "production", provider: "development-fake", wantError: true},
+		{name: "provider validation", environment: "development", provider: "real", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("EUROMNI_ENVIRONMENT", test.environment)
+			t.Setenv("EUROMNI_PAYMENT_PROVIDER", test.provider)
+			err := configureDevelopmentPaymentProvider()
+			if (err != nil) != test.wantError {
+				t.Fatalf("configureDevelopmentPaymentProvider() error = %v, want error %t", err, test.wantError)
+			}
+		})
 	}
 }

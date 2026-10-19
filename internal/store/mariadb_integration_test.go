@@ -150,6 +150,9 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	var orderID string
 	var weightedOrderID string
 	var personalizedOrderID string
+	var paymentOrderIDs []string
+	var paymentCartHashes [][32]byte
+	var paymentEmails []string
 	var personalizedProductID string
 	var personalizedBrandID string
 	var personalizedSupplierID string
@@ -177,6 +180,17 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 				t.Errorf("clean up MariaDB personalized order: %v", err)
 			}
 		}
+		for _, paymentOrderID := range paymentOrderIDs {
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM shipments WHERE order_id = $1`, paymentOrderID); err != nil {
+				t.Errorf("clean up MariaDB development payment shipment: %v", err)
+			}
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM payments WHERE order_id = $1`, paymentOrderID); err != nil {
+				t.Errorf("clean up MariaDB development payment: %v", err)
+			}
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM orders WHERE id = $1`, paymentOrderID); err != nil {
+				t.Errorf("clean up MariaDB development payment order: %v", err)
+			}
+		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM carts WHERE access_token_hash = $1`, tokenHash[:]); err != nil {
 			t.Errorf("clean up MariaDB test cart: %v", err)
 		}
@@ -186,6 +200,11 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM carts WHERE access_token_hash = $1`, personalizedTokenHash[:]); err != nil {
 			t.Errorf("clean up MariaDB personalized cart: %v", err)
 		}
+		for _, paymentCartHash := range paymentCartHashes {
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM carts WHERE access_token_hash = $1`, paymentCartHash[:]); err != nil {
+				t.Errorf("clean up MariaDB development payment cart: %v", err)
+			}
+		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM customers WHERE shop_id = $1 AND email = $2`, seed.ShopID, email); err != nil {
 			t.Errorf("clean up MariaDB test customer: %v", err)
 		}
@@ -194,6 +213,11 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 		}
 		if _, err := database.ExecContext(cleanupCtx, `DELETE FROM customers WHERE shop_id = $1 AND email = $2`, seed.ShopID, personalizedEmail); err != nil {
 			t.Errorf("clean up MariaDB personalized customer: %v", err)
+		}
+		for _, paymentEmail := range paymentEmails {
+			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM customers WHERE shop_id = $1 AND email = $2`, seed.ShopID, paymentEmail); err != nil {
+				t.Errorf("clean up MariaDB development payment customer: %v", err)
+			}
 		}
 		if personalizedProductID != "" {
 			if _, err := database.ExecContext(cleanupCtx, `DELETE FROM products WHERE id = $1`, personalizedProductID); err != nil {
@@ -273,6 +297,108 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 		t.Fatalf("unexpected fulfilled MariaDB order: %#v", adminOrder)
 	}
 
+	for _, test := range []struct {
+		outcome       string
+		paymentStatus string
+		orderStatus   string
+		fulfill       bool
+	}{
+		{outcome: "accepted", paymentStatus: "captured", orderStatus: "paid", fulfill: true},
+		{outcome: "declined", paymentStatus: "failed", orderStatus: "cancelled"},
+		{outcome: "abandoned", paymentStatus: "cancelled", orderStatus: "cancelled"},
+	} {
+		t.Run("development-payment-"+test.outcome, func(t *testing.T) {
+			paymentCartHash := sha256.Sum256([]byte("mariadb-payment-cart-" + suffix + "-" + test.outcome))
+			paymentEmail := "mariadb-payment-" + suffix + "-" + test.outcome + "@example.invalid"
+			paymentCartHashes = append(paymentCartHashes, paymentCartHash)
+			paymentEmails = append(paymentEmails, paymentEmail)
+			if err := store.CreateCart(ctx, seed.ShopID, paymentCartHash[:]); err != nil {
+				t.Fatalf("create MariaDB payment cart: %v", err)
+			}
+			if _, err := store.AddCartLine(ctx, seed.ShopID, paymentCartHash[:], product.Variants[0].ID, 1); err != nil {
+				t.Fatalf("add MariaDB payment cart line: %v", err)
+			}
+			var stockBefore int
+			if err := database.QueryRowContext(ctx, `
+				SELECT quantity FROM inventory_items WHERE variant_id = $1
+			`, product.Variants[0].ID).Scan(&stockBefore); err != nil {
+				t.Fatalf("read MariaDB stock before payment checkout: %v", err)
+			}
+			paymentOrder, err := store.CheckoutCart(ctx, seed.ShopID, paymentCartHash[:], CheckoutDetails{
+				Email: paymentEmail, Name: "MariaDB Development Payment",
+				ShippingCarrierCode: "colissimo", ShippingServiceCode: "legacy",
+				ShippingAddress: ShippingAddress{
+					Line1: "1 rue de test", City: "Paris", PostalCode: "75001", Country: "FR",
+				},
+			})
+			if err != nil {
+				t.Fatalf("checkout MariaDB payment cart: %v", err)
+			}
+			paymentOrderIDs = append(paymentOrderIDs, paymentOrder.ID)
+			attempt, err := store.CreateDevelopmentPaymentAttempt(ctx, seed.ShopID, paymentOrder.ID)
+			if err != nil {
+				t.Fatalf("create MariaDB development payment attempt: %v", err)
+			}
+			if _, err := store.CreateDevelopmentPaymentAttempt(ctx, seed.ShopID, paymentOrder.ID); !errors.Is(err, ErrOrderTransition) {
+				t.Fatalf("create duplicate MariaDB payment attempt error = %v, want %v", err, ErrOrderTransition)
+			}
+			result := PaymentResult{
+				PaymentID: attempt.ID, OrderID: paymentOrder.ID, Provider: attempt.Provider,
+				Amount: attempt.Amount, Currency: attempt.Currency, Outcome: test.outcome,
+				EventID: "mariadb-event-" + attempt.ID, Reference: "mariadb-ref-" + attempt.ID,
+			}
+			tampered := result
+			tampered.Currency = "USD"
+			if err := store.ApplyDevelopmentPaymentResult(ctx, seed.ShopID, tampered); !errors.Is(err, ErrInvalidPaymentResult) {
+				t.Fatalf("apply MariaDB payment with wrong currency error = %v, want %v", err, ErrInvalidPaymentResult)
+			}
+			tampered = result
+			tampered.Amount = "0.0100"
+			if err := store.ApplyDevelopmentPaymentResult(ctx, seed.ShopID, tampered); !errors.Is(err, ErrInvalidPaymentResult) {
+				t.Fatalf("apply MariaDB payment with wrong amount error = %v, want %v", err, ErrInvalidPaymentResult)
+			}
+			if err := store.ApplyDevelopmentPaymentResult(ctx, seed.ShopID, result); err != nil {
+				t.Fatalf("apply MariaDB %s payment result: %v", test.outcome, err)
+			}
+			if err := store.ApplyDevelopmentPaymentResult(ctx, seed.ShopID, result); err != nil {
+				t.Fatalf("replay MariaDB %s payment result: %v", test.outcome, err)
+			}
+			var savedPaymentStatus, savedOrderStatus string
+			if err := database.QueryRowContext(ctx, `
+				SELECT payment.status, orders.status
+				FROM payments payment JOIN orders ON orders.id = payment.order_id
+				WHERE payment.id = $1
+			`, attempt.ID).Scan(&savedPaymentStatus, &savedOrderStatus); err != nil {
+				t.Fatalf("read MariaDB development payment result: %v", err)
+			}
+			if savedPaymentStatus != test.paymentStatus || savedOrderStatus != test.orderStatus {
+				t.Fatalf("MariaDB payment/order state = %s/%s; want %s/%s",
+					savedPaymentStatus, savedOrderStatus, test.paymentStatus, test.orderStatus)
+			}
+			var stockAfter int
+			if err := database.QueryRowContext(ctx, `
+				SELECT quantity FROM inventory_items WHERE variant_id = $1
+			`, product.Variants[0].ID).Scan(&stockAfter); err != nil {
+				t.Fatalf("read MariaDB stock after payment: %v", err)
+			}
+			wantStock := stockBefore - 1
+			if !test.fulfill {
+				wantStock = stockBefore
+			}
+			if stockAfter != wantStock {
+				t.Fatalf("MariaDB stock after %s result/replay = %d, want %d", test.outcome, stockAfter, wantStock)
+			}
+			if test.fulfill {
+				if err := store.FulfillAdminOrder(ctx, seed.ShopID, paymentOrder.ID, "MDB-DEV-TRACK"); err != nil {
+					t.Fatalf("fulfill accepted MariaDB payment order: %v", err)
+				}
+			} else if err := store.FulfillAdminOrder(ctx, seed.ShopID, paymentOrder.ID, ""); !errors.Is(err, ErrOrderTransition) {
+				t.Fatalf("fulfill unpaid MariaDB order error = %v, want %v", err, ErrOrderTransition)
+			}
+		})
+	}
+
+	store.SetShippingPricingPolicy(nil)
 	config, err := store.GetShippingConfig(ctx, seed.ShopID)
 	if err != nil {
 		t.Fatalf("read MariaDB shipping config before weight-value test: %v", err)
@@ -403,10 +529,16 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 		personalizedCart.Items[0].Personalizations[0].ChoiceLabel != "Matte" {
 		t.Fatalf("MariaDB personalized cart = %+v, error = %v", personalizedCart, err)
 	}
+	personalizedQuotes, err := store.ListCartShippingOptions(ctx, seed.ShopID, personalizedTokenHash[:], "FR")
+	if err != nil || len(personalizedQuotes) != 1 || personalizedQuotes[0].ServiceCode != "home" {
+		t.Fatalf("MariaDB personalized shipping quote = %+v, error = %v", personalizedQuotes, err)
+	}
 	personalizedOrder, err := store.CheckoutCart(ctx, seed.ShopID, personalizedTokenHash[:], CheckoutDetails{
 		Email: personalizedEmail, Name: "MariaDB Personalization",
 		ShippingCarrierCode: "colissimo", ShippingServiceCode: "home",
-		ShippingAddress: ShippingAddress{Line1: "1 rue de test", City: "Paris", PostalCode: "75001", Country: "FR"},
+		ExpectedShippingTotal:   personalizedQuotes[0].Amount,
+		ExpectedShippingQuoteID: personalizedQuotes[0].QuoteID,
+		ShippingAddress:         ShippingAddress{Line1: "1 rue de test", City: "Paris", PostalCode: "75001", Country: "FR"},
 	})
 	if err != nil || len(personalizedOrder.Items) != 1 ||
 		len(personalizedOrder.Items[0].Personalizations) != 1 ||

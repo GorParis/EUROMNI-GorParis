@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"euromni/internal/payment"
 	"euromni/internal/seed"
 	"euromni/internal/store"
 )
@@ -503,6 +505,97 @@ func TestCheckoutCreatesOrderAndConsumesMemoryStock(t *testing.T) {
 	mux.ServeHTTP(invalidResponse, invalidRequest)
 	if invalidResponse.Code != http.StatusBadRequest {
 		t.Fatalf("invalid checkout details status = %d, want %d", invalidResponse.Code, http.StatusBadRequest)
+	}
+}
+
+func TestDevelopmentPaymentEndpointAppliesOnlyServerGeneratedResults(t *testing.T) {
+	ctx := context.Background()
+	originalReader := productReader
+	memory := store.NewMemory()
+	SetProductReader(memory)
+	t.Cleanup(func() {
+		SetProductReader(originalReader)
+		SetDevelopmentPaymentProcessor(nil)
+		SetStaffAuthenticator(nil)
+	})
+	tokenHash := sha256.Sum256([]byte("development payment endpoint"))
+	if err := memory.CreateCart(ctx, seed.ShopID, tokenHash[:]); err != nil {
+		t.Fatalf("create payment cart: %v", err)
+	}
+	if _, err := memory.AddCartLine(ctx, seed.ShopID, tokenHash[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add payment cart line: %v", err)
+	}
+	order, err := memory.CheckoutCart(ctx, seed.ShopID, tokenHash[:], store.CheckoutDetails{
+		Email: "payment-api@example.com", Name: "Payment API",
+		ShippingCarrierCode: "colissimo",
+		ShippingAddress: store.ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	})
+	if err != nil {
+		t.Fatalf("checkout payment cart: %v", err)
+	}
+	mux := http.NewServeMux()
+	Register(mux)
+
+	disabled := performAdminRequest(mux, http.MethodPost, "/v1/orders/"+order.ID+"/payments/development", "",
+		`{"test_case":"approved"}`)
+	if disabled.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled provider status = %d, want 503; body=%s", disabled.Code, disabled.Body)
+	}
+	SetDevelopmentPaymentProcessor(payment.DevelopmentFake{})
+	clientClaim := performAdminRequest(mux, http.MethodPost, "/v1/orders/"+order.ID+"/payments/development", "",
+		`{"status":"paid"}`)
+	if clientClaim.Code != http.StatusBadRequest {
+		t.Fatalf("client-supplied payment status = %d, want 400; body=%s", clientClaim.Code, clientClaim.Body)
+	}
+	response := performAdminRequest(mux, http.MethodPost, "/v1/orders/"+order.ID+"/payments/development", "",
+		`{"test_case":"approved"}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(),
+		`"outcome":"accepted"`) || !strings.Contains(response.Body.String(), `"order_status":"paid"`) {
+		t.Fatalf("accepted development payment status/body = %d/%s", response.Code, response.Body)
+	}
+	replay := performAdminRequest(mux, http.MethodPost, "/v1/orders/"+order.ID+"/payments/development", "",
+		`{"test_case":"approved"}`)
+	if replay.Code != http.StatusConflict {
+		t.Fatalf("second development payment request status = %d, want 409; body=%s", replay.Code, replay.Body)
+	}
+	auth := newCatalogTestAuthenticator("admin", seed.ShopID)
+	SetStaffAuthenticator(auth)
+	fulfilled := performAdminRequest(mux, http.MethodPost, "/v1/admin/orders/"+order.ID+"/fulfill", auth.token, `{}`)
+	if fulfilled.Code != http.StatusNoContent {
+		t.Fatalf("fulfill after accepted development payment status = %d, want 204; body=%s", fulfilled.Code, fulfilled.Body)
+	}
+	secondCartHash := sha256.Sum256([]byte("declined development payment endpoint"))
+	if err := memory.CreateCart(ctx, seed.ShopID, secondCartHash[:]); err != nil {
+		t.Fatalf("create declined payment cart: %v", err)
+	}
+	if _, err := memory.AddCartLine(ctx, seed.ShopID, secondCartHash[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add declined payment cart line: %v", err)
+	}
+	declinedOrder, err := memory.CheckoutCart(ctx, seed.ShopID, secondCartHash[:], store.CheckoutDetails{
+		Email: "declined-payment-api@example.com", Name: "Declined payment API",
+		ShippingCarrierCode: "colissimo",
+		ShippingAddress: store.ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	})
+	if err != nil {
+		t.Fatalf("checkout declined payment cart: %v", err)
+	}
+	declined := performAdminRequest(mux, http.MethodPost, "/v1/orders/"+declinedOrder.ID+"/payments/development", "",
+		`{"test_case":"declined"}`)
+	if declined.Code != http.StatusOK || !strings.Contains(declined.Body.String(),
+		`"payment_status":"failed"`) || !strings.Contains(declined.Body.String(), `"order_status":"cancelled"`) {
+		t.Fatalf("declined development payment status/body = %d/%s", declined.Code, declined.Body)
+	}
+	cannotShip := performAdminRequest(mux, http.MethodPost, "/v1/admin/orders/"+declinedOrder.ID+"/fulfill", auth.token, `{}`)
+	if cannotShip.Code != http.StatusConflict {
+		t.Fatalf("fulfill after declined payment status = %d, want 409; body=%s", cannotShip.Code, cannotShip.Body)
+	}
+	product, err := memory.GetProduct(ctx, seed.ShopID, seed.ProductID)
+	if err != nil || product.Variants[0].Inventory.Quantity != 23 {
+		t.Fatalf("stock after declined payment = %+v, error = %v; want 23", product, err)
 	}
 }
 

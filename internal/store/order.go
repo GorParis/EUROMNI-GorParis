@@ -21,9 +21,35 @@ var ErrEmptyCart = errors.New("cart is empty")
 var ErrOrderTransition = errors.New("order status transition is not allowed")
 var ErrShippingUnavailable = errors.New("shipping method unavailable")
 var ErrShippingQuoteChanged = errors.New("shipping quote changed since it was displayed")
+var ErrInvalidPaymentResult = errors.New("payment result does not match the recorded attempt")
 
 type CheckoutWriter interface {
 	CheckoutCart(ctx context.Context, shopID string, tokenHash []byte, details CheckoutDetails) (*OrderView, error)
+}
+
+type PaymentAttempt struct {
+	ID       string `json:"id"`
+	OrderID  string `json:"order_id"`
+	Provider string `json:"provider"`
+	Amount   string `json:"amount"`
+	Currency string `json:"currency"`
+	Status   string `json:"status"`
+}
+
+type PaymentResult struct {
+	PaymentID string
+	OrderID   string
+	Provider  string
+	Amount    string
+	Currency  string
+	Outcome   string
+	EventID   string
+	Reference string
+}
+
+type PaymentLifecycleWriter interface {
+	CreateDevelopmentPaymentAttempt(ctx context.Context, shopID, orderID string) (*PaymentAttempt, error)
+	ApplyDevelopmentPaymentResult(ctx context.Context, shopID string, result PaymentResult) error
 }
 
 type OrderAdminReader interface {
@@ -628,14 +654,26 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 		}
 	}
 	clear(cart.lines)
-	return &OrderView{
+	order := &OrderView{
 		ID: orderID, Number: orderNumber, Status: "pending", Currency: cart.currency,
 		Subtotal: subtotal.FloatString(4), TaxTotal: "0.0000", ShippingTotal: shippingTotal,
 		ShippingCarrierCode: "colissimo", ShippingCarrierName: "Colissimo (tarif de démonstration)",
 		ShippingServiceCode: "legacy", ShippingServiceName: "Offre historique",
 		ShippingRateVersion:     legacyShippingRateVersion,
+		ShippingRateMode:        "fixed",
 		ShippingPricingSubtotal: pricingSubtotal, ShippingPolicySnapshot: policySnapshot,
 		GrandTotal: total,
 		Items:      orderLines(lines),
-	}, nil
+	}
+	reservedQuantities := make(map[string]int, len(variantQuantities))
+	for variantID, quantity := range variantQuantities {
+		reservedQuantities[variantID] = quantity
+	}
+	m.orders[orderID] = &memoryOrder{
+		shopID: shopID, view: cloneOrderView(order), email: details.Email, name: details.Name,
+		address: details.ShippingAddress, createdAt: time.Now(),
+		variantQuantities: reservedQuantities, shippingZoneCode: "france-ue",
+		shippingZoneName: "France et Union européenne",
+	}
+	return order, nil
 }

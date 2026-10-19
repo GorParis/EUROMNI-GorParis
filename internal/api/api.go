@@ -40,6 +40,7 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/shipping-options", shippingOptions)
 	mux.HandleFunc("POST /v1/shipping-quotes", shippingQuote)
 	mux.HandleFunc("POST /v1/checkout", checkout)
+	mux.HandleFunc("POST /v1/orders/{id}/payments/development", developmentPayment)
 	mux.HandleFunc("POST /v1/admin/login", adminLogin)
 	mux.HandleFunc("POST /v1/admin/logout", withStaffAuth(adminLogout))
 	mux.HandleFunc("GET /v1/admin/me", withStaffAuth(adminMe))
