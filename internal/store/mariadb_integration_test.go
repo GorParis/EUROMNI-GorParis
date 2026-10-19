@@ -542,10 +542,15 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	})
 	if err != nil || len(personalizedOrder.Items) != 1 ||
 		len(personalizedOrder.Items[0].Personalizations) != 1 ||
-		personalizedOrder.Items[0].Personalizations[0].ChoiceLabel != "Matte" {
+		personalizedOrder.Items[0].Personalizations[0].ChoiceLabel != "Matte" ||
+		len(personalizedOrder.Items[0].SupplierSnapshot) != 1 ||
+		personalizedOrder.Items[0].SupplierSnapshot[0].Code != supplier.Code ||
+		personalizedOrder.Items[0].SupplierSnapshot[0].SKU != "MDB-REF-"+suffix {
 		t.Fatalf("MariaDB personalized order = %+v, error = %v", personalizedOrder, err)
 	}
 	personalizedOrderID = personalizedOrder.ID
+
+	testSQLSupplierOrderSync(t, ctx, store)
 }
 
 func mariaDBInt64Pointer(value int64) *int64 { return &value }

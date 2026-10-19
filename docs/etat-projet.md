@@ -156,6 +156,36 @@ un achat ou une expédition chez Selfnamed. Toute étape ultérieure avec des
 credentials réels exigera une décision distincte, des credentials de test et
 une politique d’accès réseau explicitement limitée.
 
+## Adaptation native CMS — synchronisation Selfnamed simulée
+
+Le CMS dispose maintenant d’un premier flux natif d’envoi fournisseur, distinct
+du pilote WooCommerce et du pipeline d’import Wasm. À la validation serveur d’un
+paiement accepté — paiement fictif en développement ou confirmation manuelle —
+les lignes qui portent le fournisseur `selfnamed` actif au checkout peuvent
+être soumises à un adaptateur mock local. Un paiement refusé ou abandonné ne
+déclenche aucun envoi. Le statut payé, les lignes et leurs SKU fournisseur sont
+relus côté serveur ; le navigateur ne décide pas du résultat.
+
+L’adaptateur n’effectue aucun appel réseau et n’utilise aucun credential. Son
+activation est opt-in avec
+`EUROMNI_ENVIRONMENT=development` et
+`EUROMNI_SUPPLIER_PROVIDER=selfnamed-mock`; toute autre valeur ou activation
+hors développement est refusée. Les snapshots fournisseur sont figés sur les
+lignes de commande. Le store persiste les états `syncing`, `synced` et
+`failed`, une clé d’idempotence stable, le nombre de tentatives et un bail de
+reprise. L’admin peut relancer l’envoi par
+`POST /v1/admin/orders/{id}/supplier-sync`; la vue de commande expose son état.
+Un échec fournisseur est enregistré et signalé sans annuler le paiement.
+
+Le code de service de livraison choisi au checkout est conservé dans le
+snapshot de demande mock comme groupe de livraison. Cette correspondance avec
+les groupes réels Selfnamed n’est pas confirmée ; aucune commande réelle,
+étiquette ou expédition Selfnamed n’est créée. Le stock reste gouverné par le
+cycle de paiement existant : réservation au checkout et restitution en cas de
+refus/abandon ; la synchronisation fournisseur ne le modifie pas. Les tests
+couvrent le cycle en mémoire et les parcours SQL sur des instances PostgreSQL
+et MariaDB temporaires isolées.
+
 ## Service de courriel intégré — à concevoir
 
 Le CMS devra intégrer un service applicatif pour les courriels transactionnels

@@ -10,11 +10,15 @@ import (
 	"euromni/internal/api"
 	"euromni/internal/payment"
 	"euromni/internal/store"
+	"euromni/internal/supplier/selfnamed"
 	"euromni/internal/wasm"
 )
 
 func main() {
 	if err := configureDevelopmentPaymentProvider(); err != nil {
+		log.Fatal(err)
+	}
+	if err := configureSelfnamedSupplierProvider(); err != nil {
 		log.Fatal(err)
 	}
 	reader, closeReader, err := configuredProductReader()
@@ -38,6 +42,22 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func configureSelfnamedSupplierProvider() error {
+	api.SetSelfnamedOrderProcessor(nil)
+	provider := strings.TrimSpace(os.Getenv("EUROMNI_SUPPLIER_PROVIDER"))
+	if provider == "" {
+		return nil
+	}
+	if provider != "selfnamed-mock" {
+		return fmt.Errorf("unsupported EUROMNI_SUPPLIER_PROVIDER %q", provider)
+	}
+	if strings.TrimSpace(os.Getenv("EUROMNI_ENVIRONMENT")) != "development" {
+		return fmt.Errorf("EUROMNI_SUPPLIER_PROVIDER=selfnamed-mock requires EUROMNI_ENVIRONMENT=development")
+	}
+	api.SetSelfnamedOrderProcessor(selfnamed.Mock{})
+	return nil
 }
 
 func configureDevelopmentPaymentProvider() error {

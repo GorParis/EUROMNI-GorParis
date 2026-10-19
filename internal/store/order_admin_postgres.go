@@ -149,6 +149,11 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	if syncStatus, err := s.GetSupplierOrderSyncStatus(ctx, shopID, orderID, "selfnamed"); err == nil {
+		order.SupplierOrderSync = syncStatus
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
 	return &order, nil
 }
 

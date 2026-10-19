@@ -14,6 +14,7 @@ import (
 	"euromni/internal/payment"
 	"euromni/internal/seed"
 	"euromni/internal/store"
+	"euromni/internal/supplier/selfnamed"
 )
 
 func TestStorefrontServesShadowCatalog(t *testing.T) {
@@ -513,8 +514,10 @@ func TestDevelopmentPaymentEndpointAppliesOnlyServerGeneratedResults(t *testing.
 	originalReader := productReader
 	memory := store.NewMemory()
 	SetProductReader(memory)
+	SetSelfnamedOrderProcessor(selfnamed.Mock{})
 	t.Cleanup(func() {
 		SetProductReader(originalReader)
+		SetSelfnamedOrderProcessor(nil)
 		SetDevelopmentPaymentProcessor(nil)
 		SetStaffAuthenticator(nil)
 	})
@@ -552,7 +555,8 @@ func TestDevelopmentPaymentEndpointAppliesOnlyServerGeneratedResults(t *testing.
 	response := performAdminRequest(mux, http.MethodPost, "/v1/orders/"+order.ID+"/payments/development", "",
 		`{"test_case":"approved"}`)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(),
-		`"outcome":"accepted"`) || !strings.Contains(response.Body.String(), `"order_status":"paid"`) {
+		`"outcome":"accepted"`) || !strings.Contains(response.Body.String(), `"order_status":"paid"`) ||
+		!strings.Contains(response.Body.String(), `"supplier_order_sync_status":"not_applicable"`) {
 		t.Fatalf("accepted development payment status/body = %d/%s", response.Code, response.Body)
 	}
 	replay := performAdminRequest(mux, http.MethodPost, "/v1/orders/"+order.ID+"/payments/development", "",
@@ -586,7 +590,8 @@ func TestDevelopmentPaymentEndpointAppliesOnlyServerGeneratedResults(t *testing.
 	declined := performAdminRequest(mux, http.MethodPost, "/v1/orders/"+declinedOrder.ID+"/payments/development", "",
 		`{"test_case":"declined"}`)
 	if declined.Code != http.StatusOK || !strings.Contains(declined.Body.String(),
-		`"payment_status":"failed"`) || !strings.Contains(declined.Body.String(), `"order_status":"cancelled"`) {
+		`"payment_status":"failed"`) || !strings.Contains(declined.Body.String(), `"order_status":"cancelled"`) ||
+		!strings.Contains(declined.Body.String(), `"supplier_order_sync_status":"not_triggered"`) {
 		t.Fatalf("declined development payment status/body = %d/%s", declined.Code, declined.Body)
 	}
 	cannotShip := performAdminRequest(mux, http.MethodPost, "/v1/admin/orders/"+declinedOrder.ID+"/fulfill", auth.token, `{}`)

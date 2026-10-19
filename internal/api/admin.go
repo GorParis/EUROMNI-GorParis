@@ -7,6 +7,7 @@ import (
 	"euromni/internal/seed"
 	"euromni/internal/store"
 	"io"
+	"log"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -369,6 +370,11 @@ func adminOrderManualPayment(w http.ResponseWriter, r *http.Request) {
 		writeOrderAdminError(w, err)
 		return
 	}
+	_, supplierStatus, err := syncSelfnamedOrder(r.Context(), session.ShopID, r.PathValue("id"))
+	if err != nil {
+		log.Printf("sync Selfnamed order %s after manual payment: %v", r.PathValue("id"), err)
+	}
+	w.Header().Set("X-Euromni-Supplier-Order-Sync", supplierStatus)
 	w.WriteHeader(http.StatusNoContent)
 }
 

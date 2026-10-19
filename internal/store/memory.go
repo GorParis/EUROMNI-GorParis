@@ -25,6 +25,7 @@ type Memory struct {
 	mu                sync.RWMutex
 	carts             map[string]*memoryCart
 	orders            map[string]*memoryOrder
+	supplierSyncs     map[string]*memorySupplierOrderSync
 	shippingPricingPolicyHolder
 }
 
@@ -186,6 +187,7 @@ func NewMemory() *Memory {
 		},
 		carts:  make(map[string]*memoryCart),
 		orders: make(map[string]*memoryOrder),
+		supplierSyncs: make(map[string]*memorySupplierOrderSync),
 	}
 }
 

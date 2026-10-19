@@ -38,6 +38,7 @@ func cloneOrderView(order *OrderView) *OrderView {
 	copy.Items = append([]OrderLineView(nil), order.Items...)
 	for i := range copy.Items {
 		copy.Items[i].Personalizations = append([]PersonalizationSelection(nil), order.Items[i].Personalizations...)
+		copy.Items[i].SupplierSnapshot = append([]SupplierSnapshotItem(nil), order.Items[i].SupplierSnapshot...)
 	}
 	copy.ShippingWeightGrams = cloneInt64(order.ShippingWeightGrams)
 	copy.ShippingPricingSubtotal = cloneString(order.ShippingPricingSubtotal)
@@ -147,7 +148,7 @@ func (m *Memory) ListAdminOrders(ctx context.Context, shopID string, limit, offs
 	}
 	result := make([]AdminOrderView, 0, len(orders))
 	for _, order := range orders {
-		result = append(result, memoryAdminOrderView(order))
+		result = append(result, m.adminOrderView(order))
 	}
 	return result, nil
 }
@@ -162,7 +163,7 @@ func (m *Memory) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Ad
 	if !ok || order.shopID != shopID {
 		return nil, ErrNotFound
 	}
-	result := memoryAdminOrderView(order)
+	result := m.adminOrderView(order)
 	return &result, nil
 }
 
@@ -263,6 +264,15 @@ func memoryAdminOrderView(order *memoryOrder) AdminOrderView {
 		Email: order.email, Name: order.name, ShippingAddress: order.address,
 		CreatedAt: order.createdAt, Items: items,
 	}
+}
+
+func (m *Memory) adminOrderView(order *memoryOrder) AdminOrderView {
+	view := memoryAdminOrderView(order)
+	if syncState := m.supplierSyncs[order.view.ID+"/selfnamed"]; syncState != nil {
+		status := syncState.status
+		view.SupplierOrderSync = &status
+	}
+	return view
 }
 
 func cloneString(value *string) *string {

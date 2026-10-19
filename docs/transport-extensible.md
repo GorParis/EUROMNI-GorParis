@@ -15,6 +15,12 @@ Le modèle couvre quatre préoccupations distinctes :
 3. la **promesse de délai** et les restrictions applicables ;
 4. l’**exécution**, le suivi et le snapshot de l’offre acceptée.
 
+Le premier flux fournisseur natif est le pilote Selfnamed simulé décrit dans
+[l’état du projet](./etat-projet.md#adaptation-native-cms--synchronisation-selfnamed-simulée).
+Il s’exécute uniquement après paiement confirmé, avec un adaptateur local sans
+réseau ni credentials. Il ne constitue pas un calculateur de devis externe, un
+connecteur Selfnamed réel ou une intégration d’étiquettes.
+
 Un transporteur externe réalise la prestation, mais le commerçant configure
 l’offre de sa boutique, la présente au client et demeure son interlocuteur
 commercial. Le logiciel ne doit pas suggérer qu’un contrat transporteur retire

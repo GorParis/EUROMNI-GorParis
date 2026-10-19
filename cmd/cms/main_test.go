@@ -85,3 +85,27 @@ func TestDevelopmentPaymentProviderRequiresExplicitDevelopmentEnvironment(t *tes
 		})
 	}
 }
+
+func TestSelfnamedSupplierProviderRequiresExplicitDevelopmentEnvironment(t *testing.T) {
+	t.Cleanup(func() { api.SetSelfnamedOrderProcessor(nil) })
+	for _, test := range []struct {
+		name        string
+		environment string
+		provider    string
+		wantError   bool
+	}{
+		{name: "disabled by default", environment: "production"},
+		{name: "enabled as local mock in development", environment: "development", provider: "selfnamed-mock"},
+		{name: "blocked outside development", environment: "production", provider: "selfnamed-mock", wantError: true},
+		{name: "provider validation", environment: "development", provider: "selfnamed", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("EUROMNI_ENVIRONMENT", test.environment)
+			t.Setenv("EUROMNI_SUPPLIER_PROVIDER", test.provider)
+			err := configureSelfnamedSupplierProvider()
+			if (err != nil) != test.wantError {
+				t.Fatalf("configureSelfnamedSupplierProvider() error = %v, want error %t", err, test.wantError)
+			}
+		})
+	}
+}

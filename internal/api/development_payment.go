@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 
@@ -82,10 +83,19 @@ func developmentPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	paymentStatus, orderStatus, _ := store.DevelopmentPaymentStatuses(result.Outcome)
-	writePrivateJSON(w, http.StatusOK, map[string]any{"data": map[string]string{
+	supplierStatus := "not_triggered"
+	if orderStatus == "paid" {
+		_, supplierStatus, err = syncSelfnamedOrder(r.Context(), seed.ShopID, result.OrderID)
+		if err != nil {
+			log.Printf("sync Selfnamed order %s after payment: %v", result.OrderID, err)
+		}
+	}
+	data := map[string]any{
 		"order_id": result.OrderID, "payment_id": result.PaymentID, "outcome": result.Outcome,
 		"payment_status": paymentStatus, "order_status": orderStatus,
-	}})
+		"supplier_order_sync_status": supplierStatus,
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
 func writeDevelopmentPaymentError(w http.ResponseWriter, err error) {

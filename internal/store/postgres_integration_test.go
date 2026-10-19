@@ -903,6 +903,38 @@ func TestPostgresDevelopmentPaymentLifecycle(t *testing.T) {
 	if err := db.ReplaceShippingConfig(ctx, seed.ShopID, *config); err != nil {
 		t.Fatalf("configure shipping: %v", err)
 	}
+	supplierID, err := NewCatalogID()
+	if err != nil {
+		t.Fatalf("generate supplier id: %v", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		INSERT INTO suppliers (id, shop_id, code, name, active)
+		VALUES ($1, $2, 'selfnamed', 'Selfnamed test supplier', true)
+	`, supplierID, seed.ShopID); err != nil {
+		t.Fatalf("insert active supplier: %v", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		INSERT INTO variant_suppliers (variant_id, supplier_id, supplier_sku)
+		VALUES ($1, $2, 'SN-POSTGRES-1')
+	`, seed.VariantID, supplierID); err != nil {
+		t.Fatalf("attach supplier to seeded variant: %v", err)
+	}
+	inactiveSupplierID, err := NewCatalogID()
+	if err != nil {
+		t.Fatalf("generate inactive supplier id: %v", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		INSERT INTO suppliers (id, shop_id, code, name, active)
+		VALUES ($1, $2, 'inactive-test', 'Inactive test supplier', false)
+	`, inactiveSupplierID, seed.ShopID); err != nil {
+		t.Fatalf("insert inactive supplier: %v", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		INSERT INTO variant_suppliers (variant_id, supplier_id, supplier_sku)
+		VALUES ($1, $2, 'INACTIVE-1')
+	`, seed.VariantID, inactiveSupplierID); err != nil {
+		t.Fatalf("attach inactive supplier to seeded variant: %v", err)
+	}
 	for _, test := range []struct {
 		outcome       string
 		paymentStatus string
@@ -936,6 +968,10 @@ func TestPostgresDevelopmentPaymentLifecycle(t *testing.T) {
 			})
 			if err != nil {
 				t.Fatalf("checkout: %v", err)
+			}
+			if len(order.Items) != 1 || len(order.Items[0].SupplierSnapshot) != 1 ||
+				order.Items[0].SupplierSnapshot[0] != (SupplierSnapshotItem{Code: "selfnamed", SKU: "SN-POSTGRES-1"}) {
+				t.Fatalf("checkout supplier snapshot = %+v", order.Items)
 			}
 			attempt, err := db.CreateDevelopmentPaymentAttempt(ctx, seed.ShopID, order.ID)
 			if err != nil {

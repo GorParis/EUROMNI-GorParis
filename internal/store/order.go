@@ -22,6 +22,9 @@ var ErrOrderTransition = errors.New("order status transition is not allowed")
 var ErrShippingUnavailable = errors.New("shipping method unavailable")
 var ErrShippingQuoteChanged = errors.New("shipping quote changed since it was displayed")
 var ErrInvalidPaymentResult = errors.New("payment result does not match the recorded attempt")
+var ErrSupplierOrderNotReady = errors.New("supplier order is not ready to sync")
+var ErrSupplierOrderSyncInProgress = errors.New("supplier order sync is already in progress")
+var ErrSupplierOrderHasNoItems = errors.New("order has no items for this supplier")
 
 type CheckoutWriter interface {
 	CheckoutCart(ctx context.Context, shopID string, tokenHash []byte, details CheckoutDetails) (*OrderView, error)
@@ -50,6 +53,47 @@ type PaymentResult struct {
 type PaymentLifecycleWriter interface {
 	CreateDevelopmentPaymentAttempt(ctx context.Context, shopID, orderID string) (*PaymentAttempt, error)
 	ApplyDevelopmentPaymentResult(ctx context.Context, shopID string, result PaymentResult) error
+}
+
+type SupplierOrderSyncStatus struct {
+	OrderID         string `json:"order_id"`
+	SupplierCode    string `json:"supplier_code"`
+	Status          string `json:"status"`
+	ExternalOrderID string `json:"external_order_id,omitempty"`
+	Attempts        int    `json:"attempts"`
+	LastError       string `json:"last_error,omitempty"`
+}
+
+type SupplierOrderSyncClaim struct {
+	IdempotencyKey string
+	Status         SupplierOrderSyncStatus
+	Order          SupplierOrderRequest
+	AlreadySynced  bool
+}
+
+type SupplierOrderRequest struct {
+	OrderID       string
+	OrderNumber   string
+	BuyerName     string
+	BuyerEmail    string
+	Shipping      ShippingAddress
+	ShippingCode  string
+	ShippingGroup string
+	Currency      string
+	Items         []SupplierOrderItem
+}
+
+type SupplierOrderItem struct {
+	SupplierSKU string
+	Name        string
+	Quantity    int
+}
+
+type SupplierOrderSyncStore interface {
+	ClaimSupplierOrderSync(ctx context.Context, shopID, orderID, supplierCode string) (*SupplierOrderSyncClaim, error)
+	CompleteSupplierOrderSync(ctx context.Context, shopID, orderID, supplierCode, idempotencyKey, externalOrderID string) error
+	FailSupplierOrderSync(ctx context.Context, shopID, orderID, supplierCode, idempotencyKey, reason string) error
+	GetSupplierOrderSyncStatus(ctx context.Context, shopID, orderID, supplierCode string) (*SupplierOrderSyncStatus, error)
 }
 
 type OrderAdminReader interface {
@@ -108,6 +152,12 @@ type OrderLineView struct {
 	UnitPrice        string                     `json:"unit_price"`
 	LineTotal        string                     `json:"line_total"`
 	Personalizations []PersonalizationSelection `json:"personalizations"`
+	SupplierSnapshot []SupplierSnapshotItem     `json:"-"`
+}
+
+type SupplierSnapshotItem struct {
+	Code string `json:"code"`
+	SKU  string `json:"sku"`
 }
 
 type AdminOrderView struct {
@@ -138,6 +188,7 @@ type AdminOrderView struct {
 	ShippingAddress         ShippingAddress                `json:"shipping_address"`
 	CreatedAt               time.Time                      `json:"created_at"`
 	Items                   []OrderLineView                `json:"items"`
+	SupplierOrderSync       *SupplierOrderSyncStatus       `json:"supplier_order_sync,omitempty"`
 }
 
 type checkoutLine struct {
@@ -268,6 +319,12 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	}
 	if len(lines) == 0 {
 		return nil, ErrEmptyCart
+	}
+	for i := range lines {
+		lines[i].SupplierSnapshot, err = loadVariantSupplierSnapshot(ctx, tx, lines[i].variantID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	serviceCode := details.ShippingServiceCode
 	if serviceCode == "" {
@@ -468,13 +525,18 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		if err != nil {
 			return nil, err
 		}
+		supplierSnapshotJSON, err := json.Marshal(line.SupplierSnapshot)
+		if err != nil {
+			return nil, err
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO order_lines (
-				order_id, variant_id, sku, name, quantity, unit_price, line_total, personalization_snapshot
+				order_id, variant_id, sku, name, quantity, unit_price, line_total,
+				personalization_snapshot, supplier_snapshot
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
 		`, persistedOrderID, line.variantID, line.SKU, line.Name, line.Quantity, line.UnitPrice,
-			line.LineTotal, string(personalizationJSON)); err != nil {
+			line.LineTotal, string(personalizationJSON), string(supplierSnapshotJSON)); err != nil {
 			return nil, err
 		}
 	}
@@ -518,8 +580,35 @@ func orderLines(lines []checkoutLine) []OrderLineView {
 	items := make([]OrderLineView, len(lines))
 	for i := range lines {
 		items[i] = lines[i].OrderLineView
+		items[i].SupplierSnapshot = append([]SupplierSnapshotItem(nil), lines[i].SupplierSnapshot...)
 	}
 	return items
+}
+
+func loadVariantSupplierSnapshot(ctx context.Context, tx *sql.Tx, variantID string) ([]SupplierSnapshotItem, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT supplier.code, variant_supplier.supplier_sku
+		FROM variant_suppliers variant_supplier
+		JOIN suppliers supplier ON supplier.id = variant_supplier.supplier_id
+		WHERE variant_supplier.variant_id::text = $1 AND supplier.active = true
+		ORDER BY supplier.code
+	`, variantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	snapshot := make([]SupplierSnapshotItem, 0)
+	for rows.Next() {
+		var item SupplierSnapshotItem
+		if err := rows.Scan(&item.Code, &item.SKU); err != nil {
+			return nil, err
+		}
+		snapshot = append(snapshot, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
 }
 
 func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []byte, details CheckoutDetails) (*OrderView, error) {
@@ -600,12 +689,20 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 				break
 			}
 		}
+		supplierSnapshot := make([]SupplierSnapshotItem, 0, len(variant.Suppliers))
+		for _, supplier := range variant.Suppliers {
+			if supplierRef := m.suppliers[shopID+"/"+supplier.SupplierID]; supplierRef != nil && supplierRef.Active {
+				supplierSnapshot = append(supplierSnapshot, SupplierSnapshotItem{
+					Code: supplierRef.Code, SKU: supplier.SupplierSKU,
+				})
+			}
+		}
 		lines = append(lines, checkoutLine{
 			variantID: variantID,
 			OrderLineView: OrderLineView{
 				SKU: variant.SKU, Name: lineName, Quantity: quantity,
 				UnitPrice: price.Amount, LineTotal: lineAmount.FloatString(4),
-				Personalizations: normalizedSelections,
+				Personalizations: normalizedSelections, SupplierSnapshot: supplierSnapshot,
 			},
 		})
 		variants[variantID] = variant
