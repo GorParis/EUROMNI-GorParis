@@ -1,25 +1,58 @@
 # État du projet EUROMNI
 
-## Reprise en cours — référentiels du catalogue et personnalisations
+## Prochaine étape engagée — cycle de paiement de développement (19 octobre 2026)
 
-Le catalogue est en cours d’enrichissement avant l’élargissement des modules
-Wasm : marques simples, fournisseurs associés au produit et à ses variantes,
-et personnalisations par choix prédéfinis sans texte libre ni supplément de
-prix automatique. Les choix sont validés à l’ajout au panier et au checkout ;
-les lignes panier et commande conservent un snapshot, et les références
-fournisseur ne sont exposées que dans l’API d’administration.
+La prochaine tranche fonctionnelle retenue est de relier un résultat de
+paiement à la commande, puis à son admissibilité à l’expédition, au moyen d’un
+prestataire fictif réservé au développement et aux tests. La décision de
+périmètre est actée ; son implémentation n’a pas encore commencé.
 
-Les migrations PostgreSQL, MariaDB et SQLite, les stores, les APIs REST et
-GraphQL, l’administration et la vitrine ont été adaptés. Les tests mémoire,
-SQLite, API et PostgreSQL passent avec `go test ./...`, `go vet ./...` et les
-vérifications JavaScript. Le test d’intégration PostgreSQL passe également.
-La validation MariaDB dédiée reste à effectuer : `MARIADB_TEST_DATABASE_URL`
-n’était pas configurée dans cet environnement et le test d’intégration a été
-ignoré. Ces changements ne sont ni commités ni poussés.
+Le scénario cible est le suivant : le serveur crée une tentative de paiement
+pour une commande en attente ; l’adaptateur fictif produit un résultat
+déterministe accepté ou refusé ; le serveur vérifie et applique ce résultat ;
+seule une commande effectivement payée peut ensuite être déclarée expédiée.
+Le flux existant de paiement manuel reste disponible.
 
-**Prochaine étape** : appliquer et exercer la migration MariaDB sur une base
-d’intégration dédiée, puis faire une dernière revue fonctionnelle du CMS et de
-la vitrine avant d’élargir les tunnels Wasm.
+Le faux prestataire doit exercer les mêmes frontières que celles attendues
+d’un prestataire réel : résultat communiqué au serveur, et non une commande
+« payé » affirmée par le navigateur ; vérification de la commande, du montant
+et de la devise ; transitions d’état explicites ; traitement idempotent des
+notifications répétées ; journalisation de la tentative. Il doit être
+impossible d’activer cet adaptateur en production par simple choix du client.
+Les secrets et les appels externes resteront du côté hôte, jamais dans Wasm.
+
+Critères de validation de cette tranche :
+
+- paiement accepté : commande marquée payée une seule fois, puis éligible au
+  flux d’expédition existant ;
+- paiement refusé ou abandonné : commande non payée et impossible à expédier ;
+- notification répétée, montant/devise incohérents ou commande inconnue :
+  résultat rejeté ou sans effet supplémentaire ;
+- réservation de stock cohérente après un refus ou un abandon, sans perte ni
+  double restitution du stock ;
+- tests couvrant les transitions et protections en mémoire et sur PostgreSQL ;
+  parité MariaDB exercée si une base d’intégration dédiée est disponible.
+
+Cette étape n’inclut pas encore de prestataire réel, d’encaissement, de
+remboursement, de paiement différé ni d’intégration transporteur. Elle vise à
+valider le cycle métier avec un adaptateur remplaçable, avant la connexion d’un
+service financier réel.
+
+## État actuel du socle
+
+Le dernier incrément poussé sur `main` est `2a9665f` (`Add bundled Wasm
+shipping pricing pilot`). Il ajoute un pilote opt-in de livraison gratuite dès
+100 unités, dont la proposition est revalidée par l’hôte et dont l’identité est
+conservée dans la commande. Le pilote est embarqué et ne constitue pas encore
+un système générique d’installation d’extensions Wasm.
+
+Le CMS dispose aussi d’un catalogue administrable (marques, fournisseurs et
+personnalisations prédéfinies), d’une vitrine et d’un panier invité, du checkout
+REST, de la configuration et de l’historique des tarifs transport, ainsi que
+du traitement manuel des commandes et paiements. Le paiement en ligne et les
+notifications d’un prestataire ne sont pas encore implémentés. Le détail des
+capacités vendeur et acheteur est décrit dans [le contrat API](api.md) et
+[la documentation de la vitrine](../frontend/README.md).
 
 ## Dernier point de reprise — sauvegarde MariaDB (19 octobre 2026)
 
