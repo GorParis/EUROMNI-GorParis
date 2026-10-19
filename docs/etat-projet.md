@@ -186,6 +186,25 @@ refus/abandon ; la synchronisation fournisseur ne le modifie pas. Les tests
 couvrent le cycle en mémoire et les parcours SQL sur des instances PostgreSQL
 et MariaDB temporaires isolées.
 
+## Essai manuel local du CMS — suspendu (19 octobre 2026)
+
+Un guide local de prise en main, `CMS-TEST-ACCESS.md`, a été préparé en clair à
+la demande de l’utilisateur. Il est exclu localement par `.git/info/exclude`,
+n’est pas versionné et ne doit pas être ajouté à un commit. Son mot de passe
+d’ouverture initialement demandé (`2`) n’est plus nécessaire puisque le guide
+reste en clair. Le mot de passe owner décrit par le guide est généré localement
+et n’est pas un compte ou un secret déjà communiqué.
+
+Le démarrage de la stack Podman `euromni-cms-test` a été interrompu avant que
+des conteneurs CMS/PostgreSQL soient disponibles. La stack est arrêtée ; le
+volume nommé de cette instance a été conservé. Aucun compte admin n’a été créé,
+aucune session n’a été ouverte et aucun navigateur admin/vitrine n’a été lancé.
+Le parcours manuel n’est donc pas validé. À la prochaine reprise, vérifier la
+stack et ses données avant tout bootstrap, démarrer le CMS, puis ouvrir l’admin
+et la vitrine dans deux navigateurs séparés et s’arrêter pour laisser
+l’utilisateur tester. Aucun test automatisé n’a été lancé pour cette tentative
+interrompue.
+
 ## Service de courriel intégré — à concevoir
 
 Le CMS devra intégrer un service applicatif pour les courriels transactionnels
