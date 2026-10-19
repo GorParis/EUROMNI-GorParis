@@ -22,8 +22,8 @@ chargé comme PHP dans le processus CMS.
 
 Les références couvrent maintenant quatre plateformes :
 
-- WooCommerce et WooCommerce Stripe Gateway
-- PrestaShop `ps_emailalerts` et `ps_cashondelivery`
+- WooCommerce, WooCommerce Stripe Gateway et le module non financier `woocommerce-extra-product-sorting-options`
+- PrestaShop `ps_emailalerts`, `ps_cashondelivery` et le module non financier `ps_newproducts`
 - Shopify Discount Function et checkout UI extension
 - Magento Japan Tax et gRPC
 

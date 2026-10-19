@@ -51,7 +51,7 @@ La mutation `addCartLine` accepte aussi l’argument facultatif `personalization
 - `createCart`, qui renvoie un jeton Bearer à conserver côté client.
 - `addCartLine(variantId, quantity)`, qui requiert le Bearer dans l’en-tête `Authorization`.
 
-Les options de variante sont renvoyées sous forme de liste `{ name, value }`, triée par nom pour une sortie déterministe. Le checkout REST est disponible ; le checkout GraphQL, les taxes, le calcul des livraisons et l’intégration d’un prestataire de paiement ne le sont pas encore. Le paiement manuel décrit ci-dessus n’est pas un paiement en ligne.
+Les options de variante sont renvoyées sous forme de liste `{ name, value }`, triée par nom pour une sortie déterministe. Le checkout REST est disponible ; le checkout GraphQL et les taxes ne le sont pas encore. Le faux prestataire peut simuler le cycle en développement, mais aucune intégration de paiement réel n’est disponible.
 
 La boutique de démo (`GET /storefront/`) sert le Web Component `euromni-catalog`, isolé en Shadow DOM. Il consomme `GET /v1/products` et ouvre les fiches via `?product=<id>` en appelant `GET /v1/products/{id}`. Les produits à variantes proposent un sélecteur de taille et ajoutent la variante choisie ; les produits mono-SKU n’affichent pas d’option. Le panier invité est créé à la première action d’ajout et appelle `GET /v1/cart` / `POST /v1/cart/add` avec le jeton conservé en `sessionStorage` et transmis uniquement dans `Authorization`. Au checkout, le pays détermine les options via `GET /v1/shipping-options`; le client choisit un tarif affiché avant confirmation, puis le serveur recalcule le total. Paiement, taxes, points relais, étiquettes et API transporteur restent hors périmètre.
 

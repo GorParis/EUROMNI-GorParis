@@ -69,6 +69,7 @@ Le module transpilé n’appelle pas l’OS. Il n’appelle que des **capabiliti
 | Panier / commande | panier, checkout, totaux, taxes, livraisons, commandes |
 | Client | comptes, adresses, sessions, consentements |
 | Paiement | initiation / confirmation via adaptateurs hôte (jamais de secrets dans Wasm) |
+| Notifications | courriels métier rendus par le CMS, remis via un adaptateur de transport côté hôte |
 | Contenu / CMS | pages, blocs, menus, i18n |
 | Hooks | `before_*` / `after_*` sur les événements métier |
 | Admin | CRUD config module, feature flags, jobs planifiés |
@@ -78,6 +79,18 @@ Le module transpilé n’appelle pas l’OS. Il n’appelle que des **capabiliti
 Hors ABI (refusés par défaut) : shell, filesystem hôte, sockets bruts, lecture de secrets, SQL direct.
 
 Le contrat d’ABI est versionné (`euromni.abi.v1`). Mapping host calls → tables : [`docs/abi.md`](abi.md).
+
+### Service de courriel intégré — à concevoir
+
+Le CMS devra fournir un service applicatif de courriel pour les messages
+transactionnels (par exemple comptes, commandes et notifications), sans imposer
+qu’il embarque ou exploite lui-même un serveur SMTP. Le cœur doit garder la
+maîtrise des événements, des modèles, des destinataires et des reprises ; la
+remise sera déléguée à un adaptateur de transport configurable côté hôte, avec
+un mode local de développement/test. Les identifiants et l’accès réseau ne
+seront jamais exposés aux modules Wasm. File d’attente, retries, idempotence,
+journalisation, localisation, conformité et prévention des envois abusifs
+devront être cadrés avant implémentation.
 
 ## API headless (REST + GraphQL)
 
@@ -123,3 +136,4 @@ fiscales ou des tarifs. Voir le cadrage et les étapes dans
 - Périmètre produit v1 (moteur seul, boutique, ou bout-en-bout).
 - Où tourne Postgres (cloud / dédié) — le schéma ne dépend pas de ça. L’instance actuelle est chez IONOS.
 - OS/architectures du runtime hôte et toolchain des guests ; les cibles ne sont pas déclarées supportées avant validation. Voir la [matrice de portabilité](portability.md).
+- Conception du service de courriel intégré au CMS et de ses adaptateurs de remise ; aucun fournisseur ni serveur SMTP embarqué n’est choisi.

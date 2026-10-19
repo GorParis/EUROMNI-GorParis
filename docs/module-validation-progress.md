@@ -30,7 +30,7 @@ Le module minimal doit démontrer :
 4. validateur d’archive PHP : confirmé pour refuser les chemins dangereux, fichiers non autorisés et paquets trop volumineux
 5. parse du manifest PHP : confirmé pour les champs minimaux requis (`name`, `version`, `platform`, `shop`)
 6. analyse statique de hooks PHP WooCommerce : confirmée pour repérer `add_action` / `add_filter` et dériver des capabilities attendues (`cart`, `catalog`)
-7. analyse statique PrestaShop : confirmée sur `ps_emailalerts` et `ps_cashondelivery`, incluant `registerHook('...')`, la constante `HOOKS`, la classification `action` / `display` / `other` et l’association aux méthodes `hook…` réelles
+7. analyse statique PrestaShop : confirmée sur `ps_emailalerts`, `ps_cashondelivery` et `ps_newproducts`, incluant `registerHook('...')`, la constante `HOOKS`, la classification `action` / `display` / `other` et l’association aux méthodes `hook…` réelles ou à `renderWidget` pour `WidgetInterface`
 8. analyse Shopify : types et cibles de Discount Function et extension checkout lus depuis leurs manifests TOML réels
 9. analyse Magento : nom du module, événements, plugins et arguments DI lus depuis les fichiers XML réels de Japan Tax et gRPC
 10. IR v2 → Wasm : appel catalogue unique validé contre l’allowlist, capability dérivée de `wasm.Mapping`, provenance versionnée et génération WAT/Wasm reproductible
@@ -44,7 +44,26 @@ Le module minimal doit démontrer :
 normal, tu ne m'as demandé de mt18. ordonnanceur autonome ajouté sous `cmd/artifact-reconciler` : passage immédiat puis périodique, arrêt SIGINT/SIGTERM, retry après erreurs transitoires
 19. politique provisoire : grâce 7 jours, cadence normale 24 heures, retry 5 minutes ; valeurs configurables et à réviser avant production
 
-Les fixtures PrestaShop sont des snapshots des dépôts officiels GitHub, épinglés aux commits `359cd5c86c498964d9c38c97db9fcd13d73be3fe` et `d1bac20a8b5a4664759db5c6775be9b426ad4b62`. Elles valident l'analyse statique des fichiers PHP réels ; elles ne valident pas encore l'ingestion d'un package PrestaShop Addons ni la traduction en Wasm.
+## Campagne non financière — 19 octobre 2026
+
+Les essais ont été limités aux modules et fonctionnalités hors paiement :
+
+- `go test -count=1 ./internal/pipeline -run '^(TestAnalyzeRealPlatformFixtures|TestAnalyzeRealPrestaShopFixtures/ps_emailalerts)$'` : réussi. Analyse statique des manifests Shopify Discount et checkout UI, des déclarations Magento Japan Tax et gRPC, et des hooks PrestaShop `ps_emailalerts`.
+- `go test -count=1 ./internal/pipeline -run '^(TestAnalyzeRealNonPaymentWooCommerceFixture|TestAnalyzeRealPrestaShopFixtures)$'` : réussi. Analyse statique de `woocommerce-extra-product-sorting-options` (tri catalogue, GPL-3.0) et `ps_newproducts` (bloc catalogue, AFL-3.0), en plus des fixtures PrestaShop déjà présentes. La forme PrestaShop `WidgetInterface` associe `displayHome` à `renderWidget`.
+- `go test -tags=integration -count=1 ./internal/pipeline -run '^TestIRGeneratedWasmRunsAsInstalledModule$'` : réussi. Le pilote WooCommerce `woocommerce_product_query` traverse analyse, lowering IR, compilation Wasm, publication en base PostgreSQL et exécution installée avec capability catalogue. La source PHP du test est une fixture synthétique, pas un plugin WooCommerce réel.
+
+Ces essais ne chargent ni n’exécutent les sources PHP tierces. Ils valident
+l’analyse déclarative de plusieurs références réelles et un seul chemin
+complet de pilote catalogue à partir d’une source synthétique. Les nouveaux
+modules réels sont épinglés dans `pipeline/fixtures/`, mais ne passent pas
+encore par l’importateur EUROMNI : ils n’ont pas de manifeste EUROMNI et le
+validateur d’archive actuel n’accepte pas directement leurs paquets. QP-08
+reste en cours : il faut définir des lowerings et oracles fidèles pour le tri
+WooCommerce et le bloc des seuls nouveaux produits PrestaShop, puis tester leur
+publication/exécution avec la même ABI. Les fixtures WooCommerce Stripe et
+PrestaShop `ps_cashondelivery` ne sont pas incluses dans cette campagne.
+
+Les fixtures PrestaShop sont des snapshots des dépôts officiels GitHub, épinglés aux commits `359cd5c86c498964d9c38c97db9fcd13d73be3fe`, `d1bac20a8b5a4664759db5c6775be9b426ad4b62` et `72e9476406319cbb91ac383121ca9967dc61f277`. Elles valident l'analyse statique des fichiers PHP réels ; elles ne valident pas encore l'ingestion d'un package PrestaShop Addons ni la traduction en Wasm.
 
 La référence de compatibilité est la documentation développeur PrestaShop [`9.x`](https://devdocs.prestashop-project.org/9/modules/concepts/hooks/), qui décrit l’enregistrement, les familles `action` / `display` et les méthodes handler. Les fixtures montrent une exception (`paymentOptions`) qui reste sans sémantique déduite. Aucune documentation développeur publique `10.x` n’a été trouvée au 13 octobre 2026 ; PS10 n’est donc pas déclaré compatible.
 

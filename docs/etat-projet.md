@@ -1,10 +1,11 @@
 # État du projet EUROMNI
 
-## Prochaine étape engagée — cycle de paiement de développement (19 octobre 2026)
+## Cycle de paiement de développement — livré (19 octobre 2026)
 
-La tranche retenue est implémentée : elle relie un résultat de paiement à la
-commande, puis à son admissibilité à l’expédition, au moyen d’un prestataire
-fictif réservé au développement et aux tests.
+La tranche est implémentée et poussée sur `main` dans le commit `e5682d4`
+(`Implement development payment lifecycle`). Elle relie un résultat de paiement
+à la commande, puis à son admissibilité à l’expédition, au moyen d’un
+prestataire fictif réservé au développement et aux tests.
 
 Le scénario cible est le suivant : le serveur crée une tentative de paiement
 pour une commande en attente ; l’adaptateur fictif produit un résultat
@@ -39,19 +40,110 @@ remboursement, de paiement différé ni d’intégration transporteur. Elle vise
 valider le cycle métier avec un adaptateur remplaçable, avant la connexion d’un
 service financier réel.
 
+## Suite convenue — CMS et imports avant paiement réel
+
+Le prestataire de paiement réel est reporté jusqu’à ce que le CMS fonctionne
+dans le parcours visé et que plusieurs imports hors paiement aient été éprouvés.
+Le périmètre exact de ces imports (données, sources/formats et résultats
+attendus) reste à cadrer avant leur implémentation ou leur campagne de tests.
+L’ordre de reprise est donc :
+
+1. vérifier et stabiliser le fonctionnement du CMS sur la distribution locale
+   ou autonome retenue — vérification de reprise effectuée le 19 octobre 2026 ;
+2. éprouver les fixtures et pilotes de modules non financiers — premières
+   analyses statiques multi-plateformes et le pilote catalogue WooCommerce
+   passent ; le critère des deux pilotes réels reste ouvert ;
+3. reprendre les décisions CMS-05d encore ouvertes, dont la cible de sauvegarde
+   hors machine et la mesure du RTO, avant un usage client ;
+4. seulement ensuite, étudier un prestataire de paiement réel.
+
+Vérifications de reprise CMS : `go test ./...`, le parcours d’intégration
+`TestPostgresAPIEndToEnd`, les contrôles de syntaxe JavaScript admin/vitrine et
+les tests d’analyse des fixtures non financières passent. Ces validations
+confirment le socle testé ; elles ne remplacent pas une qualification de
+production ni la vérification du CMS sur un environnement client.
+
+Pour les imports, l’analyse statique a été éprouvée sur les modules non
+financiers WooCommerce `woocommerce-extra-product-sorting-options` et PrestaShop
+`ps_newproducts`, ainsi que sur PrestaShop `ps_emailalerts`, Shopify Discount
+et checkout UI, et Magento Japan Tax et gRPC. Le test de bout en bout du pilote
+catalogue WooCommerce passe sur PostgreSQL avec une source synthétique. Ces
+preuves n’exécutent pas les sources PHP tierces : les nouveaux paquets amont
+n’ont pas de manifeste EUROMNI et ne sont pas encore pris en charge par
+l’importateur actuel. Des lowerings/oracles fidèles et deux publications
+exécutées via Wasm restent à démontrer. Les fixtures de paiement WooCommerce
+Stripe et PrestaShop `ps_cashondelivery` sont exclues de cette tranche.
+
+## Sauvegardes hors machine — options examinées, phase en attente
+
+La rétention retenue est de 14 sauvegardes quotidiennes, 8 hebdomadaires et
+12 mensuelles, avec un RPO provisoire de 24 h. `cmd/db-backup` produit une
+archive de base et de FileStore dans le répertoire configuré. Les options
+examinées sont :
+
+- un stockage objet compatible S3 en région européenne, par exemple IONOS
+  Object Storage ou Scaleway Object Storage ;
+- un dépôt distant SFTP sur une machine réellement distincte ;
+- un volume ou système de fichiers distant monté, qui ne doit pas constituer
+  l’unique copie hors machine.
+
+Orientation provisoire : conserver `cmd/db-backup` pour créer les sauvegardes,
+puis les transférer vers un bucket objet européen avec chiffrement côté client,
+des identifiants dédiés et une protection contre l’effacement. Si le CMS est
+hébergé chez IONOS, Scaleway apporterait une séparation de fournisseur ; IONOS
+reste une option de simplicité si un compte adapté existe. Ce sont des options
+à comparer, pas une décision de fournisseur : aucun bucket ni stockage extérieur
+n’est actuellement configuré.
+
+La phase de choix/configuration du stockage externe, de chiffrement et de mesure
+du RTO est mise en attente. Elle reprendra après stabilisation du CMS et essais
+de plusieurs imports hors paiement, et devra se conclure par une restauration
+chronométrée depuis la copie extérieure. Le RPO provisoire de 24 h et la
+rétention ci-dessus restent les hypothèses de reprise.
+
+## Candidat d’import futur — module de paiement PrestaShop
+
+Un module de paiement PrestaShop pourrait ensuite servir de cas d’étude réaliste
+pour éprouver l’analyse des hooks et déclarations, la détection des dépendances,
+et surtout les diagnostics de capacités non prises en charge (réseau, secrets,
+callbacks, états asynchrones, remboursements). Le bénéfice serait de mieux
+délimiter ce que le pipeline peut analyser ou refuser, pas de fournir un
+prestataire de paiement EUROMNI ni de rendre le module exécutable.
+
+Ce n’est pas retenu comme premier import : le pipeline n’ingère pas encore de
+package PrestaShop Addons de bout en bout, ne traduit pas généralement les
+modules métier et n’exécute jamais leur PHP. Le hook `paymentOptions` observé
+dans les fixtures est actuellement classé `other`, sans sémantique de paiement.
+Il est donc préférable de réussir d’abord plusieurs imports non liés au
+paiement, puis d’ajouter éventuellement ce module comme fixture d’analyse
+statique, sans accès réseau ni secrets et sans encaissement.
+
+## Service de courriel intégré — à concevoir
+
+Le CMS devra intégrer un service applicatif pour les courriels transactionnels
+et notifications. « Intégré » ne signifie pas qu’un serveur SMTP devra être
+embarqué : l’architecture envisagée garde événements, modèles, destinataires,
+reprises et journalisation dans le CMS, avec un adaptateur de remise configuré
+côté hôte et un mode local de développement/test. Aucun fournisseur ni choix
+de transport n’est arrêté. La file d’attente, les retries, l’idempotence, la
+localisation, la conformité et les limites anti-abus seront définis dans une
+phase de conception dédiée ; aucun secret ni accès réseau ne sera donné aux
+modules Wasm.
+
 ## État actuel du socle
 
-Le dernier incrément poussé sur `main` est `2a9665f` (`Add bundled Wasm
-shipping pricing pilot`). Il ajoute un pilote opt-in de livraison gratuite dès
-100 unités, dont la proposition est revalidée par l’hôte et dont l’identité est
-conservée dans la commande. Le pilote est embarqué et ne constitue pas encore
-un système générique d’installation d’extensions Wasm.
+Le dernier incrément poussé sur `main` est `e5682d4` (`Implement development
+payment lifecycle`). Il ajoute le cycle de paiement fictif décrit ci-dessus.
+Le pilote précédent `2a9665f` (`Add bundled Wasm shipping pricing pilot`)
+ajoute une livraison gratuite opt-in dès 100 unités, revalidée par l’hôte et
+conservée dans la commande ; il ne constitue pas un système générique
+d’installation d’extensions Wasm.
 
 Le CMS dispose aussi d’un catalogue administrable (marques, fournisseurs et
 personnalisations prédéfinies), d’une vitrine et d’un panier invité, du checkout
 REST, de la configuration et de l’historique des tarifs transport, ainsi que
-du traitement manuel des commandes et paiements. Le paiement en ligne et les
-notifications d’un prestataire ne sont pas encore implémentés. Le détail des
+du traitement manuel des commandes et paiements. Le faux paiement ne réalise
+aucun encaissement ; aucun prestataire réel n’est intégré. Le détail des
 capacités vendeur et acheteur est décrit dans [le contrat API](api.md) et
 [la documentation de la vitrine](../frontend/README.md).
 
@@ -103,20 +195,22 @@ Sauvegarde/restauration des bases :
   empreintes SHA-256.
 - `-restore-database` restaure dans une base précréée et vide du même dialecte;
   le FileStore se restaure séparément avec `-restore-artifacts`.
-- Intégration MariaDB 11.8.8 exécutée sur un datadir/serveur et des bases
-  temporaires dédiés : la restauration des données, triggers et procédures
-  fonctionne, et une destination non vide est refusée. Le flux de commerce et
-  restauration tarifaire MariaDB a aussi passé sur cette instance.
+- Intégration MariaDB 11.8.8 exécutée sur une instance et une base de test
+  dédiées : la restauration des données, triggers et procédures fonctionne, et
+  une destination non vide est refusée. Le flux de commerce et restauration
+  tarifaire MariaDB a aussi passé sur cette instance.
 - PostgreSQL backup/restauration intégration réussie avec clients PostgreSQL
   16.15, compatibles avec le serveur PostgreSQL 16 embarqué.
 - `go test ./...` et `go vet ./...` : passent après l’ajout du support MariaDB.
-- La base MariaDB et les clients PostgreSQL 16 utilisés pour ces validations
-  étaient temporaires; ils ont été arrêtés ou supprimés après les tests.
+- L’instance MariaDB locale sert uniquement aux tests d’intégration ; elle ne
+  constitue ni une base CMS de production ni une cible de sauvegarde.
 
-**Prochaine reprise recommandée** : poursuivre les décisions CMS-05d restantes
-(chiffrement, stockage hors machine et mesure du RTO). La sauvegarde/restauration
-MariaDB est maintenant exercée localement, mais l’accès IONOS reste non qualifié
-et la validation du connecteur ne doit pas être généralisée.
+**Prochaine reprise convenue** : stabiliser le fonctionnement du CMS, puis
+cadrer et éprouver plusieurs imports hors paiement. Les décisions CMS-05d
+(chiffrement, cible de sauvegarde hors machine et mesure du RTO) restent à
+résoudre avant un usage client. La sauvegarde/restauration MariaDB est exercée
+localement ; l’accès IONOS reste non qualifié et la validation du connecteur ne
+doit pas être généralisée. Le prestataire réel attendra ces étapes.
 
 ## Vision cible
 

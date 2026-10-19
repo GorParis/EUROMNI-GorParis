@@ -206,6 +206,13 @@ func TestAnalyzeRealPrestaShopFixtures(t *testing.T) {
 			},
 			wantCapability: "order",
 		},
+		{
+			name:            "ps_newproducts",
+			fixtureGlob:     "../../pipeline/fixtures/prestashop-ps_newproducts/ps_newproducts-*/ps_newproducts.php",
+			wantHooks:       []string{"displayHome"},
+			wantHookDetails: []PHPHook{{Name: "displayHome", Kind: "display", Handler: "renderWidget"}},
+			wantCapability:  "catalog",
+		},
 	}
 
 	for _, module := range modules {
@@ -242,6 +249,40 @@ func TestAnalyzeRealPrestaShopFixtures(t *testing.T) {
 				t.Errorf("analysis capabilities = %#v, want %q", analysis.Capabilities, module.wantCapability)
 			}
 		})
+	}
+}
+
+func TestAnalyzeRealNonPaymentWooCommerceFixture(t *testing.T) {
+	fixtureGlob := "../../pipeline/fixtures/woocommerce-extra-product-sorting-options/woocommerce-extra-product-sorting-options-*/woocommerce-extra-product-sorting-options.php"
+	paths, err := filepath.Glob(fixtureGlob)
+	if err != nil {
+		t.Fatalf("find WooCommerce fixture: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("found %d WooCommerce entrypoints, want exactly one; run pipeline/fetch_real_module_fixtures.sh", len(paths))
+	}
+
+	source, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatalf("read WooCommerce fixture %q: %v", paths[0], err)
+	}
+	analysis, err := AnalyzePHPSource(string(source))
+	if err != nil {
+		t.Fatalf("AnalyzePHPSource() returned error: %v", err)
+	}
+	if analysis.Platform != "woocommerce" || analysis.PluginName != "Extra Product Sorting Options for WooCommerce" || analysis.Version != "2.11.0" {
+		t.Fatalf("analysis metadata = %#v, want the pinned catalog-sorting module", analysis)
+	}
+	for _, hook := range []string{"woocommerce_catalog_orderby", "woocommerce_get_catalog_ordering_args"} {
+		if !contains(analysis.Hooks, hook) {
+			t.Errorf("analysis hooks = %#v, want %q", analysis.Hooks, hook)
+		}
+	}
+	if !contains(analysis.Capabilities, "catalog") {
+		t.Errorf("analysis capabilities = %#v, want catalog", analysis.Capabilities)
+	}
+	if contains(analysis.Capabilities, "order") {
+		t.Errorf("analysis capabilities = %#v, must not derive order for a catalog-only module", analysis.Capabilities)
 	}
 }
 

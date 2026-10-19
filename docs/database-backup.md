@@ -58,8 +58,20 @@ qui refuse un répertoire de destination existant.
 
 Le manifeste et ses empreintes détectent les altérations accidentelles; ils ne
 constituent pas une signature. Ne restaurer que des sauvegardes provenant d’un
-emplacement de confiance. Le stockage hors machine, le chiffrement et la mesure
-du RTO restent à traiter avant un usage client.
+emplacement de confiance. `EUROMNI_BACKUP_DIR` désigne le répertoire de sortie ;
+le projet ne configure ni ne désigne actuellement de cible ou fournisseur de
+stockage hors machine (« FS »). Un chemin local ou un volume monté n’est pas, à
+lui seul, une sauvegarde hors machine. Le chiffrement et la mesure du RTO
+restent à traiter avant un usage client.
+
+Options examinées pour la copie extérieure : stockage objet S3 en région
+européenne (IONOS Object Storage ou Scaleway Object Storage), ou dépôt SFTP sur
+une machine distincte. L’orientation provisoire est de transférer les archives
+produites par `cmd/db-backup` vers un bucket objet avec chiffrement côté client,
+identifiants dédiés et protection contre l’effacement. Aucun fournisseur n’est
+encore choisi ni configuré. La phase est mise en attente jusqu’à la stabilisation
+du CMS et aux essais de plusieurs imports hors paiement ; la reprise devra
+inclure une restauration chronométrée depuis la copie extérieure.
 
 ## Tester l’intégration MariaDB
 

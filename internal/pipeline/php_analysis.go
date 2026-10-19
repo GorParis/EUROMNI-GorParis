@@ -116,6 +116,8 @@ func AnalyzePHPSource(source string) (*PHPAnalysis, error) {
 
 func describePrestaShopHooks(source string, hooks []string) []PHPHook {
 	methodPattern := regexp.MustCompile(`(?im)\bfunction\s+hook([A-Z][A-Za-z0-9_]*)\s*\(`)
+	widgetHandler := regexp.MustCompile(`(?is)\bimplements\s+[^{}]*\bWidgetInterface\b`).MatchString(source) &&
+		regexp.MustCompile(`(?im)\bfunction\s+renderWidget\s*\(`).MatchString(source)
 	handlers := make(map[string]string)
 	for _, match := range methodPattern.FindAllStringSubmatch(source, -1) {
 		if len(match) < 2 {
@@ -135,7 +137,11 @@ func describePrestaShopHooks(source string, hooks []string) []PHPHook {
 		case strings.HasPrefix(hook, "display"):
 			kind = "display"
 		}
-		details = append(details, PHPHook{Name: hook, Kind: kind, Handler: handlers[hook]})
+		handler := handlers[hook]
+		if handler == "" && kind == "display" && widgetHandler {
+			handler = "renderWidget"
+		}
+		details = append(details, PHPHook{Name: hook, Kind: kind, Handler: handler})
 	}
 	return details
 }

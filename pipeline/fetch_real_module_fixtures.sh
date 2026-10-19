@@ -10,8 +10,10 @@ cd "$FIXTURE_DIR"
 for name in \
   "woocommerce:https://downloads.wordpress.org/plugin/woocommerce.latest-stable.zip" \
   "woocommerce-gateway-stripe:https://downloads.wordpress.org/plugin/woocommerce-gateway-stripe.latest-stable.zip" \
+  "woocommerce-extra-product-sorting-options:https://codeload.github.com/godaddy-wordpress/woocommerce-extra-product-sorting-options/zip/bc5829d4d2383ae956869386eb40e772cf4a76a0" \
   "prestashop-ps_emailalerts:https://codeload.github.com/PrestaShop/ps_emailalerts/zip/359cd5c86c498964d9c38c97db9fcd13d73be3fe" \
-  "prestashop-ps_cashondelivery:https://codeload.github.com/PrestaShop/ps_cashondelivery/zip/d1bac20a8b5a4664759db5c6775be9b426ad4b62"
+  "prestashop-ps_cashondelivery:https://codeload.github.com/PrestaShop/ps_cashondelivery/zip/d1bac20a8b5a4664759db5c6775be9b426ad4b62" \
+  "prestashop-ps_newproducts:https://codeload.github.com/PrestaShop/ps_newproducts/zip/72e9476406319cbb91ac383121ca9967dc61f277"
 do
   target="${name%%:*}"
   url="${name#*:}"

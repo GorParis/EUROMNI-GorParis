@@ -14,6 +14,13 @@ Les sources et archives ci-dessous servent de fixtures réelles pour le pipeline
    - Rôle: module de paiement réel, utile pour tester les hooks `woocommerce_gateway_description`, `woocommerce_stripe_payment_method_icons` et les flux de checkout.
    - Source: `https://downloads.wordpress.org/plugin/woocommerce-gateway-stripe.latest-stable.zip`
 
+3. `woocommerce-extra-product-sorting-options`
+   - Plateforme: WooCommerce
+   - Rôle: module non financier qui étend les options de tri du catalogue.
+   - Source: `https://github.com/godaddy-wordpress/woocommerce-extra-product-sorting-options`
+   - Commit: `bc5829d4d2383ae956869386eb40e772cf4a76a0`
+   - Licence: GPL-3.0 (déclarée dans `readme.txt` et les sources).
+
 ## PrestaShop
 
 1. `prestashop-ps_emailalerts`
@@ -28,15 +35,22 @@ Les sources et archives ci-dessous servent de fixtures réelles pour le pipeline
    - Source: `https://github.com/PrestaShop/ps_cashondelivery`
    - Commit: `d1bac20a8b5a4664759db5c6775be9b426ad4b62`
 
+3. `prestashop-ps_newproducts`
+   - Plateforme: PrestaShop
+   - Rôle: module non financier qui expose un bloc de nouveaux produits via `displayHome`.
+   - Source: `https://github.com/PrestaShop/ps_newproducts`
+   - Commit: `72e9476406319cbb91ac383121ca9967dc61f277`
+   - Licence: AFL-3.0 (avis dans la source ; les termes sont référencés à `https://opensource.org/license/afl-3.0` ; aucun fichier de licence distinct n’est inclus dans ce snapshot).
+
 ## Utilisation
 
 ```sh
 ./pipeline/fetch_real_module_fixtures.sh
 ```
 
-La commande télécharge les archives dans `pipeline/fixtures/` et les décompresse dans des dossiers séparés. Les sources PrestaShop sont épinglées à des commits ; les archives WooCommerce suivent la dernière version stable publiée.
+La commande télécharge les archives dans `pipeline/fixtures/` et les décompresse dans des dossiers séparés. Les nouvelles fixtures WooCommerce et PrestaShop sont épinglées à des commits ; les archives historiques WooCommerce suivent la dernière version stable publiée.
 
-Les ZIP de sources GitHub PrestaShop ne sont pas les packages de distribution Addons et ne contiennent pas de `manifest.json` EUROMNI. Ils servent ici à valider l'analyse statique des vrais fichiers PHP, pas la validation du format d'archive EUROMNI ni un usage en production.
+Les ZIP de sources GitHub PrestaShop ne sont pas les packages de distribution Addons et ne contiennent pas de `manifest.json` EUROMNI. Les snapshots WooCommerce sont également gardés comme sources de référence. Ils servent à valider l'analyse statique des vrais fichiers PHP, pas la validation du format d'archive EUROMNI, une traduction fidèle ou un usage en production.
 
 ## Shopify et Magento
 
