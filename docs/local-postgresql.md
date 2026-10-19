@@ -114,10 +114,11 @@ ou des preuves de transaction : cette option supprime les données.
 ### Sauvegarde locale de développement
 
 `cmd/db-backup` crée un dump PostgreSQL au format custom et une archive du
-FileStore, puis écrit un manifeste contenant leurs tailles et empreintes
-SHA-256. La sauvegarde n'est publiée qu'après la réussite des deux exports.
-`-verify` contrôle les empreintes avant une restauration ; il ne remplace pas
-un essai de restauration PostgreSQL.
+FileStore, puis écrit un manifeste contenant leurs tailles, empreintes SHA-256
+et dialecte. La sauvegarde n'est publiée qu'après la réussite des deux exports.
+`-verify` contrôle les empreintes avant une restauration. Pour MariaDB, consulter
+la [procédure commune de sauvegarde/restauration](database-backup.md) et le guide
+de [configuration MariaDB](mariadb-setup.md).
 
 Lancer la commande une fois par jour avec l'ordonnanceur local, en surveillant
 son code de sortie et l'espace disque. Le dossier de destination est protégé
@@ -167,16 +168,16 @@ jamais sur les données actives :
 ```powershell
 $backup = "D:\EUROMNI\backups\<nom-de-la-sauvegarde>"
 go run ./cmd/db-backup -verify $backup
-pg_restore --no-owner --no-acl --dbname=euromni_restore "$backup\database.dump"
+go run ./cmd/db-backup -restore-database $backup
 go run ./cmd/db-backup -restore-artifacts $backup `
   -artifact-dir "C:\EUROMNI\restore\artifacts"
 ```
 
-Dans une archive autonome, remplacer `go run ./cmd/db-backup` par
-`.\euromni-db-backup.exe`.
+Définir `DATABASE_URL` sur une nouvelle base PostgreSQL vide avant d'exécuter
+`-restore-database`. La commande vérifie que la base n'a pas déjà d'objets et
+restaure avec `pg_restore`. Dans une archive autonome, remplacer
+`go run ./cmd/db-backup` par `.\euromni-db-backup.exe`.
 
-Configurer les variables PostgreSQL attendues par `pg_restore` dans
-l'environnement du processus sans mettre le mot de passe dans les arguments.
 La restauration FileStore revérifie l'archive, valide chaque chemin et chaque
 SHA-256, et refuse un répertoire de destination déjà existant.
 Après restauration, vérifier migrations, artefacts référencés, commandes et

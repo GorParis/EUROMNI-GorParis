@@ -29,6 +29,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("db-backup", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	verify := flags.String("verify", "", "verify the integrity of an existing backup directory")
+	restoreDatabase := flags.String("restore-database", "", "restore the database into an existing empty database")
 	restoreArtifacts := flags.String("restore-artifacts", "", "restore the FileStore from a backup directory")
 	artifactDir := flags.String("artifact-dir", "", "new destination directory for restored artifacts")
 	if err := flags.Parse(args); err != nil {
@@ -37,8 +38,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if flags.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
 	}
-	if *verify != "" && *restoreArtifacts != "" {
-		return errors.New("-verify and -restore-artifacts cannot be used together")
+	selectedActions := 0
+	for _, selected := range []bool{*verify != "", *restoreDatabase != "", *restoreArtifacts != ""} {
+		if selected {
+			selectedActions++
+		}
+	}
+	if selectedActions > 1 {
+		return errors.New("-verify, -restore-database and -restore-artifacts cannot be used together")
 	}
 	if *verify != "" {
 		if *artifactDir != "" {
@@ -49,6 +56,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "Backup verified: %s\nCreated: %s\n", *verify, manifest.CreatedAt.Format(time.RFC3339))
+		return err
+	}
+	if *restoreDatabase != "" {
+		if *artifactDir != "" {
+			return errors.New("-artifact-dir is only valid with -restore-artifacts")
+		}
+		manifest, err := backup.RestoreDatabase(ctx, *restoreDatabase, strings.TrimSpace(os.Getenv("DATABASE_URL")))
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "Restored %s database into the empty destination database\n",
+			manifest.DatabaseDialect)
 		return err
 	}
 	if *restoreArtifacts != "" {

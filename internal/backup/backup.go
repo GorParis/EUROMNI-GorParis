@@ -6,23 +6,29 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"euromni/internal/artifact"
+	"euromni/internal/dbdialect"
 	"euromni/internal/privatefs"
+	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 const (
@@ -46,6 +52,7 @@ type Options struct {
 type Manifest struct {
 	FormatVersion   int       `json:"format_version"`
 	CreatedAt       time.Time `json:"created_at"`
+	DatabaseDialect string    `json:"database_dialect,omitempty"`
 	DatabaseFile    string    `json:"database_file"`
 	DatabaseSHA256  string    `json:"database_sha256"`
 	DatabaseBytes   int64     `json:"database_bytes"`
@@ -65,7 +72,7 @@ type Result struct {
 type dumpRunner func(context.Context, string, string) error
 
 func Create(ctx context.Context, options Options) (Result, error) {
-	return create(ctx, options, runPGDump)
+	return create(ctx, options, runDatabaseDump)
 }
 
 func create(ctx context.Context, options Options, dump dumpRunner) (result Result, retErr error) {
@@ -73,10 +80,14 @@ func create(ctx context.Context, options Options, dump dumpRunner) (result Resul
 		ctx = context.Background()
 	}
 	if dump == nil {
-		return Result{}, errors.New("pg_dump runner is required")
+		return Result{}, errors.New("database dump runner is required")
 	}
 	if strings.TrimSpace(options.DatabaseURL) == "" {
 		return Result{}, errors.New("DATABASE_URL is required")
+	}
+	_, _, databaseDialect, err := dbdialect.Resolve(options.DatabaseURL)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve DATABASE_URL: %w", err)
 	}
 	if strings.TrimSpace(options.ArtifactDir) == "" {
 		return Result{}, errors.New("EUROMNI_ARTIFACT_DIR is required")
@@ -135,7 +146,7 @@ func create(ctx context.Context, options Options, dump dumpRunner) (result Resul
 		return Result{}, fmt.Errorf("verify database dump: %w", err)
 	}
 	if databaseSize == 0 {
-		return Result{}, errors.New("pg_dump produced an empty database dump")
+		return Result{}, errors.New("database dump command produced an empty dump")
 	}
 
 	artifactPath := filepath.Join(staging, "artifacts.tar.gz")
@@ -151,6 +162,7 @@ func create(ctx context.Context, options Options, dump dumpRunner) (result Resul
 	manifest := Manifest{
 		FormatVersion:   formatVersion,
 		CreatedAt:       options.Now,
+		DatabaseDialect: string(databaseDialect),
 		DatabaseFile:    "database.dump",
 		DatabaseSHA256:  databaseHash,
 		DatabaseBytes:   databaseSize,
@@ -225,6 +237,96 @@ func Verify(directory string) (Manifest, error) {
 		}
 	}
 	return manifest, nil
+}
+
+func RestoreDatabase(ctx context.Context, directory, databaseURL string) (Manifest, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	manifest, err := Verify(directory)
+	if err != nil {
+		return Manifest{}, err
+	}
+	driverName, driverDSN, targetDialect, err := dbdialect.Resolve(databaseURL)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("resolve destination database: %w", err)
+	}
+	sourceDialect := manifest.DatabaseDialect
+	if sourceDialect == "" {
+		sourceDialect = string(dbdialect.PostgreSQL)
+	}
+	manifest.DatabaseDialect = sourceDialect
+	if string(targetDialect) != sourceDialect {
+		return Manifest{}, fmt.Errorf("backup database dialect %q does not match destination dialect %q",
+			sourceDialect, targetDialect)
+	}
+	database, err := sql.Open(driverName, driverDSN)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("open destination database: %w", err)
+	}
+	defer database.Close()
+	if err := database.PingContext(ctx); err != nil {
+		return Manifest{}, fmt.Errorf("connect to destination database: %w", err)
+	}
+	var objectCount int64
+	switch targetDialect {
+	case dbdialect.PostgreSQL:
+		err = database.QueryRowContext(ctx, `
+			SELECT
+				(SELECT count(*)
+				 FROM pg_catalog.pg_class AS objects
+				 JOIN pg_catalog.pg_namespace AS namespaces ON namespaces.oid = objects.relnamespace
+				 WHERE objects.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+				   AND namespaces.nspname NOT IN ('pg_catalog', 'information_schema')
+				   AND namespaces.nspname NOT LIKE 'pg_toast%') +
+				(SELECT count(*) FROM pg_catalog.pg_namespace
+				 WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'public')
+				   AND nspname NOT LIKE 'pg_toast%') +
+				(SELECT count(*) FROM pg_catalog.pg_proc AS routines
+				 JOIN pg_catalog.pg_namespace AS namespaces ON namespaces.oid = routines.pronamespace
+				 WHERE routines.prokind IN ('f', 'p', 'a', 'w')
+				   AND namespaces.nspname NOT IN ('pg_catalog', 'information_schema')
+				   AND namespaces.nspname NOT LIKE 'pg_toast%') +
+				(SELECT count(*) FROM pg_catalog.pg_type AS types
+				 JOIN pg_catalog.pg_namespace AS namespaces ON namespaces.oid = types.typnamespace
+				 WHERE types.typtype IN ('d', 'e', 'r', 'm')
+				   AND namespaces.nspname NOT IN ('pg_catalog', 'information_schema')
+				   AND namespaces.nspname NOT LIKE 'pg_toast%') +
+				(SELECT count(*) FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql')
+		`).Scan(&objectCount)
+	case dbdialect.MariaDB:
+		err = database.QueryRowContext(ctx, `
+			SELECT
+				(SELECT count(*) FROM information_schema.tables WHERE table_schema = DATABASE()) +
+				(SELECT count(*) FROM information_schema.routines WHERE routine_schema = DATABASE()) +
+				(SELECT count(*) FROM information_schema.events WHERE event_schema = DATABASE())
+		`).Scan(&objectCount)
+	default:
+		return Manifest{}, fmt.Errorf("unsupported destination database dialect %q", targetDialect)
+	}
+	if err != nil {
+		return Manifest{}, fmt.Errorf("inspect destination database: %w", err)
+	}
+	if objectCount != 0 {
+		return Manifest{}, errors.New("destination database is not empty; restore requires a new empty database")
+	}
+	if err := database.Close(); err != nil {
+		return Manifest{}, fmt.Errorf("close destination database inspection connection: %w", err)
+	}
+
+	absolute, err := filepath.Abs(directory)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("resolve backup directory: %w", err)
+	}
+	databasePath := filepath.Join(absolute, manifest.DatabaseFile)
+	switch targetDialect {
+	case dbdialect.PostgreSQL:
+		return manifest, runPGRestore(ctx, databaseURL, databasePath)
+	case dbdialect.MariaDB:
+		return manifest, runMariaDBRestore(ctx, databaseURL, databasePath)
+	default:
+		return Manifest{}, fmt.Errorf("unsupported destination database dialect %q", targetDialect)
+	}
 }
 
 func RestoreArtifacts(ctx context.Context, directory, destination string) (restoredManifest Manifest, retErr error) {
@@ -475,6 +577,9 @@ func readManifest(directory string) (Manifest, error) {
 	}
 	if manifest.FormatVersion != formatVersion ||
 		manifest.CreatedAt.IsZero() ||
+		(manifest.DatabaseDialect != "" &&
+			manifest.DatabaseDialect != string(dbdialect.PostgreSQL) &&
+			manifest.DatabaseDialect != string(dbdialect.MariaDB)) ||
 		manifest.DatabaseFile != "database.dump" ||
 		manifest.ArtifactsFile != "artifacts.tar.gz" ||
 		!digestPattern.MatchString(manifest.DatabaseSHA256) ||
@@ -622,6 +727,235 @@ func runPGDump(ctx context.Context, databaseURL, destination string) error {
 		return fmt.Errorf("run pg_dump: %w: %s", err, detail)
 	}
 	return nil
+}
+
+func runDatabaseDump(ctx context.Context, databaseURL, destination string) error {
+	_, _, dialect, err := dbdialect.Resolve(databaseURL)
+	if err != nil {
+		return fmt.Errorf("resolve DATABASE_URL: %w", err)
+	}
+	switch dialect {
+	case dbdialect.PostgreSQL:
+		return runPGDump(ctx, databaseURL, destination)
+	case dbdialect.MariaDB:
+		return runMariaDBDump(ctx, databaseURL, destination)
+	default:
+		return fmt.Errorf("unsupported database dialect %q", dialect)
+	}
+}
+
+func runMariaDBDump(ctx context.Context, databaseURL, destination string) (retErr error) {
+	config, err := mariaDBClientConfig(databaseURL)
+	if err != nil {
+		return err
+	}
+	credentialsPath, cleanup, err := writeMariaDBClientOptions(config)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := cleanup(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("remove temporary MariaDB client credentials: %w", err))
+		}
+	}()
+	client, err := exec.LookPath("mariadb-dump")
+	if err != nil {
+		client, err = exec.LookPath("mysqldump")
+		if err != nil {
+			return errors.New("mariadb-dump or mysqldump must be available in PATH")
+		}
+	}
+	output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create MariaDB dump: %w", err)
+	}
+	command := exec.CommandContext(ctx, client,
+		"--defaults-extra-file="+credentialsPath,
+		"--single-transaction",
+		"--routines",
+		"--events",
+		"--triggers",
+		"--hex-blob",
+		"--no-tablespaces",
+		"--default-character-set=utf8mb4",
+		config.DBName,
+	)
+	var stderr strings.Builder
+	command.Stdout = output
+	command.Stderr = &stderr
+	runErr := command.Run()
+	syncErr := output.Sync()
+	closeErr := output.Close()
+	if err := errors.Join(runErr, syncErr, closeErr); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			return fmt.Errorf("run MariaDB dump: %w", err)
+		}
+		return fmt.Errorf("run MariaDB dump: %w: %s", err, detail)
+	}
+	return nil
+}
+
+func runPGRestore(ctx context.Context, databaseURL, databasePath string) error {
+	config, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		return fmt.Errorf("parse destination database URL: %w", err)
+	}
+	if config.Database == "" {
+		return errors.New("destination database URL must specify a database name")
+	}
+	environment, err := pgDumpEnvironment(config, databaseURL)
+	if err != nil {
+		return err
+	}
+	command := exec.CommandContext(ctx, "pg_restore",
+		"--no-password",
+		"--no-owner",
+		"--no-acl",
+		"--exit-on-error",
+		"--single-transaction",
+		"--host", config.Host,
+		"--port", fmt.Sprintf("%d", config.Port),
+		"--username", config.User,
+		"--dbname", config.Database,
+		databasePath,
+	)
+	command.Env = environment
+	output, err := command.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			return fmt.Errorf("run pg_restore: %w", err)
+		}
+		return fmt.Errorf("run pg_restore: %w: %s", err, detail)
+	}
+	return nil
+}
+
+func runMariaDBRestore(ctx context.Context, databaseURL, databasePath string) (retErr error) {
+	config, err := mariaDBClientConfig(databaseURL)
+	if err != nil {
+		return err
+	}
+	credentialsPath, cleanup, err := writeMariaDBClientOptions(config)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := cleanup(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("remove temporary MariaDB client credentials: %w", err))
+		}
+	}()
+	client, err := exec.LookPath("mariadb")
+	if err != nil {
+		client, err = exec.LookPath("mysql")
+		if err != nil {
+			return errors.New("mariadb or mysql client must be available in PATH")
+		}
+	}
+	dump, err := os.Open(databasePath)
+	if err != nil {
+		return fmt.Errorf("open MariaDB dump: %w", err)
+	}
+	defer dump.Close()
+	command := exec.CommandContext(ctx, client,
+		"--defaults-extra-file="+credentialsPath,
+		"--batch",
+		"--default-character-set=utf8mb4",
+		"--database="+config.DBName,
+	)
+	command.Stdin = dump
+	output, err := command.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			return fmt.Errorf("run MariaDB restore: %w (the destination may now contain a partial restore)", err)
+		}
+		return fmt.Errorf("run MariaDB restore: %w: %s (the destination may now contain a partial restore)",
+			err, detail)
+	}
+	return nil
+}
+
+func mariaDBClientConfig(databaseURL string) (*mysql.Config, error) {
+	driverName, driverDSN, dialect, err := dbdialect.Resolve(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse MariaDB connection: %w", err)
+	}
+	if dialect != dbdialect.MariaDB {
+		return nil, fmt.Errorf("database URL uses dialect %q, not MariaDB", dialect)
+	}
+	config, err := mysql.ParseDSN(driverDSN)
+	if err != nil {
+		return nil, fmt.Errorf("parse MariaDB client connection: %w", err)
+	}
+	if config.DBName == "" {
+		return nil, errors.New("MariaDB DATABASE_URL must specify a database name")
+	}
+	if driverName == "" {
+		return nil, errors.New("MariaDB driver is unavailable")
+	}
+	if config.TLSConfig != "" && config.TLSConfig != "true" {
+		return nil, errors.New("MariaDB backup supports only tls=true; custom TLS profiles are unsupported")
+	}
+	return config, nil
+}
+
+func writeMariaDBClientOptions(config *mysql.Config) (string, func() error, error) {
+	if strings.ContainsAny(config.Addr+config.User+config.Passwd, "\x00\r\n") {
+		return "", nil, errors.New("MariaDB connection values contain unsupported control characters")
+	}
+	host, portText, err := net.SplitHostPort(config.Addr)
+	if err != nil {
+		return "", nil, fmt.Errorf("parse MariaDB host and port: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return "", nil, errors.New("MariaDB port is invalid")
+	}
+	tempDirectory, err := os.MkdirTemp("", "euromni-mariadb-client-")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temporary MariaDB credentials directory: %w", err)
+	}
+	if err := privatefs.EnsureDirectory(tempDirectory); err != nil {
+		return "", nil, errors.Join(fmt.Errorf("protect temporary MariaDB credentials directory: %w", err),
+			os.RemoveAll(tempDirectory))
+	}
+	file, err := os.CreateTemp(tempDirectory, "client-*.cnf")
+	if err != nil {
+		return "", nil, errors.Join(fmt.Errorf("create temporary MariaDB client credentials: %w", err),
+			os.RemoveAll(tempDirectory))
+	}
+	path := file.Name()
+	content := "[client]\n" +
+		"protocol=tcp\n" +
+		"host=" + mysqlOptionValue(host) + "\n" +
+		"port=" + strconv.Itoa(port) + "\n" +
+		"user=" + mysqlOptionValue(config.User) + "\n" +
+		"password=" + mysqlOptionValue(config.Passwd) + "\n"
+	if config.TLSConfig == "true" {
+		content += "ssl=true\n"
+	}
+	if _, err := io.WriteString(file, content); err != nil {
+		return "", nil, errors.Join(fmt.Errorf("write temporary MariaDB client credentials: %w", err),
+			file.Close(), os.Remove(path), os.Remove(tempDirectory))
+	}
+	if err := file.Sync(); err != nil {
+		return "", nil, errors.Join(fmt.Errorf("sync temporary MariaDB client credentials: %w", err),
+			file.Close(), os.Remove(path), os.Remove(tempDirectory))
+	}
+	if err := file.Close(); err != nil {
+		return "", nil, errors.Join(fmt.Errorf("close temporary MariaDB client credentials: %w", err),
+			os.Remove(path), os.Remove(tempDirectory))
+	}
+	return path, func() error {
+		return errors.Join(os.Remove(path), os.Remove(tempDirectory))
+	}, nil
+}
+
+func mysqlOptionValue(value string) string {
+	value = strings.NewReplacer("\\", "\\\\", `"`, `\"`).Replace(value)
+	return `"` + value + `"`
 }
 
 func pgDumpEnvironment(config *pgx.ConnConfig, databaseURL string) ([]string, error) {

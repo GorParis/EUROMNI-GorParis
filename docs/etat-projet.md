@@ -1,9 +1,9 @@
 # État du projet EUROMNI
 
-## Dernier point de reprise — historique des tarifs (18 octobre 2026)
+## Dernier point de reprise — sauvegarde MariaDB (19 octobre 2026)
 
-Point de sauvegarde publié : commit `0b9c7a6` (`Separate shipping services and
-rate versions`) sur `main`, poussé vers `origin/main`. Le transport distingue
+Point de sauvegarde fonctionnel précédent : commit `6518a0e` (`Add shipping rate
+history restoration`) sur `main`, poussé vers `origin/main`. Le transport distingue
 maintenant transporteur, service et tarif; le checkout choisit le service et
 enregistre sa version UUID. Les tarifs préexistants sont migrés vers le service
 `legacy` (« Offre historique ») sans perte de prix.
@@ -41,21 +41,27 @@ Validations de cette reprise :
 - `go test ./...` : passe après l’ajout de l’historique/restauration.
 - `node --check frontend/admin/admin.js` et `git diff --check` : passent.
 
-L’instance MariaDB portable validée au checkpoint précédent était arrêtée; ses
-binaires et son datadir dédié étaient conservés sous `%LOCALAPPDATA%`. La
-validation précédente couvre les parcours testés, pas une qualification générale
-de MariaDB sur l’hébergeur IONOS.
+Sauvegarde/restauration des bases :
 
-**Prochaine reprise recommandée**: effectuer une validation MariaDB dédiée du
-nouveau flux de restauration et poursuivre les autres priorités du projet. Le
-parcours PostgreSQL vérifie déjà la création d’une nouvelle révision, la
-réapplication des règles, la conservation des snapshots historiques et le
-maintien de la version d’origine sur une commande existante.
+- `cmd/db-backup` détecte le dialecte, utilise `pg_dump` pour PostgreSQL ou
+  `mariadb-dump`/`mysqldump` pour MariaDB, et archive le FileStore avec les
+  empreintes SHA-256.
+- `-restore-database` restaure dans une base précréée et vide du même dialecte;
+  le FileStore se restaure séparément avec `-restore-artifacts`.
+- Intégration MariaDB 11.8.8 exécutée sur un datadir/serveur et des bases
+  temporaires dédiés : la restauration des données, triggers et procédures
+  fonctionne, et une destination non vide est refusée. Le flux de commerce et
+  restauration tarifaire MariaDB a aussi passé sur cette instance.
+- PostgreSQL backup/restauration intégration réussie avec clients PostgreSQL
+  16.15, compatibles avec le serveur PostgreSQL 16 embarqué.
+- `go test ./...` et `go vet ./...` : passent après l’ajout du support MariaDB.
+- La base MariaDB et les clients PostgreSQL 16 utilisés pour ces validations
+  étaient temporaires; ils ont été arrêtés ou supprimés après les tests.
 
-La validation MariaDB du flux de restauration n’a pas été exécutée dans cette
-reprise : `MARIADB_TEST_DATABASE_URL` n’est pas défini et le service local est
-inactif. Le test d’intégration MariaDB est modifié mais doit être rejoué sur une
-base de test dédiée avant de considérer cette parité validée.
+**Prochaine reprise recommandée** : poursuivre les décisions CMS-05d restantes
+(chiffrement, stockage hors machine et mesure du RTO). La sauvegarde/restauration
+MariaDB est maintenant exercée localement, mais l’accès IONOS reste non qualifié
+et la validation du connecteur ne doit pas être généralisée.
 
 ## Vision cible
 

@@ -44,6 +44,9 @@ func TestCreateAndVerifyBackup(t *testing.T) {
 	if result.Manifest.ArtifactCount != 1 || result.Manifest.ArtifactBytes != int64(len(artifactContents)) {
 		t.Fatalf("artifact metadata = count %d bytes %d", result.Manifest.ArtifactCount, result.Manifest.ArtifactBytes)
 	}
+	if result.Manifest.DatabaseDialect != "postgres" {
+		t.Fatalf("database dialect = %q, want postgres", result.Manifest.DatabaseDialect)
+	}
 	verified, err := Verify(result.Directory)
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
@@ -85,7 +88,7 @@ func TestCreateRejectsUnsafeOrMissingConfiguration(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := create(context.Background(), options, func(context.Context, string, string) error {
-				t.Fatal("pg_dump was called for invalid backup options")
+				t.Fatal("database dump command was called for invalid backup options")
 				return nil
 			})
 			if err == nil {
@@ -106,7 +109,7 @@ func TestCreateFailureRemovesPartialBackup(t *testing.T) {
 		if err := os.WriteFile(destination, []byte("partial"), 0o600); err != nil {
 			return err
 		}
-		return errors.New("pg_dump failed")
+		return errors.New("database dump failed")
 	})
 	if err == nil {
 		t.Fatal("Create() unexpectedly succeeded")
@@ -117,6 +120,33 @@ func TestCreateFailureRemovesPartialBackup(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("partial backup staging entries remain: %v", entries)
+	}
+}
+
+func TestRestoreDatabaseRejectsDifferentDialectAndSupportsLegacyManifest(t *testing.T) {
+	root := t.TempDir()
+	result, err := create(context.Background(), Options{
+		DatabaseURL: "postgres://user:pass@localhost/euromni",
+		ArtifactDir: filepath.Join(root, "artifacts"),
+		BackupDir:   filepath.Join(root, "backups"),
+	}, func(_ context.Context, _, destination string) error {
+		return os.WriteFile(destination, []byte("test dump"), 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyManifest := result.Manifest
+	legacyManifest.DatabaseDialect = ""
+	manifestPath := filepath.Join(result.Directory, manifestName)
+	if err := os.Remove(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManifest(manifestPath, legacyManifest); err != nil {
+		t.Fatal(err)
+	}
+	_, err = RestoreDatabase(context.Background(), result.Directory, "mariadb://user:pass@localhost/euromni")
+	if err == nil || !strings.Contains(err.Error(), `backup database dialect "postgres" does not match`) {
+		t.Fatalf("RestoreDatabase() error = %v, want legacy PostgreSQL dialect mismatch", err)
 	}
 }
 
@@ -243,6 +273,57 @@ func TestPGDumpEnvironmentDoesNotExposeDatabaseURL(t *testing.T) {
 	for _, variable := range environment {
 		if strings.HasPrefix(variable, "DATABASE_URL=") {
 			t.Fatal("DATABASE_URL was passed to pg_dump environment")
+		}
+	}
+}
+
+func TestMariaDBClientConfigAndPrivateOptions(t *testing.T) {
+	config, err := mariaDBClientConfig("mariadb://user%22name:p%5C%22ass@db.example:3307/euromni?tls=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.User != `user"name` || config.Passwd != `p\"ass` || config.Addr != "db.example:3307" ||
+		config.DBName != "euromni" || config.TLSConfig != "true" {
+		t.Fatalf("MariaDB client config = %#v", config)
+	}
+	path, cleanup, err := writeMariaDBClientOptions(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Errorf("remove MariaDB client options: %v", err)
+		}
+	}()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("MariaDB client options permissions = %o; want owner-only", info.Mode().Perm())
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`user="user\"name"`,
+		`password="p\\\"ass"`,
+		"ssl=true",
+	} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("MariaDB client options omitted %q: %s", want, content)
+		}
+	}
+}
+
+func TestMariaDBClientConfigRejectsCustomTLSAndPostgreSQL(t *testing.T) {
+	for _, databaseURL := range []string{
+		"mariadb://user:pass@db.example/euromni?tls=custom",
+		"postgres://user:pass@db.example/euromni",
+	} {
+		if _, err := mariaDBClientConfig(databaseURL); err == nil {
+			t.Errorf("mariaDBClientConfig(%q) unexpectedly succeeded", databaseURL)
 		}
 	}
 }

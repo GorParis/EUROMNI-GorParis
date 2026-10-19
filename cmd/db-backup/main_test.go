@@ -35,6 +35,14 @@ func TestRunRestoreRequiresDestination(t *testing.T) {
 	}
 }
 
+func TestRunRejectsMultipleBackupActions(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"-verify", "backup", "-restore-database", "backup"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("run() error = %v, want mutually exclusive actions error", err)
+	}
+}
+
 func TestRunRejectsPositionalArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := run(context.Background(), []string{"unexpected"}, &stdout, &stderr)
