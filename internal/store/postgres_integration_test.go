@@ -290,8 +290,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err := db.SQL.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("read migration ledger: %v", err)
 	}
-	if migrationCount != 12 {
-		t.Fatalf("recorded migrations = %d, want 12", migrationCount)
+	if migrationCount != 13 {
+		t.Fatalf("recorded migrations = %d, want 13", migrationCount)
 	}
 	installedModule, err := db.GetInstalledModule(ctx, seed.ShopID, seed.ModuleID)
 	if err != nil {
@@ -437,6 +437,34 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		len(adminOrder.Items) != 1 || adminOrder.Items[0].SKU != "CABAS-LIN-NAT" {
 		t.Fatalf("read admin order = %+v, error = %v", adminOrder, err)
 	}
+	policyTokenHash := sha256.Sum256([]byte("postgres integration shipping policy cart"))
+	if err := db.CreateCart(ctx, seed.ShopID, policyTokenHash[:]); err != nil {
+		t.Fatalf("create shipping policy cart: %v", err)
+	}
+	if _, err := db.AddCartLine(ctx, seed.ShopID, policyTokenHash[:], seed.VariantID, 2); err != nil {
+		t.Fatalf("add shipping policy cart line: %v", err)
+	}
+	db.SetShippingPricingPolicy(testFreeShippingPolicy{amount: "0.0000"})
+	policyOptions, err := db.ListCartShippingOptions(ctx, seed.ShopID, policyTokenHash[:], "FR")
+	if err != nil || len(policyOptions) != 1 || policyOptions[0].Amount != "0.0000" ||
+		policyOptions[0].PolicySnapshot == nil {
+		t.Fatalf("shipping policy quote = %+v, error = %v", policyOptions, err)
+	}
+	policyOrder, err := db.CheckoutCart(ctx, seed.ShopID, policyTokenHash[:], CheckoutDetails{
+		Email: "shipping-policy@example.com", Name: "Shipping Policy",
+		ShippingCarrierCode: "colissimo", ShippingServiceCode: "legacy",
+		ExpectedShippingTotal: policyOptions[0].Amount, ExpectedShippingQuoteID: policyOptions[0].QuoteID,
+		ShippingAddress: ShippingAddress{Line1: "1 rue Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+	})
+	if err != nil || policyOrder.ShippingTotal != "0.0000" || policyOrder.ShippingPolicySnapshot == nil {
+		t.Fatalf("shipping policy checkout = %+v, error = %v", policyOrder, err)
+	}
+	policyAdminOrder, err := db.GetAdminOrder(ctx, seed.ShopID, policyOrder.ID)
+	if err != nil || policyAdminOrder.ShippingPolicySnapshot == nil ||
+		policyAdminOrder.ShippingPolicySnapshot.ModuleName != "test.shipping.policy" {
+		t.Fatalf("persisted shipping policy snapshot = %+v, error = %v", policyAdminOrder, err)
+	}
+	db.SetShippingPricingPolicy(nil)
 	shippingConfig, err = db.GetShippingConfig(ctx, seed.ShopID)
 	if err != nil {
 		t.Fatalf("read shipping config before tariff change: %v", err)
@@ -493,8 +521,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err := db.SQL.QueryRowContext(ctx, `SELECT quantity FROM inventory_items WHERE variant_id::text = $1`, seed.VariantID).Scan(&remainingStock); err != nil {
 		t.Fatalf("read restocked inventory: %v", err)
 	}
-	if remainingStock != 24 {
-		t.Fatalf("inventory after cancelling order = %d, want 24", remainingStock)
+	if remainingStock != 22 {
+		t.Fatalf("inventory after cancelling order = %d, want 22 after the shipping policy order", remainingStock)
 	}
 
 	paymentCartToken := sha256.Sum256([]byte("payment protected order cart"))

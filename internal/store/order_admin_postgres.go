@@ -61,6 +61,7 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 	var weightGrams sql.NullInt64
 	var pricingSubtotal sql.NullString
 	var rateRule sql.NullString
+	var policySnapshot sql.NullString
 	err := s.SQL.QueryRowContext(ctx, `
 		SELECT o.id::text, o.number, o.status::text, o.currency::text,
 		       o.subtotal::text, o.tax_total::text, o.shipping_total::text, o.grand_total::text,
@@ -70,6 +71,7 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 		       COALESCE(o.shipping_zone_code, ''), COALESCE(o.shipping_zone_name, ''),
 		       o.shipping_rate_mode, o.shipping_weight_grams,
 		       o.shipping_pricing_subtotal::text, o.shipping_rate_rule::text,
+		       o.shipping_policy_snapshot::text,
 		       COALESCE((SELECT shipment.status::text FROM shipments shipment
 		                 WHERE shipment.order_id = o.id ORDER BY shipment.created_at DESC, shipment.id DESC LIMIT 1), ''),
 		       COALESCE((SELECT shipment.tracking FROM shipments shipment
@@ -85,7 +87,7 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 		&order.ShippingCarrierCode, &order.ShippingCarrierName,
 		&order.ShippingServiceCode, &order.ShippingServiceName, &order.ShippingRateVersion,
 		&order.ShippingZoneCode, &order.ShippingZoneName,
-		&order.ShippingRateMode, &weightGrams, &pricingSubtotal, &rateRule,
+		&order.ShippingRateMode, &weightGrams, &pricingSubtotal, &rateRule, &policySnapshot,
 		&order.ShipmentStatus, &order.Tracking,
 		&order.Email, &order.Name, &address, &order.CreatedAt,
 	)
@@ -107,6 +109,13 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 		}
 		if rateRule.Valid {
 			order.ShippingRateRule = json.RawMessage(rateRule.String)
+		}
+		if policySnapshot.Valid && policySnapshot.String != "{}" {
+			var snapshot ShippingPricingPolicySnapshot
+			if err := json.Unmarshal([]byte(policySnapshot.String), &snapshot); err != nil {
+				return nil, err
+			}
+			order.ShippingPolicySnapshot = &snapshot
 		}
 	}
 	rows, err := s.SQL.QueryContext(ctx, `

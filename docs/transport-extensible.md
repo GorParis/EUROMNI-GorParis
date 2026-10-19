@@ -244,6 +244,28 @@ allowlist, délais, quotas, journalisation et traitement d’erreurs. Une répon
 du module ou du prestataire externe est une donnée non fiable. Une mise à jour
 du module ne doit pas modifier le calcul historique d’une commande.
 
+### Pilote Wasm : livraison offerte dès 100
+
+Un premier pilote exécutable est intégré au binaire : `demo.shipping.free-over-100`
+(`1.0.0`). Il applique une livraison gratuite à partir de 100 unités dans la
+devise de la boutique, sans conversion de devise. Il reste désactivé par défaut ;
+l’activation explicite se fait avec `EUROMNI_SHIPPING_WASM_POLICY=free-over-100`.
+Une configuration inconnue ou un store incompatible fait échouer le démarrage.
+
+Le pilote s’applique aux devis calculés avec un panier et au checkout, qui
+recalcule la même règle. Il ne change pas `GET /v1/shipping-options`, qui ne
+dispose pas du sous-total. L’entrée Wasm se limite au sous-total et au tarif de
+base, encodés en unités exactes de 1/10 000. Le guest n’a ni import hôte, ni
+accès aux données, ni effet de bord. Son contrat de calcul est
+`euromni.shipping.v1` (appel `shipping.rate.quote` dans l’enveloppe ABI).
+
+Le résultat Wasm n’est qu’une proposition : l’hôte recalcule le montant
+autorisé et rejette toute divergence. Le devis inclut l’identité, la version,
+le hash SHA-256 et le contrat du module dans son empreinte ; la commande en
+conserve le snapshot. Cette première tranche utilise un module WAT embarqué,
+compilé au démarrage : elle ne définit pas encore l’installation ni la
+distribution générique d’artefacts `shop_modules`.
+
 ## Snapshot et cycle de vie de commande
 
 Au checkout, l’offre sélectionnée est validée une dernière fois : service actif,

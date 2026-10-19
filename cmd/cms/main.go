@@ -9,6 +9,7 @@ import (
 
 	"euromni/internal/api"
 	"euromni/internal/store"
+	"euromni/internal/wasm"
 )
 
 func main() {
@@ -21,6 +22,11 @@ func main() {
 			log.Printf("close database: %v", err)
 		}
 	}()
+	closePolicy, err := configureShippingPricingPolicy(reader)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer closePolicy()
 
 	addr := listenAddress()
 	mux := newHandler(reader)
@@ -28,6 +34,26 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func configureShippingPricingPolicy(reader store.ProductReader) (func(), error) {
+	name := strings.TrimSpace(os.Getenv("EUROMNI_SHIPPING_WASM_POLICY"))
+	if name == "" {
+		return func() {}, nil
+	}
+	if name != "free-over-100" {
+		return nil, fmt.Errorf("unsupported EUROMNI_SHIPPING_WASM_POLICY %q", name)
+	}
+	setter, ok := reader.(store.ShippingPricingPolicySetter)
+	if !ok {
+		return nil, fmt.Errorf("configured store does not support shipping pricing policies")
+	}
+	policy, err := wasm.NewBundledFreeShippingPolicy()
+	if err != nil {
+		return nil, err
+	}
+	setter.SetShippingPricingPolicy(policy)
+	return policy.Close, nil
 }
 
 func configuredProductReader() (store.ProductReader, func() error, error) {

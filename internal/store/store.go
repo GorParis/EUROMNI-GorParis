@@ -16,6 +16,7 @@ type Store struct {
 	DSN     string
 	SQL     *sql.DB
 	Dialect dbdialect.Dialect
+	shippingPricingPolicyHolder
 }
 
 func New(dsn string) *Store {

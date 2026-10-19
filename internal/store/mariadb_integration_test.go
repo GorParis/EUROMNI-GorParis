@@ -220,6 +220,10 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	if _, err := store.AddCartLine(ctx, seed.ShopID, tokenHash[:], product.Variants[0].ID, 1); err != nil {
 		t.Fatalf("add MariaDB cart line: %v", err)
 	}
+	store.SetShippingPricingPolicy(testFreeShippingPolicy{amount: "6.9000"})
+	t.Cleanup(func() {
+		store.SetShippingPricingPolicy(nil)
+	})
 	order, err := store.CheckoutCart(ctx, seed.ShopID, tokenHash[:], CheckoutDetails{
 		Email:               email,
 		Name:                "MariaDB Integration",
@@ -236,7 +240,9 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read MariaDB admin order: %v", err)
 	}
-	if adminOrder.Email != email || adminOrder.ShippingCarrierCode != "colissimo" {
+	if adminOrder.Email != email || adminOrder.ShippingCarrierCode != "colissimo" ||
+		adminOrder.ShippingPolicySnapshot == nil ||
+		adminOrder.ShippingPolicySnapshot.ModuleName != "test.shipping.policy" {
 		t.Fatalf("unexpected MariaDB order snapshot: %#v", adminOrder)
 	}
 	if err := store.ConfirmManualOrderPayment(ctx, seed.ShopID, order.ID, "MDB-TRANSFER"); err != nil {

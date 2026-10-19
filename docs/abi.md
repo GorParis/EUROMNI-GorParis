@@ -72,6 +72,26 @@ l’enveloppe, l’appel allowlisté, la capability et le contexte boutique avan
 toute opération. Aucun autre import n’est lié ; une dépendance WASI ou système
 fait échouer l’instanciation.
 
+## Contrat du pilote Wasm de tarification transport
+
+Le pilote `demo.shipping.free-over-100` est un module embarqué distinct du
+chargeur générique `shop_modules`. Il est compilé depuis
+[`internal/wasm/free_shipping_threshold.wat`](../internal/wasm/free_shipping_threshold.wat)
+et exécuté sans import hôte, via son export `run`. Son entrée JSON contient
+`subtotal_units` et `base_units`, deux entiers non négatifs exprimés en unités
+de 1/10 000. La règle renvoie le tarif de base sous 100 unités de la devise,
+sinon zéro. Le contrat métier est `euromni.shipping.v1` ; l’enveloppe de
+l’appel utilise l’ABI `euromni.abi.v1` et le nom `shipping.rate.quote`.
+
+L’activation est opt-in avec `EUROMNI_SHIPPING_WASM_POLICY=free-over-100`.
+L’hôte transmet uniquement les deux montants, vérifie l’identité et le hash du
+module, puis recalcule le résultat autorisé avant d’accepter le devis. Le
+snapshot de module est incorporé au devis et conservé sur la commande.
+L’activation n’affecte que les devis de panier et les commandes, pas la liste
+de tarifs sans panier. Le module ne lit aucune donnée et n’autorise aucune
+opération hôte ; ce contrat est un pilote ciblé, pas une extension de
+l’allowlist générique décrite ci-dessous.
+
 ## Chargement et autorisation
 
 `Runtime.LoadInstalled` ne charge qu’une association `shop_modules` au statut

@@ -54,24 +54,25 @@ type ShippingAddress struct {
 }
 
 type OrderView struct {
-	ID                      string          `json:"id"`
-	Number                  string          `json:"number"`
-	Status                  string          `json:"status"`
-	Currency                string          `json:"currency"`
-	Subtotal                string          `json:"subtotal"`
-	TaxTotal                string          `json:"tax_total"`
-	ShippingTotal           string          `json:"shipping_total"`
-	ShippingCarrierCode     string          `json:"shipping_carrier_code"`
-	ShippingCarrierName     string          `json:"shipping_carrier_name"`
-	ShippingServiceCode     string          `json:"shipping_service_code,omitempty"`
-	ShippingServiceName     string          `json:"shipping_service_name,omitempty"`
-	ShippingRateVersion     string          `json:"shipping_rate_version,omitempty"`
-	ShippingRateMode        string          `json:"shipping_rate_mode"`
-	ShippingWeightGrams     *int64          `json:"shipping_weight_grams,omitempty"`
-	ShippingPricingSubtotal *string         `json:"shipping_pricing_subtotal,omitempty"`
-	ShippingRateRule        json.RawMessage `json:"shipping_rate_rule,omitempty"`
-	GrandTotal              string          `json:"grand_total"`
-	Items                   []OrderLineView `json:"items"`
+	ID                      string                         `json:"id"`
+	Number                  string                         `json:"number"`
+	Status                  string                         `json:"status"`
+	Currency                string                         `json:"currency"`
+	Subtotal                string                         `json:"subtotal"`
+	TaxTotal                string                         `json:"tax_total"`
+	ShippingTotal           string                         `json:"shipping_total"`
+	ShippingCarrierCode     string                         `json:"shipping_carrier_code"`
+	ShippingCarrierName     string                         `json:"shipping_carrier_name"`
+	ShippingServiceCode     string                         `json:"shipping_service_code,omitempty"`
+	ShippingServiceName     string                         `json:"shipping_service_name,omitempty"`
+	ShippingRateVersion     string                         `json:"shipping_rate_version,omitempty"`
+	ShippingRateMode        string                         `json:"shipping_rate_mode"`
+	ShippingWeightGrams     *int64                         `json:"shipping_weight_grams,omitempty"`
+	ShippingPricingSubtotal *string                        `json:"shipping_pricing_subtotal,omitempty"`
+	ShippingRateRule        json.RawMessage                `json:"shipping_rate_rule,omitempty"`
+	ShippingPolicySnapshot  *ShippingPricingPolicySnapshot `json:"shipping_policy_snapshot,omitempty"`
+	GrandTotal              string                         `json:"grand_total"`
+	Items                   []OrderLineView                `json:"items"`
 }
 
 type OrderLineView struct {
@@ -84,32 +85,33 @@ type OrderLineView struct {
 }
 
 type AdminOrderView struct {
-	ID                      string          `json:"id"`
-	Number                  string          `json:"number"`
-	Status                  string          `json:"status"`
-	Currency                string          `json:"currency"`
-	Subtotal                string          `json:"subtotal"`
-	TaxTotal                string          `json:"tax_total"`
-	ShippingTotal           string          `json:"shipping_total"`
-	ShippingCarrierCode     string          `json:"shipping_carrier_code"`
-	ShippingCarrierName     string          `json:"shipping_carrier_name"`
-	ShippingServiceCode     string          `json:"shipping_service_code,omitempty"`
-	ShippingServiceName     string          `json:"shipping_service_name,omitempty"`
-	ShippingRateVersion     string          `json:"shipping_rate_version,omitempty"`
-	ShippingZoneCode        string          `json:"shipping_zone_code"`
-	ShippingZoneName        string          `json:"shipping_zone_name"`
-	ShippingRateMode        string          `json:"shipping_rate_mode"`
-	ShippingWeightGrams     *int64          `json:"shipping_weight_grams,omitempty"`
-	ShippingPricingSubtotal *string         `json:"shipping_pricing_subtotal,omitempty"`
-	ShippingRateRule        json.RawMessage `json:"shipping_rate_rule,omitempty"`
-	ShipmentStatus          string          `json:"shipment_status"`
-	Tracking                string          `json:"tracking"`
-	GrandTotal              string          `json:"grand_total"`
-	Email                   string          `json:"email"`
-	Name                    string          `json:"name"`
-	ShippingAddress         ShippingAddress `json:"shipping_address"`
-	CreatedAt               time.Time       `json:"created_at"`
-	Items                   []OrderLineView `json:"items"`
+	ID                      string                         `json:"id"`
+	Number                  string                         `json:"number"`
+	Status                  string                         `json:"status"`
+	Currency                string                         `json:"currency"`
+	Subtotal                string                         `json:"subtotal"`
+	TaxTotal                string                         `json:"tax_total"`
+	ShippingTotal           string                         `json:"shipping_total"`
+	ShippingCarrierCode     string                         `json:"shipping_carrier_code"`
+	ShippingCarrierName     string                         `json:"shipping_carrier_name"`
+	ShippingServiceCode     string                         `json:"shipping_service_code,omitempty"`
+	ShippingServiceName     string                         `json:"shipping_service_name,omitempty"`
+	ShippingRateVersion     string                         `json:"shipping_rate_version,omitempty"`
+	ShippingZoneCode        string                         `json:"shipping_zone_code"`
+	ShippingZoneName        string                         `json:"shipping_zone_name"`
+	ShippingRateMode        string                         `json:"shipping_rate_mode"`
+	ShippingWeightGrams     *int64                         `json:"shipping_weight_grams,omitempty"`
+	ShippingPricingSubtotal *string                        `json:"shipping_pricing_subtotal,omitempty"`
+	ShippingRateRule        json.RawMessage                `json:"shipping_rate_rule,omitempty"`
+	ShippingPolicySnapshot  *ShippingPricingPolicySnapshot `json:"shipping_policy_snapshot,omitempty"`
+	ShipmentStatus          string                         `json:"shipment_status"`
+	Tracking                string                         `json:"tracking"`
+	GrandTotal              string                         `json:"grand_total"`
+	Email                   string                         `json:"email"`
+	Name                    string                         `json:"name"`
+	ShippingAddress         ShippingAddress                `json:"shipping_address"`
+	CreatedAt               time.Time                      `json:"created_at"`
+	Items                   []OrderLineView                `json:"items"`
 }
 
 type checkoutLine struct {
@@ -313,6 +315,17 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	} else if rateMode != "fixed" {
 		return nil, fmt.Errorf("unsupported shipping rate mode %q", rateMode)
 	}
+	var snapshotPolicy *ShippingPricingPolicySnapshot
+	if policy := s.shippingPricingPolicyHolder.get(); policy != nil {
+		pricingSubtotal := subtotal.FloatString(4)
+		shippingOption.PricingSubtotal = pricingSubtotal
+		if err := applyShippingPricingPolicy(ctx, policy, &shippingOption, subtotal); err != nil {
+			return nil, err
+		}
+		shippingAmount = shippingOption.Amount
+		snapshotPolicy = shippingOption.PolicySnapshot
+		snapshotSubtotal = &pricingSubtotal
+	}
 	shippingTotal, ok := new(big.Rat).SetString(shippingAmount)
 	if !ok {
 		return nil, errors.New("invalid shipping rate")
@@ -398,6 +411,10 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	if err != nil {
 		return nil, err
 	}
+	policyJSON, err := marshalShippingPolicySnapshot(snapshotPolicy)
+	if err != nil {
+		return nil, err
+	}
 	totalWithShipping := new(big.Rat).Add(subtotal, shippingTotal)
 	total := totalWithShipping.FloatString(4)
 	shippingTotalText := shippingTotal.FloatString(4)
@@ -409,12 +426,14 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 			shipping_address, shipping_carrier_code, shipping_carrier_name,
 			shipping_service_code, shipping_service_name, shipping_zone_code,
 			shipping_zone_name, shipping_rate_mode, shipping_rate_version,
-			shipping_weight_grams, shipping_pricing_subtotal, shipping_rate_rule, placed_at
+			shipping_weight_grams, shipping_pricing_subtotal, shipping_rate_rule,
+			shipping_policy_snapshot, placed_at
 		)
-		VALUES ($1, $2, $3, $4, 'pending', $5, $6, 0, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, now())
+		VALUES ($1, $2, $3, $4, 'pending', $5, $6, 0, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, now())
 	`, orderID, shopID, customerID, orderNumber, currency, subtotal.FloatString(4), shippingTotalText,
 		total, string(addressJSON), details.ShippingCarrierCode, carrierName, serviceCode, serviceName,
-		zoneCode, zoneName, rateMode, rateVersion, snapshotWeight, snapshotSubtotal, nullableJSON(snapshotRule))
+		zoneCode, zoneName, rateMode, rateVersion, snapshotWeight, snapshotSubtotal, nullableJSON(snapshotRule),
+		policyJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +464,7 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 		ShippingCarrierCode: details.ShippingCarrierCode, ShippingCarrierName: carrierName,
 		ShippingServiceCode: serviceCode, ShippingServiceName: serviceName, ShippingRateVersion: rateVersion,
 		ShippingRateMode: rateMode, ShippingWeightGrams: snapshotWeight,
-		ShippingPricingSubtotal: snapshotSubtotal, ShippingRateRule: snapshotRule,
+		ShippingPricingSubtotal: snapshotSubtotal, ShippingRateRule: snapshotRule, ShippingPolicySnapshot: snapshotPolicy,
 		GrandTotal: total,
 		Items:      orderLines(lines),
 	}, nil
@@ -456,6 +475,17 @@ func nullableJSON(raw json.RawMessage) any {
 		return nil
 	}
 	return string(raw)
+}
+
+func marshalShippingPolicySnapshot(snapshot *ShippingPricingPolicySnapshot) (string, error) {
+	if snapshot == nil {
+		return "{}", nil
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func orderLines(lines []checkoutLine) []OrderLineView {
@@ -502,15 +532,6 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 		ServiceCode: "legacy", ServiceName: "Offre historique", RateVersion: legacyShippingRateVersion,
 		ZoneCode: "france-ue", ZoneName: "France et Union européenne",
 		Amount: "6.9000", Currency: cart.currency, RateMode: "fixed",
-	}
-	if details.ExpectedShippingQuoteID != "" {
-		quoteID, err := shippingOptionQuoteID(shippingOption)
-		if err != nil {
-			return nil, err
-		}
-		if quoteID != details.ExpectedShippingQuoteID {
-			return nil, ErrShippingQuoteChanged
-		}
 	}
 	lineKeys := make([]string, 0, len(cart.lines))
 	for lineKey := range cart.lines {
@@ -571,7 +592,34 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 			return nil, ErrOutOfStock
 		}
 	}
-	shippingTotal := "6.9000"
+	var policySnapshot *ShippingPricingPolicySnapshot
+	var pricingSubtotal *string
+	if policy := m.shippingPricingPolicyHolder.get(); policy != nil {
+		subtotalText := subtotal.FloatString(4)
+		shippingOption.PricingSubtotal = subtotalText
+		if err := applyShippingPricingPolicy(ctx, policy, &shippingOption, subtotal); err != nil {
+			return nil, err
+		}
+		policySnapshot = shippingOption.PolicySnapshot
+		pricingSubtotal = &subtotalText
+	}
+	if details.ExpectedShippingTotal != "" {
+		expected, ok := new(big.Rat).SetString(details.ExpectedShippingTotal)
+		actual, valid := new(big.Rat).SetString(shippingOption.Amount)
+		if !ok || !valid || expected.Cmp(actual) != 0 {
+			return nil, ErrShippingQuoteChanged
+		}
+	}
+	if details.ExpectedShippingQuoteID != "" {
+		quoteID, err := shippingOptionQuoteID(shippingOption)
+		if err != nil {
+			return nil, err
+		}
+		if quoteID != details.ExpectedShippingQuoteID {
+			return nil, ErrShippingQuoteChanged
+		}
+	}
+	shippingTotal := shippingOption.Amount
 	shippingAmount, _ := new(big.Rat).SetString(shippingTotal)
 	total := new(big.Rat).Add(subtotal, shippingAmount).FloatString(4)
 	for variantID, variant := range variants {
@@ -585,8 +633,9 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 		Subtotal: subtotal.FloatString(4), TaxTotal: "0.0000", ShippingTotal: shippingTotal,
 		ShippingCarrierCode: "colissimo", ShippingCarrierName: "Colissimo (tarif de démonstration)",
 		ShippingServiceCode: "legacy", ShippingServiceName: "Offre historique",
-		ShippingRateVersion: legacyShippingRateVersion,
-		GrandTotal:          total,
-		Items:               orderLines(lines),
+		ShippingRateVersion:     legacyShippingRateVersion,
+		ShippingPricingSubtotal: pricingSubtotal, ShippingPolicySnapshot: policySnapshot,
+		GrandTotal: total,
+		Items:      orderLines(lines),
 	}, nil
 }

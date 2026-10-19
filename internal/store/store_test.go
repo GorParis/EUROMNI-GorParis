@@ -184,6 +184,61 @@ func TestMemoryCatalogReferencesAndPersonalizationSnapshots(t *testing.T) {
 	}
 }
 
+func TestMemoryShippingWasmPolicyRequotesAndSnapshotsCheckout(t *testing.T) {
+	ctx := context.Background()
+	memory := NewMemory()
+	memory.SetShippingPricingPolicy(testFreeShippingPolicy{amount: "0.0000"})
+	tokenHash := sha256.Sum256([]byte("shipping policy cart"))
+	if err := memory.CreateCart(ctx, seed.ShopID, tokenHash[:]); err != nil {
+		t.Fatalf("create cart: %v", err)
+	}
+	if _, err := memory.AddCartLine(ctx, seed.ShopID, tokenHash[:], seed.VariantID, 2); err != nil {
+		t.Fatalf("add cart line: %v", err)
+	}
+	options, err := memory.ListCartShippingOptions(ctx, seed.ShopID, tokenHash[:], "FR")
+	if err != nil || len(options) != 1 {
+		t.Fatalf("shipping options = %+v, error = %v", options, err)
+	}
+	if options[0].Amount != "0.0000" || options[0].PricingSubtotal != "178.0000" ||
+		options[0].PolicySnapshot == nil || options[0].PolicySnapshot.ModuleName != "test.shipping.policy" {
+		t.Fatalf("shipping policy option = %+v", options[0])
+	}
+	order, err := memory.CheckoutCart(ctx, seed.ShopID, tokenHash[:], CheckoutDetails{
+		Email: "shipping-policy@example.com", Name: "Shipping Policy",
+		ShippingCarrierCode: "colissimo", ShippingServiceCode: "legacy",
+		ExpectedShippingTotal: options[0].Amount, ExpectedShippingQuoteID: options[0].QuoteID,
+		ShippingAddress: ShippingAddress{Line1: "1 rue Test", City: "Paris", PostalCode: "75001", Country: "FR"},
+	})
+	if err != nil {
+		t.Fatalf("checkout cart: %v", err)
+	}
+	if order.ShippingTotal != "0.0000" || order.GrandTotal != "178.0000" ||
+		order.ShippingPricingSubtotal == nil || *order.ShippingPricingSubtotal != "178.0000" ||
+		order.ShippingPolicySnapshot == nil || order.ShippingPolicySnapshot.ModuleSHA256 != strings.Repeat("a", 64) {
+		t.Fatalf("shipping policy order snapshot = %+v", order)
+	}
+}
+
+func TestShippingPricingPolicyHostRejectsUnauthorizedProposal(t *testing.T) {
+	_, _, err := ApplyShippingPricingPolicy(
+		context.Background(), testFreeShippingPolicy{amount: "6.9000"}, "6.9000", "178.0000",
+	)
+	if !errors.Is(err, ErrShippingPolicyRejected) {
+		t.Fatalf("unauthorized module amount error = %v, want %v", err, ErrShippingPolicyRejected)
+	}
+}
+
+type testFreeShippingPolicy struct {
+	amount string
+}
+
+func (p testFreeShippingPolicy) Evaluate(context.Context, string, string) (string, ShippingPricingPolicySnapshot, error) {
+	return p.amount, ShippingPricingPolicySnapshot{
+		ModuleName: "test.shipping.policy", ModuleVersion: "1.0.0",
+		ModuleSHA256: strings.Repeat("a", 64), ContractVersion: ShippingPolicyContractVersion,
+	}, nil
+}
+
 func TestMemoryCheckoutConsumesStockAndEmptiesCart(t *testing.T) {
 	ctx := context.Background()
 	memory := NewMemory()

@@ -37,11 +37,12 @@ func TestMariaDBMigrationSourceStartsWithInstalledSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ordered) != 6 || ordered[0].name != "0001_mariadb_schema.sql" ||
+	if len(ordered) != 7 || ordered[0].name != "0001_mariadb_schema.sql" ||
 		ordered[1].name != "0002_mariadb_demo_seed.sql" || ordered[2].name != "0003_shipping_weight_value_rates.sql" ||
 		ordered[3].name != "0004_shipping_rate_mode_check.sql" ||
 		ordered[4].name != "0005_shipping_services_rate_versions.sql" ||
-		ordered[5].name != "0006_catalog_references_personalization.sql" {
+		ordered[5].name != "0006_catalog_references_personalization.sql" ||
+		ordered[6].name != "0007_shipping_policy_snapshot.sql" {
 		t.Fatalf("unexpected MariaDB migration order: %#v", ordered)
 	}
 	rateModeMigration, err := schemafiles.MariaDBFiles.ReadFile("mariadb/0004_shipping_rate_mode_check.sql")
@@ -60,5 +61,12 @@ func TestMariaDBMigrationSourceStartsWithInstalledSchema(t *testing.T) {
 		!strings.Contains(string(migration), "CREATE TABLE shipping_rate_versions") ||
 		!strings.Contains(string(migration), "CREATE TABLE shipping_rate_version_rules") {
 		t.Fatal("MariaDB shipping migration does not add services and immutable rate versions")
+	}
+	policySnapshotMigration, err := schemafiles.MariaDBFiles.ReadFile("mariadb/0007_shipping_policy_snapshot.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(policySnapshotMigration), "shipping_policy_snapshot") {
+		t.Fatal("MariaDB shipping policy migration does not add the order snapshot")
 	}
 }

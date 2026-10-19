@@ -24,6 +24,7 @@ type Memory struct {
 	productCategories map[string][]string
 	mu                sync.RWMutex
 	carts             map[string]*memoryCart
+	shippingPricingPolicyHolder
 }
 
 type memoryCart struct {

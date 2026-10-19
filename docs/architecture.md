@@ -96,6 +96,12 @@ règle métier via une capability typée, sans SQL, réseau ni secrets directs. 
 modèle, les phases de migration et le contrat de devis sont décrits dans
 [`docs/transport-extensible.md`](transport-extensible.md).
 
+Un premier pilote opt-in applique une règle Wasm embarquée au devis d’un panier
+et la revalide au checkout. L’hôte garde l’autorité sur le tarif proposé et
+enregistre l’identité du module dans le snapshot de commande. Ce pilote ciblé
+ne constitue pas encore le stockage ni l’installation générique des artefacts
+de modules.
+
 ## Marchés, locales et commerce transfrontalier
 
 Le modèle de marchés UE distingue pays, langue, devise, taxes, transport et

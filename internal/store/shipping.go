@@ -103,20 +103,21 @@ type ShippingRateVersionTarget struct {
 }
 
 type ShippingOption struct {
-	CarrierCode     string            `json:"carrier_code"`
-	CarrierName     string            `json:"carrier_name"`
-	ServiceCode     string            `json:"service_code"`
-	ServiceName     string            `json:"service_name"`
-	ZoneCode        string            `json:"zone_code"`
-	ZoneName        string            `json:"zone_name"`
-	Amount          string            `json:"amount"`
-	Currency        string            `json:"currency"`
-	RateVersion     string            `json:"rate_version"`
-	RateMode        string            `json:"rate_mode,omitempty"`
-	WeightGrams     *int64            `json:"weight_grams,omitempty"`
-	PricingSubtotal string            `json:"pricing_subtotal,omitempty"`
-	RateRule        *ShippingRateRule `json:"rate_rule,omitempty"`
-	QuoteID         string            `json:"quote_id,omitempty"`
+	CarrierCode     string                         `json:"carrier_code"`
+	CarrierName     string                         `json:"carrier_name"`
+	ServiceCode     string                         `json:"service_code"`
+	ServiceName     string                         `json:"service_name"`
+	ZoneCode        string                         `json:"zone_code"`
+	ZoneName        string                         `json:"zone_name"`
+	Amount          string                         `json:"amount"`
+	Currency        string                         `json:"currency"`
+	RateVersion     string                         `json:"rate_version"`
+	RateMode        string                         `json:"rate_mode,omitempty"`
+	WeightGrams     *int64                         `json:"weight_grams,omitempty"`
+	PricingSubtotal string                         `json:"pricing_subtotal,omitempty"`
+	RateRule        *ShippingRateRule              `json:"rate_rule,omitempty"`
+	PolicySnapshot  *ShippingPricingPolicySnapshot `json:"policy_snapshot,omitempty"`
+	QuoteID         string                         `json:"quote_id,omitempty"`
 }
 
 const legacyShippingRateVersion = "00000000-0000-4000-8000-000000000001"
@@ -354,6 +355,7 @@ func (s *Store) ListCartShippingOptions(ctx context.Context, shopID string, toke
 	}
 
 	options := make([]ShippingOption, 0, len(candidates))
+	policy := s.shippingPricingPolicyHolder.get()
 	for _, entry := range candidates {
 		option := ShippingOption{
 			CarrierCode: entry.carrierCode, CarrierName: entry.carrierName,
@@ -383,6 +385,12 @@ func (s *Store) ListCartShippingOptions(ctx context.Context, shopID string, toke
 			option.RateRule = rule
 		default:
 			return nil, fmt.Errorf("unsupported shipping rate mode %q", entry.mode)
+		}
+		if policy != nil {
+			option.PricingSubtotal = subtotal.FloatString(4)
+			if err := applyShippingPricingPolicy(ctx, policy, &option, subtotal); err != nil {
+				return nil, err
+			}
 		}
 		option.QuoteID, err = shippingOptionQuoteID(option)
 		if err != nil {
@@ -507,6 +515,29 @@ func (m *Memory) ListCartShippingOptions(ctx context.Context, shopID string, tok
 		Currency:    cart.currency,
 		RateVersion: legacyShippingRateVersion,
 		RateMode:    "fixed",
+	}
+	var subtotal big.Rat
+	for _, line := range cart.lines {
+		_, variant := m.findVariant(shopID, line.variantID)
+		if variant == nil {
+			return nil, ErrNotFound
+		}
+		price, ok := priceForCurrency(variant, cart.currency)
+		if !ok {
+			return nil, ErrNotFound
+		}
+		unitPrice, ok := new(big.Rat).SetString(price.Amount)
+		if !ok {
+			return nil, errors.New("invalid product price")
+		}
+		subtotal.Add(&subtotal, new(big.Rat).Mul(unitPrice, big.NewRat(int64(line.quantity), 1)))
+	}
+	policy := m.shippingPricingPolicyHolder.get()
+	if policy != nil {
+		option.PricingSubtotal = subtotal.FloatString(4)
+		if err := applyShippingPricingPolicy(ctx, policy, &option, &subtotal); err != nil {
+			return nil, err
+		}
 	}
 	quoteID, err := shippingOptionQuoteID(option)
 	if err != nil {
