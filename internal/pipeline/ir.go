@@ -16,7 +16,7 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v36"
 )
 
-const IRVersion = "euromni.ir.v2"
+const IRVersion = "euromni.ir.v3"
 
 const (
 	irMemoryPages    = 17
@@ -147,22 +147,45 @@ func LowerPHPAnalysisToIR(module string, analysis *PHPAnalysis, provenance Sourc
 	if analysis == nil {
 		return ModuleIR{}, errors.New("PHP analysis is required")
 	}
-	if analysis.Platform != "woocommerce" || len(analysis.Hooks) != 1 || analysis.Hooks[0] != "woocommerce_product_query" {
-		return ModuleIR{}, errors.New("no IR lowering rule for PHP analysis")
-	}
 	if provenance.SourceSHA256 != analysis.SourceSHA256 {
 		return ModuleIR{}, errors.New("IR provenance hash does not match analyzed PHP source")
+	}
+	var trigger IRTrigger
+	var operation IROperation
+	switch {
+	case analysis.Platform == "woocommerce" &&
+		len(analysis.Hooks) == 1 &&
+		analysis.Hooks[0] == "woocommerce_product_query":
+		trigger = IRTrigger{Kind: "hook", Name: analysis.Hooks[0]}
+		operation = IROperation{Call: "catalog.product.list", Input: map[string]IRValue{}}
+	case analysis.Platform == "prestashop" &&
+		module == "ps_newproducts" &&
+		len(analysis.Hooks) == 1 &&
+		analysis.Hooks[0] == "displayHome" &&
+		hasPHPHookDetail(analysis.HookDetails, PHPHook{Name: "displayHome", Kind: "display", Handler: "renderWidget"}) &&
+		hasPHPFeature(analysis.Features, "prestashop.catalog.new_products"):
+		trigger = IRTrigger{
+			Kind:   "hook",
+			Name:   "displayHome",
+			Fields: map[string]string{"days": "integer", "limit": "integer"},
+		}
+		operation = IROperation{
+			Call: "catalog.product.newest",
+			Input: map[string]IRValue{
+				"days":  {TriggerField: "days"},
+				"limit": {TriggerField: "limit"},
+			},
+		}
+	default:
+		return ModuleIR{}, errors.New("no IR lowering rule for PHP analysis")
 	}
 	ir := ModuleIR{
 		Version:    IRVersion,
 		Platform:   analysis.Platform,
 		Module:     module,
 		Provenance: provenance,
-		Triggers:   []IRTrigger{{Kind: "hook", Name: analysis.Hooks[0]}},
-		Operations: []IROperation{{
-			Call:  "catalog.product.list",
-			Input: map[string]IRValue{},
-		}},
+		Triggers:   []IRTrigger{trigger},
+		Operations: []IROperation{operation},
 	}
 	if _, err := ValidateIR(ir); err != nil {
 		return ModuleIR{}, err
@@ -192,7 +215,7 @@ func ValidateIR(ir ModuleIR) (*ValidatedIR, error) {
 		return nil, errors.New("IR trigger kind and name are required")
 	}
 	for field, fieldType := range ir.Triggers[0].Fields {
-		if !validIRFieldName(field) || (fieldType != "string" && fieldType != "uuid") {
+		if !validIRFieldName(field) || (fieldType != "string" && fieldType != "uuid" && fieldType != "integer") {
 			return nil, fmt.Errorf("invalid IR trigger field %q type %q", field, fieldType)
 		}
 	}
@@ -249,12 +272,24 @@ func operationInputSchema(call string) (map[string]string, bool) {
 		return map[string]string{}, true
 	case "catalog.product.get":
 		return map[string]string{"product_id": "uuid"}, true
+	case "catalog.product.newest":
+		return map[string]string{"days": "integer", "limit": "integer"}, true
 	default:
 		return nil, false
 	}
 }
 
 func validateIRLiteral(literal json.RawMessage, fieldType string) error {
+	if fieldType == "integer" {
+		var value int
+		if err := json.Unmarshal(literal, &value); err != nil {
+			return err
+		}
+		if value < 0 {
+			return errors.New("integer IR values must be non-negative")
+		}
+		return nil
+	}
 	var value string
 	if err := json.Unmarshal(literal, &value); err != nil {
 		return err

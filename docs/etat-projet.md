@@ -2,18 +2,13 @@
 
 ## Reprise CMS sur la machine locale — 20 octobre 2026
 
-Le commit `cf66465` (`Fix admin order action forms`) est poussé sur
-`origin/main`. Il remplace les boîtes `prompt()` non prises en charge par le
-navigateur intégré par des formulaires admin intégrés pour confirmer un
-paiement reçu et une expédition. Le message de succès est conservé après le
-rafraîchissement de la liste.
-
-Un correctif complémentaire est actuellement local et non commité :
-
-- `frontend/admin/admin.js` affiche aussi l’état d’expédition dans la ligne de
-  commande et ne propose plus de déclarer une seconde fois une commande déjà
-  expédiée, livrée ou retournée ;
-- `frontend/assets_test.go` couvre cette règle.
+Les commits `cf66465` (`Fix admin order action forms`) et `40b4151`
+(`Prevent duplicate admin shipment action`) sont sur `origin/main`. L’admin
+utilise des formulaires intégrés pour confirmer un paiement reçu ou une
+expédition, conserve le message de succès après rechargement, affiche l’état
+d’expédition dans les commandes et masque une seconde action d’expédition pour
+une commande déjà expédiée, livrée ou retournée. Le test frontend couvre cette
+règle.
 
 Le cas observé était la commande seedée `AD-1001` : elle était déjà associée à
 une expédition avec suivi, mais son statut de commande était encore `paid`.
@@ -23,15 +18,16 @@ titre la transition. Après rechargement, l’admin affiche maintenant
 commande. Une autre commande payée sans expédition conserve le bouton. Aucune
 action n’a été soumise sur ces commandes durant le diagnostic.
 
-Validations du correctif local : `go test ./frontend`,
+Validations historiques du correctif : `go test ./frontend`,
 `node --check frontend/admin/admin.js` et `git diff --check` passent. Le
-conteneur CMS de test a été redémarré pour charger les assets et l’admin a été
-rechargé pour vérifier l’affichage.
+20 octobre, la stack locale a été relancée sans recréer son volume ; `/health`,
+`/admin/`, `/storefront/` et l’API publique du catalogue répondent. La page
+admin authentifiée et les commandes persistantes n’ont pas été modifiées.
 
 État de l’essai manuel local :
 
 - stack Podman Compose `euromni-cms-test` en cours, CMS à
-  `http://127.0.0.1:35385` ;
+  `http://127.0.0.1:35385` (health check confirmé le 20 octobre) ;
 - pages admin et vitrine ouvertes dans le navigateur partagé ;
 - base de test persistante dans le volume Podman de cette stack ;
 - transporteur Chronopost activé pour la configuration locale, avec le tarif
@@ -46,21 +42,11 @@ Ne jamais ajouter ces deux fichiers locaux, `.env` ou `.vscode/settings.json`
 au commit. `.vscode/settings.json` est déjà présent dans l’index comme
 changement préexistant de l’utilisateur ; ne pas le désindexer ni le modifier.
 
-Avant reprise des pushes, le push SSH direct a échoué faute de signature
-disponible (`agent refused operation` / `Permission denied (publickey)`).
-GitKraken a ensuite réussi à pousser `cf66465`. Le prochain développeur doit
-configurer sa propre clé SSH GitHub (ne jamais réutiliser ni demander la clé
-privée d’une autre personne) :
-
-1. Vérifier qu’un fichier de destination n’existe pas déjà, puis créer une clé
-   dédiée sans écraser une clé existante :
-   `ssh-keygen -t ed25519 -C "<e-mail GitHub>" -f ~/.ssh/id_ed25519_euromni`.
-2. Ajouter la clé publique `~/.ssh/id_ed25519_euromni.pub` au compte GitHub
-   ayant accès à `GorParis/EUROMNI-GorParis` ; ne jamais copier, afficher ou
-   transmettre le fichier privé sans suffixe `.pub`.
-3. Charger la clé avec `ssh-add ~/.ssh/id_ed25519_euromni`, puis vérifier
-   l’accès par `ssh -T git@github.com`.
-4. Une fois l’accès confirmé, pousser avec `git push origin main`.
+Le push SSH avait initialement échoué faute de signature disponible.
+Le 20 octobre, Axel a configuré une clé dédiée sur le dépôt et l’accès a été
+vérifié : `ssh -T git@github.com` authentifie `GorParis` et
+`git push --dry-run origin main` réussit. Aucun push réel n’a été effectué
+durant cette reprise.
 
 Vérifier `git status` avant tout commit : ne sélectionner que les fichiers du
 correctif et de la documentation, jamais les changements locaux ci-dessus.
@@ -109,15 +95,19 @@ service financier réel.
 
 Le prestataire de paiement réel est reporté jusqu’à ce que le CMS fonctionne
 dans le parcours visé et que plusieurs imports hors paiement aient été éprouvés.
-Le périmètre exact de ces imports (données, sources/formats et résultats
-attendus) reste à cadrer avant leur implémentation ou leur campagne de tests.
+Le premier pilote et son niveau de preuve sont maintenant choisis :
+PrestaShop `ps_newproducts`, avec lowering, génération/exécution Wasm et
+publication dans une base PostgreSQL d’intégration jetable. L’import complet
+et la publication dans la base persistante de la stack CMS restent à cadrer.
 L’ordre de reprise est donc :
 
 1. vérifier et stabiliser le fonctionnement du CMS sur la distribution locale
    ou autonome retenue — vérification de reprise effectuée le 19 octobre 2026 ;
-2. éprouver les fixtures et pilotes de modules non financiers — premières
-   analyses statiques multi-plateformes et le pilote catalogue WooCommerce
-   passent ; le critère des deux pilotes réels reste ouvert ;
+2. éprouver les fixtures et pilotes de modules non financiers — analyses
+   statiques multi-plateformes, pilote catalogue WooCommerce et premier chemin
+   PrestaShop `ps_newproducts` jusqu’à Wasm publié/exécuté en base PostgreSQL
+   jetable passent ; l’import complet et la publication dans la stack CMS
+   persistante restent à démontrer ;
 3. reprendre les décisions CMS-05d encore ouvertes, dont la cible de sauvegarde
    hors machine et la mesure du RTO, avant un usage client ;
 4. seulement ensuite, étudier un prestataire de paiement réel.
@@ -131,13 +121,16 @@ production ni la vérification du CMS sur un environnement client.
 Pour les imports, l’analyse statique a été éprouvée sur les modules non
 financiers WooCommerce `woocommerce-extra-product-sorting-options` et PrestaShop
 `ps_newproducts`, ainsi que sur PrestaShop `ps_emailalerts`, Shopify Discount
-et checkout UI, et Magento Japan Tax et gRPC. Le test de bout en bout du pilote
-catalogue WooCommerce passe sur PostgreSQL avec une source synthétique. Ces
-tests du pipeline EUROMNI n’exécutent pas les sources PHP tierces : les nouveaux paquets amont
-n’ont pas de manifeste EUROMNI et ne sont pas encore pris en charge par
-l’importateur actuel. Des lowerings/oracles fidèles et deux publications
-exécutées via Wasm restent à démontrer. Les fixtures de paiement WooCommerce
-Stripe et PrestaShop `ps_cashondelivery` sont exclues de cette tranche.
+et checkout UI, et Magento Japan Tax et gRPC. Le pilote `ps_newproducts` dispose
+maintenant d’un lowering ciblé vers la requête hôte des produits récents ; son
+test d’intégration compile l’entrée PHP réelle, publie puis exécute le Wasm avec
+des dates et produits synthétiques dans une base PostgreSQL jetable. Aucun PHP
+tiers n’est exécuté. La preuve ne couvre pas encore le paquet PrestaShop amont,
+l’extraction des réglages du back-office, le rendu Smarty ni la publication
+dans le volume persistant `euromni-cms-test`. Le pilote WooCommerce précédent
+reste basé sur une source synthétique ; deux imports complets au sens produit
+restent donc à éprouver. Les fixtures de paiement WooCommerce Stripe et
+PrestaShop `ps_cashondelivery` sont exclues de cette tranche.
 
 ## Sauvegardes hors machine — options examinées, phase en attente
 

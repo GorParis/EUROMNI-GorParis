@@ -47,6 +47,66 @@ func TestCatalogProductListSeed(t *testing.T) {
 	}
 }
 
+func TestCatalogProductNewestSeed(t *testing.T) {
+	h := testHost()
+	tc := mustCtx(t, CapCatalog)
+	raw := h.Invoke(context.Background(), tc, []byte(`{
+		"abi":"euromni.abi.v1",
+		"call":"catalog.product.newest",
+		"input":{"days":30,"limit":1}
+	}`))
+	var resp abi.Response
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("not ok: %s", raw)
+	}
+	b, _ := json.Marshal(resp.Data)
+	if !bytes.Contains(b, []byte(`"id":"e0e00000-0001-4000-8000-000000000056"`)) {
+		t.Fatalf("new products query did not return the newest seeded product: %s", b)
+	}
+}
+
+func TestCatalogProductNewestRejectsInvalidBounds(t *testing.T) {
+	h := testHost()
+	tc := mustCtx(t, CapCatalog)
+	for _, input := range []string{
+		`{"days":3651,"limit":1}`,
+		`{"days":30,"limit":101}`,
+		`{"days":30,"limit":0}`,
+	} {
+		raw := h.Invoke(context.Background(), tc, []byte(`{
+			"abi":"euromni.abi.v1",
+			"call":"catalog.product.newest",
+			"input":`+input+`
+		}`))
+		if !bytes.Contains(raw, []byte(`"invalid"`)) {
+			t.Fatalf("invalid query %s was not rejected: %s", input, raw)
+		}
+	}
+}
+
+func TestCatalogProductNewestDisabledWithZeroDays(t *testing.T) {
+	h := testHost()
+	tc := mustCtx(t, CapCatalog)
+	raw := h.Invoke(context.Background(), tc, []byte(`{
+		"abi":"euromni.abi.v1",
+		"call":"catalog.product.newest",
+		"input":{"days":0,"limit":8}
+	}`))
+	var resp abi.Response
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("disabled new-products widget was not accepted: %s", raw)
+	}
+	if products, ok := resp.Data.([]any); !ok || len(products) != 0 {
+		t.Fatalf("disabled new-products result = %#v, want an empty list", resp.Data)
+	}
+}
+
 func TestCatalogProductGetSeed(t *testing.T) {
 	h := testHost()
 	tc := mustCtx(t, CapCatalog)

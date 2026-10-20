@@ -16,6 +16,7 @@ type PHPAnalysis struct {
 	Hooks        []string
 	HookDetails  []PHPHook
 	Capabilities []string
+	Features     []string
 }
 
 type PHPHook struct {
@@ -86,6 +87,11 @@ func AnalyzePHPSource(source string) (*PHPAnalysis, error) {
 	}
 	if analysis.Platform == "prestashop" {
 		analysis.HookDetails = describePrestaShopHooks(trimmed, analysis.Hooks)
+		if strings.Contains(trimmed, "Product::getNewProducts") &&
+			strings.Contains(trimmed, "'NEW_PRODUCTS_NBR'") &&
+			strings.Contains(trimmed, "'PS_NB_DAYS_NEW_PRODUCT'") {
+			analysis.Features = append(analysis.Features, "prestashop.catalog.new_products")
+		}
 	}
 
 	capabilitySet := map[string]struct{}{}
@@ -144,4 +150,22 @@ func describePrestaShopHooks(source string, hooks []string) []PHPHook {
 		details = append(details, PHPHook{Name: hook, Kind: kind, Handler: handler})
 	}
 	return details
+}
+
+func hasPHPFeature(features []string, feature string) bool {
+	for _, candidate := range features {
+		if candidate == feature {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPHPHookDetail(details []PHPHook, want PHPHook) bool {
+	for _, detail := range details {
+		if detail == want {
+			return true
+		}
+	}
+	return false
 }

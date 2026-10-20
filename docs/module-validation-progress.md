@@ -33,15 +33,15 @@ Le module minimal doit démontrer :
 7. analyse statique PrestaShop : confirmée sur `ps_emailalerts`, `ps_cashondelivery` et `ps_newproducts`, incluant `registerHook('...')`, la constante `HOOKS`, la classification `action` / `display` / `other` et l’association aux méthodes `hook…` réelles ou à `renderWidget` pour `WidgetInterface`
 8. analyse Shopify : types et cibles de Discount Function et extension checkout lus depuis leurs manifests TOML réels
 9. analyse Magento : nom du module, événements, plugins et arguments DI lus depuis les fichiers XML réels de Japan Tax et gRPC
-10. IR v2 → Wasm : appel catalogue unique validé contre l’allowlist, capability dérivée de `wasm.Mapping`, provenance versionnée et génération WAT/Wasm reproductible
-11. lowering explicite : `woocommerce_product_query` abaissé vers `catalog.product.list`; les triggers sans règle sont refusés
+10. IR v3 → Wasm : appel catalogue unique validé contre l’allowlist, capability dérivée de `wasm.Mapping`, provenance versionnée et génération WAT/Wasm reproductible
+11. lowering explicite : `woocommerce_product_query` vers `catalog.product.list` et `ps_newproducts`/`displayHome` vers `catalog.product.newest`; les triggers sans règle sont refusés
 12. exécution installée : Wasm généré chargé par `Runtime.LoadInstalled`, puis exécuté par `Runtime.Run` avec hash et capability `catalog` provenant de PostgreSQL
 13. entrée IR dynamique : champ trigger `product_id` typé UUID validé, résolu en enveloppe ABI et transmis à `run(ptr,len)` par `Runtime.RunWithInput`
 14. provenance IR : hash SHA-256 calculé sur les octets PHP analysés ; le lowering rejette un hash source différent, une version plateforme manquante ou un adaptateur qui ne correspond pas à la plateforme
 15. manifeste de build v1 : lie provenance source, hash IR, ABI, capabilities dérivées et hash/taille Wasm ; sérialisation et vérification testées
 16. publication de build : Wasm écrit d’abord dans le FileStore content-addressed, puis hash Wasm et manifeste JSONB enregistrés ensemble dans `modules`
 17. réconciliation : hashes référencés lus dans PostgreSQL ; seuls les objets absents du registre et plus anciens que le délai de grâce peuvent être supprimés
-normal, tu ne m'as demandé de mt18. ordonnanceur autonome ajouté sous `cmd/artifact-reconciler` : passage immédiat puis périodique, arrêt SIGINT/SIGTERM, retry après erreurs transitoires
+18. ordonnanceur autonome ajouté sous `cmd/artifact-reconciler` : passage immédiat puis périodique, arrêt SIGINT/SIGTERM, retry après erreurs transitoires
 19. politique provisoire : grâce 7 jours, cadence normale 24 heures, retry 5 minutes ; valeurs configurables et à réviser avant production
 
 ## Campagne non financière — 19 octobre 2026
@@ -62,6 +62,39 @@ fidèles pour le tri WooCommerce et le bloc des seuls nouveaux produits
 PrestaShop, puis tester leur publication/exécution avec la même ABI. Les
 fixtures WooCommerce Stripe et PrestaShop `ps_cashondelivery` ne sont pas
 incluses dans cette campagne.
+
+## Pilote Wasm PrestaShop `ps_newproducts` — 20 octobre 2026
+
+Le lowering reconnaît le hook `displayHome`, son handler widget et les accès
+aux nouveaux produits et à leurs deux réglages. Il produit un appel
+`catalog.product.newest` dont le payload fournit `days` (fenêtre de nouveauté
+PrestaShop) et `limit` (nombre de produits configuré, défaut du module : 8).
+L’hôte rejette les fenêtres supérieures à 3 650 jours et les limites hors de
+1–100 ; une fenêtre nulle produit une liste vide, comme le widget désactivé.
+La requête ne retourne que les produits actifs créés dans la fenêtre, triés du
+plus récent au plus ancien.
+
+`TestLowerRealPrestaShopNewProductsFixture` vérifie l’analyse et le lowering
+sur l’entrée PHP réelle épinglée, le typage du payload, le refus d’une valeur
+non entière ou négative et la compilation. Le test d’intégration
+`TestRealPrestaShopNewProductsWasmRunsAsInstalledModule` attribue des dates
+synthétiques à des produits seedés, publie le Wasm et son manifeste dans une
+base PostgreSQL d’intégration jetable, charge le module installé dans Wasmtime,
+puis vérifie la réponse pour la fenêtre et la limite demandées.
+
+Cette preuve ne prétend pas exécuter le PHP tiers : l’IR est une règle de
+traduction explicite et bornée. Elle ne couvre ni le paquet PrestaShop Addons
+amont (le test fabrique un manifeste EUROMNI), ni l’extraction automatique des
+réglages du back-office, ni le rendu Smarty, ni la publication dans le volume
+PostgreSQL persistant de la stack `euromni-cms-test`. Ces étapes restent
+nécessaires avant de qualifier l’import complet dans le CMS.
+
+Validation ciblée :
+
+```sh
+go test -count=1 ./internal/pipeline ./internal/store ./internal/wasm
+go test -tags=integration -count=1 ./internal/pipeline -run '^TestRealPrestaShopNewProductsWasmRunsAsInstalledModule$'
+```
 
 ## Pilote natif isolé transport/commande : Selfnamed WooCommerce
 
@@ -102,16 +135,17 @@ La référence de compatibilité est la documentation développeur PrestaShop [`
 
 Les références Shopify et Magento sont épinglées et conservées dans [pipeline/fixtures/real-modules](../pipeline/fixtures/real-modules) avec leurs licences. `TestAnalyzeRealPlatformFixtures` les vérifie depuis le dépôt, sans réseau ni dépendance à `/tmp`. Les tests n’exécutent pas les apps, extensions ou modules ; ils valident uniquement la lecture de leurs manifests et configurations.
 
-La tranche IR v2 compile les entrées statiques et sait résoudre une référence dynamique UUID pour `catalog.product.get`. Sa provenance comprend les hashes PHP et archive, plus versions plateforme/adaptateur. `PublishModuleBuild` stocke le Wasm puis enregistre hash et manifeste JSONB dans une mise à jour SQL atomique. Le binaire autonome `cmd/artifact-reconciler` lance la réconciliation immédiatement puis à chaque intervalle configuré ; ses défauts provisoires sont 7 jours de grâce et 24 heures de cadence, à revoir avant production. Son test de scheduler couvre le cycle/réessai ; le test d’intégration complet du chemin publication/runtime se lance avec `go test -tags=integration ./internal/pipeline -run TestIRGeneratedWasmRunsAsInstalledModule`. Seul le hook WooCommerce `woocommerce_product_query` est abaissé, vers une opération statique ; les autres plateformes et les conditions restent à traiter.
+La tranche IR v3 compile les entrées statiques et sait résoudre des références dynamiques UUID et entières. Sa provenance comprend les hashes PHP et archive, plus versions plateforme/adaptateur. `PublishModuleBuild` stocke le Wasm puis enregistre hash et manifeste JSONB dans une mise à jour SQL atomique. Le binaire autonome `cmd/artifact-reconciler` lance la réconciliation immédiatement puis à chaque intervalle configuré ; ses défauts provisoires sont 7 jours de grâce et 24 heures de cadence, à revoir avant production. Son test de scheduler couvre le cycle/réessai. Deux règles de lowering catalogue sont validées, WooCommerce `woocommerce_product_query` et PrestaShop `ps_newproducts`; la preuve PrestaShop reste limitée à la base d’intégration jetable et ne constitue pas encore une publication dans la stack CMS persistante.
 
 ## Prochaines étapes prévisibles
 
 1. vérifier le rejet avec hash ou ABI modifié
 2. vérifier le rejet si module non installé ou module retiré du registre
-3. étendre les schémas dynamiques aux données métier nécessaires et vérifier leur type
-4. définir des règles explicites de lowering pour d’autres triggers et vérifier leur sémantique
-5. revoir les valeurs provisoires en vue de la production et planifier la réconciliation dans le cycle du CMS
-6. ajouter conditions et plusieurs opérations seulement après définition de leur contrat
+3. connecter les réglages `days` et `limit` au flux réel de configuration/exécution des modules
+4. ajouter un importeur de paquets amont et un chemin de publication dans le CMS persistant ; décider ensuite comment prendre en charge le rendu de widgets
+5. définir des règles explicites de lowering pour d’autres triggers et vérifier leur sémantique
+6. revoir les valeurs provisoires en vue de la production et planifier la réconciliation dans le cycle du CMS
+7. ajouter conditions et plusieurs opérations seulement après définition de leur contrat
 
 ## Remarque
 

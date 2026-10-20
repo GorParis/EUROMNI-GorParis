@@ -66,7 +66,7 @@ l’analyse complète, la traduction et la publication orchestrée restent à co
 
 ## Première tranche IR → Wasm
 
-`internal/pipeline/ir.go` définit `euromni.ir.v2` : un module source, un
+`internal/pipeline/ir.go` définit `euromni.ir.v3` : un module source, un
 déclencheur déclaré, un appel hôte et sa provenance. La provenance contient le
 SHA-256 des octets PHP analysés et celui de l’archive complète, la plateforme et
 sa version cible, la version du module si connue, l’identifiant/version
@@ -91,7 +91,8 @@ conteneur et doit partager le même répertoire FileStore que le processus qui p
 les builds.
 
 Une valeur d’entrée peut être un littéral
-ou une référence typée à un champ du payload trigger (`string` ou `uuid`).
+ou une référence typée à un champ du payload trigger (`string`, `uuid` ou
+`integer`).
 `ValidateIR` vérifie le déclencheur, l’appel allowlisté, son schéma et ses
 identifiants ; `BuildIRCallEnvelope` valide le payload, refuse champs inconnus
 ou absents et construit l’enveloppe ABI. Les capabilities sont dérivées de
@@ -108,21 +109,35 @@ exécute l'appel ABI dans Wasmtime. Il s'agit d'une candidate expérimentale, pa
 d'une toolchain de production ni d'une traduction générique de code métier.
 Voir la [matrice de portabilité](../docs/portability.md).
 
-Une règle explicite relie pour l’instant le seul hook WooCommerce
-`woocommerce_product_query` à `catalog.product.list`. Aucun trigger PrestaShop,
-Shopify ou Magento n’est encore abaissé. L’IR accepte un appel par module et ne
-prend en charge que `catalog.product.get`, `catalog.product.list` et
-`catalog.category.list`. La référence dynamique actuelle est limitée à
-`catalog.product.get.product_id` de type UUID. Conditions, chaînes d’opérations,
-plusieurs références par opération et traduction du code métier restent hors
-périmètre. Le lowering de `woocommerce_product_query` utilise encore une entrée
-statique ; le test dynamique vérifie séparément l’IR et le runtime.
+Deux règles explicites sont actuellement disponibles : le hook WooCommerce
+`woocommerce_product_query` vers `catalog.product.list`, et le widget
+PrestaShop `ps_newproducts` sur `displayHome` vers
+`catalog.product.newest`. Cette dernière ne s’applique qu’à l’analyse qui
+reconnaît l’appel de nouveaux produits et ses réglages de fenêtre et de nombre.
+Les valeurs `days` et `limit` sont des champs entiers du payload d’exécution ;
+`days: 0` désactive le widget, et l’hôte borne les requêtes à 3 650 jours et
+100 produits. L’appel filtre les produits actifs sur `created_at`, du plus
+récent au plus ancien.
+
+L’IR accepte un appel par module et prend en charge `catalog.product.get`,
+`catalog.product.list`, `catalog.product.newest` et `catalog.category.list`.
+Conditions, chaînes d’opérations et traduction générale du code métier restent
+hors périmètre. Le lowering WooCommerce utilise encore une entrée statique ;
+ceux qui nécessitent des réglages utilisent des payloads dynamiques validés.
+
+Le test PrestaShop compile l’entrée PHP réelle épinglée, puis publie et exécute
+le Wasm sur une base PostgreSQL d’intégration jetable. Il ne lance jamais le PHP
+tiers. L’archive construite par le test porte un manifeste EUROMNI synthétique ;
+l’ingestion d’un paquet PrestaShop amont, l’extraction automatique des réglages,
+le rendu Smarty et la publication dans la base persistante de la stack locale
+ne sont pas encore couverts.
 
 Le chemin lowering → Wasm → module installé → `Runtime.Run` est couvert par un
 test PostgreSQL sous le tag `integration` :
 
 ```sh
 go test -tags=integration ./internal/pipeline -run TestIRGeneratedWasmRunsAsInstalledModule
+go test -tags=integration ./internal/pipeline -run TestRealPrestaShopNewProductsWasmRunsAsInstalledModule
 ```
 
 ## Chaîne cible

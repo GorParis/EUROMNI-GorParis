@@ -44,6 +44,11 @@ type productGetInput struct {
 	ProductID string `json:"product_id"`
 }
 
+type productNewestInput struct {
+	Days  int `json:"days"`
+	Limit int `json:"limit"`
+}
+
 func (h *Host) Invoke(ctx context.Context, tc TrustedContext, raw []byte) []byte {
 	if ctx == nil {
 		ctx = context.Background()
@@ -86,6 +91,8 @@ func (h *Host) dispatch(ctx context.Context, tc TrustedContext, env *abi.Envelop
 	switch env.Call {
 	case "catalog.product.list":
 		return h.catalogProductList(ctx, tc, env)
+	case "catalog.product.newest":
+		return h.catalogProductNewest(ctx, tc, env)
 	case "catalog.product.get":
 		return h.catalogProductGet(ctx, tc, env)
 	case "catalog.category.list":
@@ -103,6 +110,31 @@ func (h *Host) catalogProductList(ctx context.Context, tc TrustedContext, env *a
 		return nil, errors.New("catalog unavailable")
 	}
 	products, err := h.Products.ListProducts(ctx, tc.shopID)
+	if err != nil {
+		return nil, err
+	}
+	if products == nil {
+		products = []store.ProductView{}
+	}
+	return products, nil
+}
+
+func (h *Host) catalogProductNewest(ctx context.Context, tc TrustedContext, env *abi.Envelope) (any, error) {
+	in, err := abi.DecodeInput[productNewestInput](env.Input)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.ValidateNewProductsQuery(in.Days, in.Limit); err != nil {
+		return nil, abi.Fail(abi.CodeInvalid, err.Error())
+	}
+	if h == nil || h.Products == nil {
+		return nil, errors.New("catalog unavailable")
+	}
+	reader, ok := h.Products.(store.NewProductsReader)
+	if !ok {
+		return nil, errors.New("new products unavailable")
+	}
+	products, err := reader.ListNewProducts(ctx, tc.shopID, in.Days, in.Limit)
 	if err != nil {
 		return nil, err
 	}

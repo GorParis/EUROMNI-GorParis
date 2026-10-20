@@ -1,5 +1,9 @@
 # Changelog - EUROMNI dasegole
 
+## 2026-10-20
+
+- Ajout du lowering ciblé PrestaShop `ps_newproducts` vers `catalog.product.newest`, des entrées IR entières et du test PostgreSQL lowering → Wasm → publication → exécution ; la fixture PHP tierce n’est jamais exécutée et la publication dans la stack CMS persistante reste à faire.
+
 ## 2026-10-17
 
 - Ajout d'un spike Rust `no_std` vers `wasm32-unknown-unknown` : import exclusivement `euromni.call`, exports requis et exécution ABI vérifiés dans Wasmtime.

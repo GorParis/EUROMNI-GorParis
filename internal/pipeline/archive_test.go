@@ -252,6 +252,72 @@ func TestAnalyzeRealPrestaShopFixtures(t *testing.T) {
 	}
 }
 
+func TestLowerRealPrestaShopNewProductsFixture(t *testing.T) {
+	fixtureGlob := "../../pipeline/fixtures/prestashop-ps_newproducts/ps_newproducts-*/ps_newproducts.php"
+	paths, err := filepath.Glob(fixtureGlob)
+	if err != nil {
+		t.Fatalf("find ps_newproducts fixture: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("found %d ps_newproducts entrypoints, want exactly one; run pipeline/fetch_real_module_fixtures.sh", len(paths))
+	}
+	source, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatalf("read ps_newproducts fixture: %v", err)
+	}
+	analysis, err := AnalyzePHPSource(string(source))
+	if err != nil {
+		t.Fatalf("AnalyzePHPSource() returned error: %v", err)
+	}
+	if !hasPHPFeature(analysis.Features, "prestashop.catalog.new_products") {
+		t.Fatalf("analysis features = %#v, want the recognized new-products behavior", analysis.Features)
+	}
+
+	archive := buildZIP(t, map[string]string{
+		"euromni-manifest.json":     `{"name":"ps_newproducts","platform":"prestashop"}`,
+		"module/ps_newproducts.php": string(source),
+	})
+	provenance, err := NewPackageProvenance(source, archive, SourceProvenance{
+		SourceReference: "prestashop/ps_newproducts@72e9476406319cbb91ac383121ca9967dc61f277",
+		ModuleVersion:   "2.0.0",
+		PlatformVersion: "9.x",
+		Adapter:         "prestashop",
+		AdapterVersion:  "1.0.0",
+	})
+	if err != nil {
+		t.Fatalf("NewPackageProvenance() returned error: %v", err)
+	}
+	ir, err := LowerPHPAnalysisToIR("ps_newproducts", analysis, provenance)
+	if err != nil {
+		t.Fatalf("LowerPHPAnalysisToIR() returned error: %v", err)
+	}
+	if ir.Platform != "prestashop" ||
+		len(ir.Triggers) != 1 ||
+		ir.Triggers[0].Name != "displayHome" ||
+		ir.Triggers[0].Fields["days"] != "integer" ||
+		ir.Triggers[0].Fields["limit"] != "integer" ||
+		len(ir.Operations) != 1 ||
+		ir.Operations[0].Call != "catalog.product.newest" {
+		t.Fatalf("lowered IR = %#v, want a typed new-products catalog call", ir)
+	}
+	envelope, err := BuildIRCallEnvelope(ir, []byte(`{"days":30,"limit":8}`))
+	if err != nil {
+		t.Fatalf("BuildIRCallEnvelope() returned error: %v", err)
+	}
+	if !bytes.Contains(envelope, []byte(`"days":30`)) || !bytes.Contains(envelope, []byte(`"limit":8`)) {
+		t.Fatalf("ABI envelope = %s, want mapped new-product settings", envelope)
+	}
+	if _, err := BuildIRCallEnvelope(ir, []byte(`{"days":30.5,"limit":8}`)); err == nil {
+		t.Fatal("BuildIRCallEnvelope() accepted a non-integer days setting")
+	}
+	if _, err := BuildIRCallEnvelope(ir, []byte(`{"days":-1,"limit":8}`)); err == nil {
+		t.Fatal("BuildIRCallEnvelope() accepted a negative days setting")
+	}
+	if _, err := CompileIRToWasm(ir); err != nil {
+		t.Fatalf("CompileIRToWasm() returned error: %v", err)
+	}
+}
+
 func TestAnalyzeRealNonPaymentWooCommerceFixture(t *testing.T) {
 	fixtureGlob := "../../pipeline/fixtures/woocommerce-extra-product-sorting-options/woocommerce-extra-product-sorting-options-*/woocommerce-extra-product-sorting-options.php"
 	paths, err := filepath.Glob(fixtureGlob)

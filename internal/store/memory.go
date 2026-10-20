@@ -18,6 +18,7 @@ import (
 
 type Memory struct {
 	products          map[string]*ProductView
+	productCreatedAt  map[string]time.Time
 	categories        map[string]*CategoryView
 	brands            map[string]*BrandView
 	suppliers         map[string]*SupplierView
@@ -44,6 +45,7 @@ type memoryCartLine struct {
 var (
 	_ ProductReader         = (*Memory)(nil)
 	_ ProductCategoryReader = (*Memory)(nil)
+	_ NewProductsReader     = (*Memory)(nil)
 	_ CatalogAdminWriter    = (*Memory)(nil)
 )
 
@@ -169,6 +171,7 @@ func NewMemory() *Memory {
 			{ID: seed.CandleVariantID, SKU: "BOUGIE-CEDRE-180", Options: map[string]any{}, Prices: []PriceView{{Currency: "EUR", Amount: "24.0000"}}, Inventory: InventoryView{Quantity: 18, Track: true}},
 		},
 	}
+	seededAt := time.Now().UTC()
 	return &Memory{
 		products: map[string]*ProductView{
 			seed.ShopID + "/" + seed.ProductID:       p,
@@ -176,6 +179,13 @@ func NewMemory() *Memory {
 			seed.ShopID + "/" + seed.ThirdProductID:  shirt,
 			seed.ShopID + "/" + seed.MugProductID:    mug,
 			seed.ShopID + "/" + seed.CandleProductID: candle,
+		},
+		productCreatedAt: map[string]time.Time{
+			seed.ShopID + "/" + seed.ProductID:       seededAt,
+			seed.ShopID + "/" + seed.SecondProductID: seededAt,
+			seed.ShopID + "/" + seed.ThirdProductID:  seededAt,
+			seed.ShopID + "/" + seed.MugProductID:    seededAt,
+			seed.ShopID + "/" + seed.CandleProductID: seededAt,
 		},
 		categories: map[string]*CategoryView{
 			seed.ShopID + "/" + seed.CategoryID: category,
@@ -185,8 +195,8 @@ func NewMemory() *Memory {
 		productCategories: map[string][]string{
 			seed.ShopID + "/" + seed.CategoryID: {seed.ProductID},
 		},
-		carts:  make(map[string]*memoryCart),
-		orders: make(map[string]*memoryOrder),
+		carts:         make(map[string]*memoryCart),
+		orders:        make(map[string]*memoryOrder),
 		supplierSyncs: make(map[string]*memorySupplierOrderSync),
 	}
 }
@@ -226,6 +236,53 @@ func (m *Memory) ListProducts(ctx context.Context, shopID string) ([]ProductView
 		return products[i].Slug < products[j].Slug
 	})
 	return products, nil
+}
+
+func (m *Memory) ListNewProducts(ctx context.Context, shopID string, days, limit int) ([]ProductView, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ValidateNewProductsQuery(days, limit); err != nil {
+		return nil, err
+	}
+	if days == 0 {
+		return []ProductView{}, nil
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	prefix := shopID + "/"
+	type datedProduct struct {
+		product   ProductView
+		createdAt time.Time
+	}
+	products := make([]datedProduct, 0)
+	for key, product := range m.products {
+		createdAt := m.productCreatedAt[key]
+		if !strings.HasPrefix(key, prefix) || product.Status != "active" || createdAt.Before(cutoff) {
+			continue
+		}
+		clone, err := m.cloneProductWithCategories(shopID, product)
+		if err != nil {
+			return nil, err
+		}
+		products = append(products, datedProduct{product: *clone, createdAt: createdAt})
+	}
+	sort.Slice(products, func(i, j int) bool {
+		if products[i].createdAt.Equal(products[j].createdAt) {
+			return products[i].product.ID > products[j].product.ID
+		}
+		return products[i].createdAt.After(products[j].createdAt)
+	})
+	if len(products) > limit {
+		products = products[:limit]
+	}
+	result := make([]ProductView, len(products))
+	for i := range products {
+		result[i] = products[i].product
+	}
+	return result, nil
 }
 
 func (m *Memory) ListProductsByCategory(ctx context.Context, shopID, categoryID string) ([]ProductView, error) {
@@ -371,6 +428,7 @@ func (m *Memory) CreateProduct(ctx context.Context, shopID string, input Product
 		return nil, err
 	}
 	m.products[key] = product
+	m.productCreatedAt[key] = time.Now().UTC()
 	m.setMemoryProductCategories(shopID, id, input.CategoryIDs)
 	clone, err := m.cloneProductWithCategories(shopID, product)
 	if err != nil {

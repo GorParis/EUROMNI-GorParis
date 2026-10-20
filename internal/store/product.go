@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"time"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -116,9 +118,14 @@ type ProductCategoryReader interface {
 	ListProductsByCategory(ctx context.Context, shopID, categoryID string) ([]ProductView, error)
 }
 
+type NewProductsReader interface {
+	ListNewProducts(ctx context.Context, shopID string, days, limit int) ([]ProductView, error)
+}
+
 var (
 	_ ProductReader         = (*Store)(nil)
 	_ ProductCategoryReader = (*Store)(nil)
+	_ NewProductsReader     = (*Store)(nil)
 )
 
 func (s *Store) ListProducts(ctx context.Context, shopID string) ([]ProductView, error) {
@@ -154,6 +161,63 @@ func (s *Store) ListProducts(ctx context.Context, shopID string) ([]ProductView,
 		product, err := s.GetProduct(ctx, shopID, id)
 		if err != nil {
 			return nil, err
+		}
+		products = append(products, *product)
+	}
+	return products, nil
+}
+
+func ValidateNewProductsQuery(days, limit int) error {
+	if days < 0 || days > 3650 {
+		return errors.New("new product window must be between 0 and 3650 days")
+	}
+	if limit < 1 || limit > 100 {
+		return errors.New("new product limit must be between 1 and 100")
+	}
+	return nil
+}
+
+func (s *Store) ListNewProducts(ctx context.Context, shopID string, days, limit int) ([]ProductView, error) {
+	if s == nil || s.SQL == nil {
+		return nil, errors.New("store not configured")
+	}
+	if err := ValidateNewProductsQuery(days, limit); err != nil {
+		return nil, err
+	}
+	if days == 0 {
+		return []ProductView{}, nil
+	}
+
+	cutoff := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
+	rows, err := s.SQL.QueryContext(ctx, `
+		SELECT id::text
+		FROM products
+		WHERE shop_id = $1 AND status = 'active' AND created_at >= $2
+		ORDER BY created_at DESC, id DESC
+		LIMIT $3
+	`, shopID, cutoff, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0, limit)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	products := make([]ProductView, 0, len(ids))
+	for _, id := range ids {
+		product, err := s.GetProduct(ctx, shopID, id)
+		if err != nil {
+			return nil, fmt.Errorf("load new product %s: %w", id, err)
 		}
 		products = append(products, *product)
 	}
