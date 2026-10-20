@@ -198,8 +198,17 @@ func (r *Runtime) RunWithInput(ctx context.Context, moduleStore *store.Store, sh
 }
 
 func (r *Runtime) RunInstalledWithResponse(ctx context.Context, moduleStore *store.Store, shopID, moduleID, exportName string) ([]byte, error) {
+	return r.RunInstalledWithInputAndResponse(ctx, moduleStore, shopID, moduleID, exportName, nil)
+}
+
+func (r *Runtime) RunInstalledWithInputAndResponse(ctx context.Context, moduleStore *store.Store, shopID, moduleID, exportName string, input []byte) ([]byte, error) {
+	if len(input) > 0 {
+		if err := validateGuestInput(input); err != nil {
+			return nil, err
+		}
+	}
 	capture := &hostResponseCapture{}
-	if _, err := r.runInstalled(ctx, moduleStore, shopID, moduleID, exportName, nil, capture); err != nil {
+	if _, err := r.runInstalled(ctx, moduleStore, shopID, moduleID, exportName, input, capture); err != nil {
 		return nil, err
 	}
 	if capture.calls != 1 {

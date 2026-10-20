@@ -19,6 +19,13 @@ import (
 const IRVersion = "euromni.ir.v3"
 
 const (
+	WooCommerceSortingModuleName      = "woocommerce-extra-product-sorting-options"
+	WooCommerceSortingModuleVersion   = "2.11.0"
+	WooCommerceSortingSourceSHA256    = "aaf1a1a13ec7e0465a4c451b952aba79626be3288104c18122c47bf01c81306f"
+	WooCommerceSortingSourceReference = "woocommerce-extra-product-sorting-options@bc5829d4d2383ae956869386eb40e772cf4a76a0"
+)
+
+const (
 	irMemoryPages    = 17
 	irOutputOffset   = abi.MaxCallBytes
 	irOutputCapacity = 1 << 20
@@ -154,6 +161,31 @@ func LowerPHPAnalysisToIR(module string, analysis *PHPAnalysis, provenance Sourc
 	var operation IROperation
 	switch {
 	case analysis.Platform == "woocommerce" &&
+		module == WooCommerceSortingModuleName &&
+		analysis.PluginName == "Extra Product Sorting Options for WooCommerce" &&
+		analysis.Version == WooCommerceSortingModuleVersion &&
+		analysis.SourceSHA256 == WooCommerceSortingSourceSHA256 &&
+		provenance.ModuleVersion == WooCommerceSortingModuleVersion &&
+		provenance.ArchiveSHA256 == wooCommerceSortingArchiveSHA256 &&
+		provenance.SourceReference == WooCommerceSortingSourceReference &&
+		provenance.AdapterVersion == wooCommerceAdapterVersion &&
+		containsPHPHook(analysis.Hooks, "woocommerce_get_catalog_ordering_args"):
+		trigger = IRTrigger{
+			Kind: "hook",
+			Name: "woocommerce_get_catalog_ordering_args",
+			Fields: map[string]string{
+				"locale":  "string",
+				"orderby": "string",
+			},
+		}
+		operation = IROperation{
+			Call: "catalog.product.sort",
+			Input: map[string]IRValue{
+				"locale":  {TriggerField: "locale"},
+				"orderby": {TriggerField: "orderby"},
+			},
+		}
+	case analysis.Platform == "woocommerce" &&
 		len(analysis.Hooks) == 1 &&
 		analysis.Hooks[0] == "woocommerce_product_query":
 		trigger = IRTrigger{Kind: "hook", Name: analysis.Hooks[0]}
@@ -181,6 +213,15 @@ func LowerPHPAnalysisToIR(module string, analysis *PHPAnalysis, provenance Sourc
 		return ModuleIR{}, err
 	}
 	return ir, nil
+}
+
+func containsPHPHook(hooks []string, name string) bool {
+	for _, hook := range hooks {
+		if hook == name {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateIR(ir ModuleIR) (*ValidatedIR, error) {
@@ -264,6 +305,8 @@ func operationInputSchema(call string) (map[string]string, bool) {
 		return map[string]string{"product_id": "uuid"}, true
 	case "catalog.product.newest":
 		return map[string]string{}, true
+	case "catalog.product.sort":
+		return map[string]string{"locale": "string", "orderby": "string"}, true
 	default:
 		return nil, false
 	}

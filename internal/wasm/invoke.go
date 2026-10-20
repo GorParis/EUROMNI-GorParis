@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"sort"
+	"strings"
 	"time"
 
 	"euromni/internal/abi"
 	"euromni/internal/store"
+	"golang.org/x/text/collate"
+	"golang.org/x/text/language"
 )
 
 const defaultTimeout = 2 * time.Second
@@ -88,6 +92,8 @@ func (h *Host) dispatch(ctx context.Context, tc TrustedContext, env *abi.Envelop
 	switch env.Call {
 	case "catalog.product.list":
 		return h.catalogProductList(ctx, tc, env)
+	case "catalog.product.sort":
+		return h.catalogProductSort(ctx, tc, env)
 	case "catalog.product.newest":
 		return h.catalogProductNewest(ctx, tc, env)
 	case "catalog.product.get":
@@ -114,6 +120,64 @@ func (h *Host) catalogProductList(ctx context.Context, tc TrustedContext, env *a
 		products = []store.ProductView{}
 	}
 	return products, nil
+}
+
+func (h *Host) catalogProductSort(ctx context.Context, tc TrustedContext, env *abi.Envelope) (any, error) {
+	input, err := abi.DecodeInput[struct {
+		Locale  string `json:"locale"`
+		Orderby string `json:"orderby"`
+	}](env.Input)
+	if err != nil {
+		return nil, err
+	}
+	if input.Orderby != "alphabetical" && input.Orderby != "reverse_alpha" {
+		return nil, abi.Fail(abi.CodeInvalid, "unsupported product sorting option")
+	}
+	var locale language.Tag
+	switch input.Locale {
+	case "en-GB":
+		locale = language.BritishEnglish
+	case "fr-FR":
+		locale = language.French
+	default:
+		return nil, abi.Fail(abi.CodeInvalid, "unsupported product sorting locale")
+	}
+	if h == nil || h.Products == nil {
+		return nil, errors.New("catalog unavailable")
+	}
+	products, err := h.Products.ListProducts(ctx, tc.shopID)
+	if err != nil {
+		return nil, err
+	}
+	if products == nil {
+		products = []store.ProductView{}
+	}
+	comparator := collate.New(locale)
+	sort.SliceStable(products, func(i, j int) bool {
+		leftName := productSortName(products[i], input.Locale)
+		rightName := productSortName(products[j], input.Locale)
+		comparison := comparator.CompareString(leftName, rightName)
+		if comparison == 0 {
+			comparison = strings.Compare(products[i].Slug, products[j].Slug)
+		}
+		if comparison == 0 {
+			comparison = strings.Compare(products[i].ID, products[j].ID)
+		}
+		if input.Orderby == "reverse_alpha" {
+			return comparison > 0
+		}
+		return comparison < 0
+	})
+	return products, nil
+}
+
+func productSortName(product store.ProductView, locale string) string {
+	for _, translation := range product.Translations {
+		if translation.Locale == locale {
+			return translation.Name
+		}
+	}
+	return product.Slug
 }
 
 func (h *Host) catalogProductNewest(ctx context.Context, tc TrustedContext, env *abi.Envelope) (any, error) {

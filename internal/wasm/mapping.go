@@ -12,6 +12,7 @@ type HostCall struct {
 var Mapping = []HostCall{
 	{Name: "catalog.product.list", Cap: CapCatalog, Tables: []string{"products", "product_translations", "product_categories"}},
 	{Name: "catalog.product.newest", Cap: CapCatalog, Tables: []string{"products", "product_translations", "product_categories"}},
+	{Name: "catalog.product.sort", Cap: CapCatalog, Tables: []string{"products", "product_translations", "product_categories"}},
 	{Name: "catalog.product.get", Cap: CapCatalog, Tables: []string{"products", "product_translations", "product_media", "media", "variants", "prices", "inventory_items"}},
 	{Name: "catalog.product.upsert", Cap: CapCatalog, Tables: []string{"products", "product_translations", "product_categories"}},
 	{Name: "catalog.category.list", Cap: CapCatalog, Tables: []string{"categories", "category_translations"}},

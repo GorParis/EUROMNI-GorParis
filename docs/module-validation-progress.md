@@ -91,6 +91,40 @@ traduction explicite et bornée. Elle ne couvre ni le paquet PrestaShop Addons
 amont, ni le rendu Smarty, ni l’installation du module PHP dans une instance
 PrestaShop.
 
+## Pilote Wasm WooCommerce `woocommerce-extra-product-sorting-options`
+
+Le build est limité à l’archive officielle épinglée au commit
+`bc5829d4d2383ae956869386eb40e772cf4a76a0` (version `2.11.0`, GPL-3.0,
+archive SHA-256
+`65a239244a526bd98fb512a2ac5c5157379a9fcf8ffd2148c6efec007070144e`,
+source SHA-256
+`aaf1a1a13ec7e0465a4c451b952aba79626be3288104c18122c47bf01c81306f`). Its
+header declares WooCommerce 3.9.4 minimum and 9.7.1 tested-up-to; the latter is
+upstream metadata, not a test of a live WooCommerce instance.
+L’importeur refuse tout autre hash, borne et valide la structure ZIP, lit
+l’entrée PHP sans extraction et vérifie l’identité/version du module.
+
+La règle de lowering ne traduit que le hook
+`woocommerce_get_catalog_ordering_args` pour les options `alphabetical` et
+`reverse_alpha`. Le guest appelle uniquement `catalog.product.sort` sous la
+capacité `catalog`; le host trie le nom traduit pour la locale reçue
+(`fr-FR` ou `en-GB`) avec des critères déterministes de départage. Les options
+`by_stock`, `review_count`, `on_sale_first`, les hooks de configuration et les
+autres versions source restent explicitement non prises en charge. Aucun code
+PHP n’est exécuté.
+
+`TestBuildWooCommerceSortingArchiveUsesPinnedSource` vérifie le hash, la
+provenance, le hook, l’IR dynamique et l’import Wasm limité à `euromni.call`.
+`TestCatalogProductSortMatchesSupportedWooCommerceOptions` valide l’oracle de
+tri. Le test d’intégration
+`TestRealWooCommerceSortingArchiveRunsAsPublishedWasm` importe l’archive,
+publie Wasm et manifeste dans PostgreSQL jetable, puis exécute les deux options
+dans Wasmtime et compare les produits ordonnés à l’oracle français.
+
+Cette preuve QP-08 n’est ni une installation du plugin dans WordPress ni une
+compatibilité générale WooCommerce ; elle n’active pas de gestion de cycle de
+vie WooCommerce dans l’admin EUROMNI.
+
 Les rôles `owner` et `admin` peuvent lire et modifier `days` et `limit` depuis
 l’administration. Les endpoints sont authentifiés, limités à `ps_newproducts`
 installé dans la boutique de la session, valident les mêmes bornes que le
@@ -102,6 +136,7 @@ Validation ciblée :
 ```sh
 go test -count=1 ./internal/pipeline ./internal/store ./internal/wasm
 go test -tags=integration -count=1 ./internal/pipeline -run '^TestRealPrestaShopNewProductsWasmRunsAsInstalledModule$'
+go test -tags=integration -count=1 ./internal/pipeline -run '^TestRealWooCommerceSortingArchiveRunsAsPublishedWasm$'
 ```
 
 ## Ingestion du ZIP amont et publication dans le CMS de test — 20 octobre 2026
@@ -200,13 +235,13 @@ La référence de compatibilité est la documentation développeur PrestaShop [`
 
 Les références Shopify et Magento sont épinglées et conservées dans [pipeline/fixtures/real-modules](../pipeline/fixtures/real-modules) avec leurs licences. `TestAnalyzeRealPlatformFixtures` les vérifie depuis le dépôt, sans réseau ni dépendance à `/tmp`. Les tests n’exécutent pas les apps, extensions ou modules ; ils valident uniquement la lecture de leurs manifests et configurations.
 
-La tranche IR v3 compile les entrées statiques et sait résoudre des références dynamiques UUID et entières. Sa provenance comprend les hashes PHP et archive, plus versions plateforme/adaptateur. `PublishModuleBuild` stocke le Wasm puis enregistre hash et manifeste JSONB dans une mise à jour SQL atomique. Le binaire autonome `cmd/artifact-reconciler` lance la réconciliation immédiatement puis à chaque intervalle configuré ; ses défauts provisoires sont 7 jours de grâce et 24 heures de cadence, à revoir avant production. Son test de scheduler couvre le cycle/réessai. Deux règles de lowering catalogue sont validées, WooCommerce `woocommerce_product_query` et PrestaShop `ps_newproducts`; pour ce dernier, les réglages admin owner/admin, l’ingestion du ZIP source, la publication et l’exécution dans le CMS de test sont démontrées.
+La tranche IR v3 compile les entrées statiques et sait résoudre des références dynamiques UUID, entières et chaînes déclarées par le trigger. Sa provenance comprend les hashes PHP et archive, plus versions plateforme/adaptateur. `PublishModuleBuild` stocke le Wasm puis enregistre hash et manifeste JSONB dans une mise à jour SQL atomique. Le binaire autonome `cmd/artifact-reconciler` lance la réconciliation immédiatement puis à chaque intervalle configuré ; ses défauts provisoires sont 7 jours de grâce et 24 heures de cadence, à revoir avant production. Son test de scheduler couvre le cycle/réessai. Les pilotes Wasm validés couvrent WooCommerce `woocommerce_product_query` (synthétique), WooCommerce `woocommerce_get_catalog_ordering_args` (archive réelle épinglée, deux tris publiés) et PrestaShop `ps_newproducts`; pour ce dernier, les réglages admin owner/admin, l’ingestion du ZIP source, la publication et l’exécution dans le CMS de test sont démontrées.
 
 ## Prochaines étapes prévisibles
 
-1. valider visuellement le widget dans le navigateur avec le CMS de test et les produits publiés ;
-2. comparer son comportement avec les données et la configuration PrestaShop d’origine ;
-3. examiner le paquet PrestaShop Addons et définir une preuve distincte de compatibilité avec une instance PrestaShop réelle ;
+1. comparer plus largement le widget avec les données et la configuration PrestaShop d’origine ;
+2. examiner le paquet PrestaShop Addons et définir une preuve distincte de compatibilité avec une instance PrestaShop réelle ;
+3. tester le plugin de tri WooCommerce sur une instance réelle et décider si d’autres options limitées méritent un lowering ;
 4. définir des règles explicites de lowering pour d’autres triggers et vérifier leur sémantique ;
 5. revoir les valeurs provisoires en vue de la production et planifier la réconciliation dans le cycle du CMS ;
 6. ajouter conditions et plusieurs opérations seulement après définition de leur contrat.

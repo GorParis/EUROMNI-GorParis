@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -46,6 +47,80 @@ func TestCatalogProductListSeed(t *testing.T) {
 	if !bytes.Contains(b, []byte(`"cabas-lin"`)) || !bytes.Contains(b, []byte(`"ceinture-cuir"`)) {
 		t.Fatalf("unexpected list %s", b)
 	}
+}
+
+func TestCatalogProductSortMatchesSupportedWooCommerceOptions(t *testing.T) {
+	h := testHost()
+	tc := mustCtx(t, CapCatalog)
+	tests := []struct {
+		orderby string
+		want    []string
+	}{
+		{orderby: "alphabetical", want: []string{"bougie-cedre", "cabas-lin", "ceinture-cuir", "chemise-lin", "tasse-gres"}},
+		{orderby: "reverse_alpha", want: []string{"tasse-gres", "chemise-lin", "ceinture-cuir", "cabas-lin", "bougie-cedre"}},
+	}
+	for _, test := range tests {
+		t.Run(test.orderby, func(t *testing.T) {
+			input, err := json.Marshal(map[string]string{"locale": "fr-FR", "orderby": test.orderby})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := h.Invoke(context.Background(), tc, sortingEnvelope(t, input))
+			var response abi.Response
+			if err := json.Unmarshal(raw, &response); err != nil {
+				t.Fatal(err)
+			}
+			if !response.OK {
+				t.Fatalf("sorting call failed: %s", raw)
+			}
+			encoded, err := json.Marshal(response.Data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var products []store.ProductView
+			if err := json.Unmarshal(encoded, &products); err != nil {
+				t.Fatal(err)
+			}
+			got := make([]string, len(products))
+			for i, product := range products {
+				got[i] = product.Slug
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("sorted products = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCatalogProductSortRejectsUnsupportedOptionsAndLocales(t *testing.T) {
+	h := testHost()
+	tc := mustCtx(t, CapCatalog)
+	for _, input := range []string{
+		`{"locale":"fr-FR","orderby":"review_count"}`,
+		`{"locale":"es-ES","orderby":"alphabetical"}`,
+	} {
+		raw := h.Invoke(context.Background(), tc, sortingEnvelope(t, []byte(input)))
+		var response abi.Response
+		if err := json.Unmarshal(raw, &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.OK || response.Error == nil || response.Error.Code != abi.CodeInvalid {
+			t.Fatalf("unsupported sorting input %s was not rejected: %s", input, raw)
+		}
+	}
+}
+
+func sortingEnvelope(t *testing.T, input []byte) []byte {
+	t.Helper()
+	envelope, err := json.Marshal(struct {
+		ABI   string          `json:"abi"`
+		Call  string          `json:"call"`
+		Input json.RawMessage `json:"input"`
+	}{ABI: abi.Version, Call: "catalog.product.sort", Input: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return envelope
 }
 
 func TestCatalogProductNewestSeed(t *testing.T) {

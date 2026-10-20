@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -49,6 +50,37 @@ add_action('woocommerce_product_query', function ($query) {
 	}
 	if len(ir.Operations) != 1 || ir.Operations[0].Call != "catalog.product.list" {
 		t.Fatalf("IR operations = %#v, want one catalog.product.list call", ir.Operations)
+	}
+}
+
+func TestBuildWooCommerceSortingArchiveUsesPinnedSource(t *testing.T) {
+	archive, err := os.ReadFile("../../pipeline/fixtures/woocommerce-extra-product-sorting-options.zip")
+	if err != nil {
+		t.Fatalf("read pinned WooCommerce archive: %v", err)
+	}
+	ir, wasmBytes, err := BuildWooCommerceSortingArchive(archive)
+	if err != nil {
+		t.Fatalf("BuildWooCommerceSortingArchive() returned error: %v", err)
+	}
+	if ir.Module != WooCommerceSortingModuleName || ir.Provenance.ModuleVersion != WooCommerceSortingModuleVersion {
+		t.Fatalf("module provenance = %q %q, want pinned module version", ir.Module, ir.Provenance.ModuleVersion)
+	}
+	if ir.Provenance.ArchiveSHA256 != wooCommerceSortingArchiveSHA256 ||
+		ir.Provenance.SourceSHA256 != WooCommerceSortingSourceSHA256 {
+		t.Fatalf("source provenance does not match the pinned archive: %+v", ir.Provenance)
+	}
+	if len(ir.Triggers) != 1 || ir.Triggers[0].Name != "woocommerce_get_catalog_ordering_args" ||
+		ir.Triggers[0].Fields["locale"] != "string" || ir.Triggers[0].Fields["orderby"] != "string" {
+		t.Fatalf("trigger = %#v, want the bounded WooCommerce sorting hook", ir.Triggers)
+	}
+	if len(ir.Operations) != 1 || ir.Operations[0].Call != "catalog.product.sort" ||
+		ir.Operations[0].Input["orderby"].TriggerField != "orderby" ||
+		ir.Operations[0].Input["locale"].TriggerField != "locale" {
+		t.Fatalf("operation = %#v, want dynamic catalog sorting inputs", ir.Operations)
+	}
+	assertOnlyEUROMNICallImport(t, wasmBytes)
+	if _, _, err := BuildWooCommerceSortingArchive(append([]byte(nil), archive[:len(archive)-1]...)); err == nil {
+		t.Fatal("BuildWooCommerceSortingArchive() accepted a modified package")
 	}
 }
 
