@@ -406,6 +406,53 @@
     orderDetail.append(total, items, address);
   }
 
+  function showOrderActionForm(card, options) {
+    card.querySelector(".order-action-form")?.remove();
+
+    const form = document.createElement("form");
+    form.className = "order-action-form";
+    const description = document.createElement("p");
+    description.textContent = options.description;
+    const label = document.createElement("label");
+    label.append(document.createTextNode(options.label));
+    const input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 512;
+    input.autocomplete = "off";
+    input.placeholder = "Facultatif";
+    label.append(input);
+
+    const buttons = document.createElement("div");
+    buttons.className = "actions";
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = options.submitLabel;
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "secondary";
+    cancel.textContent = "Annuler";
+    cancel.addEventListener("click", () => form.remove());
+    buttons.append(submit, cancel);
+    form.append(description, label, buttons);
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      submit.disabled = true;
+      cancel.disabled = true;
+      try {
+        await options.onSubmit(input.value.trim());
+        form.remove();
+      } catch (error) {
+        submit.disabled = false;
+        cancel.disabled = false;
+        setStatus(error.message, true);
+      }
+    });
+
+    card.append(form);
+    input.focus();
+  }
+
   function renderOrders(orders) {
     orderList.replaceChildren();
     orderDetail.hidden = true;
@@ -437,19 +484,18 @@
         payment.type = "button";
         payment.textContent = "Confirmer le paiement reçu";
         payment.addEventListener("click", async () => {
-          if (!confirm(`Confirmez-vous avoir reçu le paiement de ${order.grand_total} ${order.currency} pour ${order.number} ? Cette action n’effectue aucun débit.`)) return;
-          const providerReference = prompt("Référence du virement ou reçu (facultatif) :", "")?.trim();
-          if (providerReference === undefined) return;
-          try {
-            await request(`/v1/admin/orders/${encodeURIComponent(order.id)}/payments/manual`, {
-              method: "POST",
-              body: JSON.stringify({ provider_reference: providerReference }),
-            });
-            setStatus("Paiement manuel enregistré.");
-            await refresh();
-          } catch (error) {
-            setStatus(error.message, true);
-          }
+          showOrderActionForm(card, {
+            description: `Confirmez que le paiement de ${order.grand_total} ${order.currency} pour ${order.number} a bien été reçu. Cette action n’effectue aucun débit.`,
+            label: "Référence du virement ou reçu",
+            submitLabel: "Confirmer le paiement reçu",
+            onSubmit: async (providerReference) => {
+              await request(`/v1/admin/orders/${encodeURIComponent(order.id)}/payments/manual`, {
+                method: "POST",
+                body: JSON.stringify({ provider_reference: providerReference }),
+              });
+              await refresh("Paiement manuel enregistré.");
+            },
+          });
         });
         actions.append(payment);
       }
@@ -458,19 +504,18 @@
         fulfill.type = "button";
         fulfill.textContent = "Marquer comme expédiée";
         fulfill.addEventListener("click", async () => {
-          if (!confirm(`Confirmez-vous la remise de la commande ${order.number} au transporteur ?`)) return;
-          const tracking = prompt("Numéro de suivi (facultatif) :", "")?.trim();
-          if (tracking === undefined) return;
-          try {
-            await request(`/v1/admin/orders/${encodeURIComponent(order.id)}/fulfill`, {
-              method: "POST",
-              body: JSON.stringify({ tracking }),
-            });
-            setStatus("Commande marquée comme expédiée.");
-            await refresh();
-          } catch (error) {
-            setStatus(error.message, true);
-          }
+          showOrderActionForm(card, {
+            description: `Confirmez la remise de la commande ${order.number} au transporteur.`,
+            label: "Numéro de suivi",
+            submitLabel: "Confirmer l’expédition",
+            onSubmit: async (tracking) => {
+              await request(`/v1/admin/orders/${encodeURIComponent(order.id)}/fulfill`, {
+                method: "POST",
+                body: JSON.stringify({ tracking }),
+              });
+              await refresh("Commande marquée comme expédiée.");
+            },
+          });
         });
         actions.append(fulfill);
       }
@@ -1054,7 +1099,7 @@
     document.querySelector("#cancel-staff-edit").hidden = true;
   }
 
-  async function refresh() {
+  async function refresh(successMessage) {
     try {
       const [products, loadedCategories, loadedBrands, loadedSuppliers] = await Promise.all([
         request("/v1/admin/products"),
@@ -1077,7 +1122,7 @@
       if (["owner", "admin"].includes(currentIdentity?.role)) {
         renderShipping(await request("/v1/admin/shipping"));
       }
-      setStatus(`${products.length} produit(s), ${categories.length} catégorie(s).`);
+      setStatus(successMessage || `${products.length} produit(s), ${categories.length} catégorie(s).`);
     } catch (error) {
       setStatus(error.message, true);
     }

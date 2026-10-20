@@ -72,9 +72,16 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 		"/fulfill",
 		"Confirmer le paiement reçu",
 		"Marquer comme expédiée",
+		"showOrderActionForm",
+		"order-action-form",
+		"Référence du virement ou reçu",
+		"Numéro de suivi",
 	} {
 		if !strings.Contains(string(admin), feature) {
 			t.Errorf("admin script is missing shipping configuration feature %q", feature)
 		}
+	}
+	if strings.Contains(string(admin), "prompt(") {
+		t.Error("admin script must not use unsupported blocking prompt dialogs")
 	}
 }
