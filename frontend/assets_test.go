@@ -64,6 +64,8 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 	}
 	for _, feature := range []string{
 		"/v1/admin/shipping",
+		"/v1/admin/modules/ps_newproducts/config",
+		"Réglages du module enregistrés.",
 		"Configuration transport enregistrée.",
 		"country_codes",
 		"carrier_code",
@@ -80,6 +82,19 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 	} {
 		if !strings.Contains(string(admin), feature) {
 			t.Errorf("admin script is missing shipping configuration feature %q", feature)
+		}
+	}
+	adminPage, err := fs.ReadFile(AdminAssets, "admin/index.html")
+	if err != nil {
+		t.Fatalf("read admin page: %v", err)
+	}
+	for _, feature := range []string{
+		"module-settings-panel",
+		"Fenêtre de publication (jours)",
+		"Nombre maximal de produits",
+	} {
+		if !strings.Contains(string(adminPage), feature) {
+			t.Errorf("admin page is missing module settings feature %q", feature)
 		}
 	}
 	if strings.Contains(string(admin), "prompt(") {

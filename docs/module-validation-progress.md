@@ -88,10 +88,16 @@ immédiate après modification.
 
 Cette preuve ne prétend pas exécuter le PHP tiers : l’IR est une règle de
 traduction explicite et bornée. Elle ne couvre ni le paquet PrestaShop Addons
-amont (le test fabrique un manifeste EUROMNI), ni une interface d’administration
-pour modifier les réglages, ni le rendu Smarty, ni la publication dans le volume
-PostgreSQL persistant de la stack `euromni-cms-test`. Ces étapes restent
-nécessaires avant de qualifier l’import complet dans le CMS.
+amont (le test fabrique un manifeste EUROMNI), ni le rendu Smarty, ni la
+publication dans le volume PostgreSQL persistant de la stack
+`euromni-cms-test`. Ces étapes restent nécessaires avant de qualifier l’import
+complet dans le CMS.
+
+Les rôles `owner` et `admin` peuvent lire et modifier `days` et `limit` depuis
+l’administration. Les endpoints sont authentifiés, limités à `ps_newproducts`
+installé dans la boutique de la session, valident les mêmes bornes que le
+runtime et ne remplacent pas les autres clés de `shop_modules.config`. L’écran
+affiche un état explicite si le module n’est pas installé.
 
 Validation ciblée :
 

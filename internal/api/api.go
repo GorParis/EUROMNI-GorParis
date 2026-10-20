@@ -70,6 +70,8 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/admin/orders/{id}/status", withOrderWriteAuth(adminOrderStatus))
 	mux.HandleFunc("GET /v1/admin/shipping", withStaffAuth(adminShippingConfig))
 	mux.HandleFunc("PUT /v1/admin/shipping", withOrderWriteAuth(adminShippingConfig))
+	mux.HandleFunc("GET /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
+	mux.HandleFunc("PUT /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("GET /v1/admin/shipping/versions/targets", withOrderWriteAuth(adminShippingRateVersionTargets))
 	mux.HandleFunc("GET /v1/admin/shipping/versions", withOrderWriteAuth(adminShippingRateVersions))
 	mux.HandleFunc("POST /v1/admin/shipping/versions/{rateVersion}/restore", withOrderWriteAuth(adminRestoreShippingRateVersion))

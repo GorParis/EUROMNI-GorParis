@@ -116,6 +116,23 @@
           <p class="muted">Les variantes, prix, options et stocks sont remplacés par les valeurs enregistrées dans le formulaire.</p>
           <div id="products" class="product-list"></div>
         </section>
+        <section id="module-settings-panel" class="panel" hidden>
+          <h2>Modules installés</h2>
+          <p class="muted">Réglages de la vitrine PrestaShop « Nouveaux produits ». Réservé aux rôles owner et admin.</p>
+          <p id="module-settings-status" class="status" role="status" aria-live="polite"></p>
+          <form id="new-products-settings-form" hidden>
+            <div class="form-grid">
+              <label>Fenêtre de publication (jours)
+                <input name="days" type="number" min="0" max="3650" step="1" required />
+                <span class="muted">0 désactive le module ; maximum 3 650 jours.</span>
+              </label>
+              <label>Nombre maximal de produits
+                <input name="limit" type="number" min="1" max="100" step="1" required />
+              </label>
+            </div>
+            <button type="submit">Enregistrer les réglages</button>
+          </form>
+        </section>
         <section class="panel">
           <h2 id="product-form-title">Créer un produit</h2>
           <form id="product-form">

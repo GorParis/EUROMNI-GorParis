@@ -5,6 +5,9 @@
   const status = document.querySelector("#status");
   const logoutButton = document.querySelector("#logout");
   const productForm = document.querySelector("#product-form");
+  const moduleSettingsPanel = document.querySelector("#module-settings-panel");
+  const moduleSettingsStatus = document.querySelector("#module-settings-status");
+  const newProductsSettingsForm = document.querySelector("#new-products-settings-form");
   const categoryForm = document.querySelector("#category-form");
   const brandForm = document.querySelector("#brand-form");
   const supplierForm = document.querySelector("#supplier-form");
@@ -63,7 +66,9 @@
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (response.status === 401) clearSession();
-      throw new Error(payload.error || `Erreur HTTP ${response.status}`);
+      const error = new Error(payload.error || `Erreur HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
     }
     return payload.data;
   }
@@ -85,6 +90,7 @@
     document.querySelector("#orders-panel").hidden =
       !["owner", "admin", "support"].includes(identity.role);
     shippingPanel.hidden = !["owner", "admin"].includes(identity.role);
+    moduleSettingsPanel.hidden = !["owner", "admin"].includes(identity.role);
     document.querySelector("#identity").textContent =
       `${identity.name || identity.email} · ${identity.email} · rôle ${identity.role}`;
   }
@@ -1123,10 +1129,30 @@
       }
       if (["owner", "admin"].includes(currentIdentity?.role)) {
         renderShipping(await request("/v1/admin/shipping"));
+        await loadNewProductsSettings();
       }
       setStatus(successMessage || `${products.length} produit(s), ${categories.length} catégorie(s).`);
     } catch (error) {
       setStatus(error.message, true);
+    }
+  }
+
+  async function loadNewProductsSettings() {
+    newProductsSettingsForm.hidden = true;
+    try {
+      const settings = await request("/v1/admin/modules/ps_newproducts/config");
+      newProductsSettingsForm.elements.days.value = settings.days;
+      newProductsSettingsForm.elements.limit.value = settings.limit;
+      newProductsSettingsForm.hidden = false;
+      moduleSettingsStatus.textContent = "Module installé.";
+      moduleSettingsStatus.dataset.kind = "info";
+    } catch (error) {
+      if (error.status === 404) {
+        moduleSettingsStatus.textContent = "Le module ps_newproducts n’est pas installé pour cette boutique.";
+        moduleSettingsStatus.dataset.kind = "info";
+        return;
+      }
+      throw error;
     }
   }
 
@@ -1199,6 +1225,30 @@
       await refresh();
     } catch (error) {
       setStatus(error.message, true);
+    }
+  });
+
+  newProductsSettingsForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = newProductsSettingsForm.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      const settings = await request("/v1/admin/modules/ps_newproducts/config", {
+        method: "PUT",
+        body: JSON.stringify({
+          days: Number(newProductsSettingsForm.elements.days.value),
+          limit: Number(newProductsSettingsForm.elements.limit.value),
+        }),
+      });
+      newProductsSettingsForm.elements.days.value = settings.days;
+      newProductsSettingsForm.elements.limit.value = settings.limit;
+      moduleSettingsStatus.textContent = "Réglages du module enregistrés.";
+      moduleSettingsStatus.dataset.kind = "info";
+    } catch (error) {
+      moduleSettingsStatus.textContent = error.message;
+      moduleSettingsStatus.dataset.kind = "error";
+    } finally {
+      button.disabled = false;
     }
   });
 

@@ -106,6 +106,105 @@ func TestAdminLoginAndProtectedRoutes(t *testing.T) {
 	}
 }
 
+type testNewProductsSettingsReader struct {
+	*store.Memory
+	byShop map[string]store.NewProductsSettings
+}
+
+func (r *testNewProductsSettingsReader) GetNewProductsSettings(_ context.Context, shopID string) (store.NewProductsSettings, error) {
+	settings, ok := r.byShop[shopID]
+	if !ok {
+		return store.NewProductsSettings{}, store.ErrNotFound
+	}
+	return settings, nil
+}
+
+func (r *testNewProductsSettingsReader) UpdateNewProductsSettings(_ context.Context, shopID string, settings store.NewProductsSettings) error {
+	if _, ok := r.byShop[shopID]; !ok {
+		return store.ErrNotFound
+	}
+	r.byShop[shopID] = settings
+	return nil
+}
+
+func TestAdminNewProductsSettingsAuthorizationAndValidation(t *testing.T) {
+	originalReader := productReader
+	reader := &testNewProductsSettingsReader{
+		Memory: store.NewMemory(),
+		byShop: map[string]store.NewProductsSettings{
+			seed.ShopID:  {Days: 30, Limit: 8},
+			"other-shop": {Days: 90, Limit: 12},
+		},
+	}
+	SetProductReader(reader)
+	t.Cleanup(func() { SetProductReader(originalReader) })
+
+	mux := http.NewServeMux()
+	Register(mux)
+	owner := newCatalogTestAuthenticator("owner", seed.ShopID)
+	SetStaffAuthenticator(owner)
+	t.Cleanup(func() { SetStaffAuthenticator(nil) })
+
+	if response := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/ps_newproducts/config", "", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated read status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+	if response := performAdminRequest(mux, http.MethodPut, "/v1/admin/modules/ps_newproducts/config", "", `{"days":30,"limit":8}`); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated update status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+	for _, role := range []string{"editor", "support"} {
+		auth := newCatalogTestAuthenticator(role, seed.ShopID)
+		SetStaffAuthenticator(auth)
+		for _, method := range []string{http.MethodGet, http.MethodPut} {
+			response := performAdminRequest(mux, method, "/v1/admin/modules/ps_newproducts/config", auth.token, `{"days":30,"limit":8}`)
+			if response.Code != http.StatusForbidden {
+				t.Errorf("%s %s role status = %d, want %d; body=%s", method, role, response.Code, http.StatusForbidden, response.Body.String())
+			}
+		}
+	}
+
+	admin := newCatalogTestAuthenticator("admin", seed.ShopID)
+	SetStaffAuthenticator(admin)
+	get := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/ps_newproducts/config", admin.token, "")
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), `"days":30`) || !strings.Contains(get.Body.String(), `"limit":8`) {
+		t.Fatalf("settings read status/body = %d/%s", get.Code, get.Body.String())
+	}
+
+	for _, test := range []struct {
+		name, body string
+	}{
+		{name: "days out of range", body: `{"days":3651,"limit":8}`},
+		{name: "limit out of range", body: `{"days":30,"limit":101}`},
+		{name: "missing setting", body: `{"days":30}`},
+		{name: "unknown field", body: `{"days":30,"limit":8,"extra":true}`},
+		{name: "malformed JSON", body: `{"days":`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := performAdminRequest(mux, http.MethodPut, "/v1/admin/modules/ps_newproducts/config", admin.token, test.body)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusBadRequest, response.Body.String())
+			}
+		})
+	}
+
+	update := performAdminRequest(mux, http.MethodPut, "/v1/admin/modules/ps_newproducts/config", admin.token, `{"days":0,"limit":100}`)
+	if update.Code != http.StatusOK || reader.byShop[seed.ShopID] != (store.NewProductsSettings{Days: 0, Limit: 100}) {
+		t.Fatalf("settings update status/body = %d/%s; stored=%+v", update.Code, update.Body.String(), reader.byShop[seed.ShopID])
+	}
+	if reader.byShop["other-shop"] != (store.NewProductsSettings{Days: 90, Limit: 12}) {
+		t.Fatalf("settings update changed another shop: %+v", reader.byShop["other-shop"])
+	}
+	missingAuth := newCatalogTestAuthenticator("admin", "missing-shop")
+	SetStaffAuthenticator(missingAuth)
+	missing := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/ps_newproducts/config", missingAuth.token, "")
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("uninstalled module status = %d, want %d; body=%s", missing.Code, http.StatusNotFound, missing.Body.String())
+	}
+	unsupported := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/other/config", admin.token, "")
+	if unsupported.Code != http.StatusNotFound {
+		t.Fatalf("unsupported module status = %d, want %d; body=%s", unsupported.Code, http.StatusNotFound, unsupported.Body.String())
+	}
+}
+
 func TestAdminLoginIsUnavailableWithoutDatabaseAuthenticator(t *testing.T) {
 	originalReader := productReader
 	SetProductReader(store.NewMemory())

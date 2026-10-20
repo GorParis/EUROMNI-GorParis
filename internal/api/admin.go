@@ -826,6 +826,63 @@ func adminDeleteCategory(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type newProductsSettingsStore interface {
+	GetNewProductsSettings(context.Context, string) (store.NewProductsSettings, error)
+	UpdateNewProductsSettings(context.Context, string, store.NewProductsSettings) error
+}
+
+func adminNewProductsSettings(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("name") != store.NewProductsModuleName {
+		writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "module configuration not found"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	settingsStore, ok := currentProductReader().(newProductsSettingsStore)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "module configuration unavailable"})
+		return
+	}
+	if r.Method == http.MethodGet {
+		settings, err := settingsStore.GetNewProductsSettings(r.Context(), session.ShopID)
+		if err != nil {
+			writeModuleConfigError(w, err)
+			return
+		}
+		writePrivateJSON(w, http.StatusOK, map[string]any{"data": settings})
+		return
+	}
+	var input struct {
+		Days  *int `json:"days"`
+		Limit *int `json:"limit"`
+	}
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	if input.Days == nil || input.Limit == nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "days and limit are required"})
+		return
+	}
+	settings := store.NewProductsSettings{Days: *input.Days, Limit: *input.Limit}
+	if err := store.ValidateNewProductsQuery(settings.Days, settings.Limit); err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := settingsStore.UpdateNewProductsSettings(r.Context(), session.ShopID, settings); err != nil {
+		writeModuleConfigError(w, err)
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": settings})
+}
+
+func writeModuleConfigError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "module is not installed"})
+		return
+	}
+	writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "module configuration unavailable"})
+}
+
 func decodeAdminJSON(w http.ResponseWriter, r *http.Request, target any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	defer r.Body.Close()
