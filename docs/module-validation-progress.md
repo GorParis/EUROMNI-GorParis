@@ -39,7 +39,7 @@ Le module minimal doit démontrer :
 13. entrée IR dynamique : champ trigger `product_id` typé UUID validé, résolu en enveloppe ABI et transmis à `run(ptr,len)` par `Runtime.RunWithInput`
 14. provenance IR : hash SHA-256 calculé sur les octets PHP analysés ; le lowering rejette un hash source différent, une version plateforme manquante ou un adaptateur qui ne correspond pas à la plateforme
 15. manifeste de build v1 : lie provenance source, hash IR, ABI, capabilities dérivées et hash/taille Wasm ; sérialisation et vérification testées
-16. publication de build : Wasm écrit d’abord dans le FileStore content-addressed, puis hash Wasm et manifeste JSONB enregistrés ensemble dans `modules`
+16. publication de build : Wasm écrit d’abord dans le FileStore content-addressed ; les métadonnées sont ensuite enregistrées transactionnellement avec le build courant
 17. réconciliation : hashes référencés lus dans PostgreSQL ; seuls les objets absents du registre et plus anciens que le délai de grâce peuvent être supprimés
 18. ordonnanceur autonome ajouté sous `cmd/artifact-reconciler` : passage immédiat puis périodique, arrêt SIGINT/SIGTERM, retry après erreurs transitoires
 19. politique provisoire : grâce 7 jours, cadence normale 24 heures, retry 5 minutes ; valeurs configurables et à réviser avant production
@@ -236,6 +236,34 @@ La référence de compatibilité est la documentation développeur PrestaShop [`
 Les références Shopify et Magento sont épinglées et conservées dans [pipeline/fixtures/real-modules](../pipeline/fixtures/real-modules) avec leurs licences. `TestAnalyzeRealPlatformFixtures` les vérifie depuis le dépôt, sans réseau ni dépendance à `/tmp`. Les tests n’exécutent pas les apps, extensions ou modules ; ils valident uniquement la lecture de leurs manifests et configurations.
 
 La tranche IR v3 compile les entrées statiques et sait résoudre des références dynamiques UUID, entières et chaînes déclarées par le trigger. Sa provenance comprend les hashes PHP et archive, plus versions plateforme/adaptateur. `PublishModuleBuild` stocke le Wasm puis enregistre hash et manifeste JSONB dans une mise à jour SQL atomique. Le binaire autonome `cmd/artifact-reconciler` lance la réconciliation immédiatement puis à chaque intervalle configuré ; ses défauts provisoires sont 7 jours de grâce et 24 heures de cadence, à revoir avant production. Son test de scheduler couvre le cycle/réessai. Les pilotes Wasm validés couvrent WooCommerce `woocommerce_product_query` (synthétique), WooCommerce `woocommerce_get_catalog_ordering_args` (archive réelle épinglée, deux tris publiés) et PrestaShop `ps_newproducts`; pour ce dernier, les réglages admin owner/admin, l’ingestion du ZIP source, la publication et l’exécution dans le CMS de test sont démontrées.
+
+## Versionnement et pinning des builds — QP-02
+
+Les migrations PostgreSQL `0016_immutable_module_builds.sql` et MariaDB
+`0010_immutable_module_builds.sql` conservent les builds historiques dans
+`module_builds`, initialisent le pointeur courant depuis les métadonnées
+existantes et associent les installations aux builds disponibles. Une
+publication ultérieure avance le pointeur du module sans modifier les
+installations déjà épinglées. La première publication lie les installations
+historiques non versionnées à un build afin de préserver leur capacité d’exécution.
+
+`RegisterModuleBuild` enregistre le build et met à jour le pointeur courant dans
+une transaction ; un hash déjà enregistré avec une provenance différente est
+refusé. La validation du manifeste exige les hashes source/IR/Wasm, versions et
+identifiants requis, ABI, capacités triées sans doublons et refuse les champs
+JSON inconnus. Elle ne remplace pas encore un registre des versions d’outils
+autorisées. `PromoteInstalledModuleBuild` fournit une promotion explicite et
+transactionnelle pour une installation donnée. L’inventaire et le runtime lisent
+le build de l’installation, tandis que les nouvelles installations choisissent
+le build courant ou le hash explicitement sélectionné. Le réconciliateur conserve
+les artefacts des builds courants et des installations qui les épinglent. Le
+test PostgreSQL vérifie la liaison initiale des installations, la conservation
+des pins de deux boutiques après une publication, la promotion isolée d’une
+boutique et l’absence de mutation après un conflit
+de provenance. `TestMariaDBMigrationAndCommerceFlow` a également appliqué
+successivement la baseline puis la migration incrémentale et validé le parcours
+commerce MariaDB. QP-02 reste ouvert pour fixer un registre des versions
+d’outils autorisées dans le manifeste.
 
 ## Prochaines étapes prévisibles
 

@@ -7,11 +7,136 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"testing"
 
 	"euromni/internal/seed"
 	"euromni/internal/testdb"
 )
+
+func TestPostgresModuleBuildPublicationPreservesInstallationPin(t *testing.T) {
+	ctx := context.Background()
+	database := testdb.Start(t)
+	db := NewSQL(database)
+
+	moduleID, err := NewCatalogID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO modules (id, name) VALUES ($1, $2)
+	`, moduleID, "integration.versioned-module"); err != nil {
+		t.Fatalf("create versioned module: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO shop_modules (shop_id, module_id, status, capabilities)
+		VALUES ($1, $2, 'installed', ARRAY['catalog']::text[])
+	`, seed.ShopID, moduleID); err != nil {
+		t.Fatalf("create installed module record: %v", err)
+	}
+	otherShopID, err := NewCatalogID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO shops (id, slug, name) VALUES ($1, $2, 'Second build pin test shop')
+	`, otherShopID, "build-pin-"+moduleID); err != nil {
+		t.Fatalf("create second shop: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO shop_modules (shop_id, module_id, status, capabilities)
+		VALUES ($1, $2, 'installed', ARRAY['catalog']::text[])
+	`, otherShopID, moduleID); err != nil {
+		t.Fatalf("create second shop's installed module record: %v", err)
+	}
+
+	firstBytes := []byte("first module build")
+	firstHash := sha256.Sum256(firstBytes)
+	firstManifest := testBuildManifestJSON(firstBytes, "first")
+	if err := db.RegisterModuleBuild(ctx, moduleID, firstHash[:], firstManifest); err != nil {
+		t.Fatalf("register first build: %v", err)
+	}
+	installed, err := db.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil {
+		t.Fatalf("read first installed build: %v", err)
+	}
+	if string(installed.WASMSHA256) != string(firstHash[:]) {
+		t.Fatal("first registration did not pin the existing installation")
+	}
+
+	secondBytes := []byte("second module build")
+	secondHash := sha256.Sum256(secondBytes)
+	secondManifest := testBuildManifestJSON(secondBytes, "second")
+	if err := db.RegisterModuleBuild(ctx, moduleID, secondHash[:], secondManifest); err != nil {
+		t.Fatalf("register second build: %v", err)
+	}
+	installed, err = db.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil {
+		t.Fatalf("read pinned installation after publication: %v", err)
+	}
+	if string(installed.WASMSHA256) != string(firstHash[:]) {
+		t.Fatal("publishing a newer build replaced an existing shop installation")
+	}
+	otherShopModule, err := db.GetInstalledModule(ctx, otherShopID, moduleID)
+	if err != nil {
+		t.Fatalf("read second shop's pinned installation: %v", err)
+	}
+	if string(otherShopModule.WASMSHA256) != string(firstHash[:]) {
+		t.Fatal("publishing a newer build replaced the second shop's installation")
+	}
+	var currentHash []byte
+	if err := database.QueryRowContext(ctx, `
+		SELECT wasm_sha256 FROM modules WHERE id = $1
+	`, moduleID).Scan(&currentHash); err != nil {
+		t.Fatalf("read current build: %v", err)
+	}
+	if string(currentHash) != string(secondHash[:]) {
+		t.Fatal("module current build was not advanced")
+	}
+	if err := db.PromoteInstalledModuleBuild(ctx, seed.ShopID, moduleID, fmt.Sprintf("%x", secondHash)); err != nil {
+		t.Fatalf("promote second build for installed shop: %v", err)
+	}
+	installed, err = db.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil {
+		t.Fatalf("read explicitly promoted build: %v", err)
+	}
+	if string(installed.WASMSHA256) != string(secondHash[:]) {
+		t.Fatal("explicit promotion did not update the shop's pinned build")
+	}
+	otherShopModule, err = db.GetInstalledModule(ctx, otherShopID, moduleID)
+	if err != nil {
+		t.Fatalf("read second shop after first shop promotion: %v", err)
+	}
+	if string(otherShopModule.WASMSHA256) != string(firstHash[:]) {
+		t.Fatal("promoting one shop changed another shop's pinned build")
+	}
+	conflictingManifest := testBuildManifestJSON(secondBytes, "conflicting")
+	if err := db.RegisterModuleBuild(ctx, moduleID, secondHash[:], conflictingManifest); !errors.Is(err, ErrInvalidBuildManifest) {
+		t.Fatalf("conflicting provenance for an immutable digest error = %v, want ErrInvalidBuildManifest", err)
+	}
+	if err := database.QueryRowContext(ctx, `
+		SELECT wasm_sha256 FROM modules WHERE id = $1
+	`, moduleID).Scan(&currentHash); err != nil {
+		t.Fatalf("read current build after rejected publication: %v", err)
+	}
+	if string(currentHash) != string(secondHash[:]) {
+		t.Fatal("rejected publication changed the current build")
+	}
+	referencedDigests, err := db.ListModuleWASMDigests(ctx)
+	if err != nil {
+		t.Fatalf("list retained build artifacts: %v", err)
+	}
+	referenced := make(map[string]bool, len(referencedDigests))
+	for _, digest := range referencedDigests {
+		referenced[digest] = true
+	}
+	if !referenced[fmt.Sprintf("%x", firstHash)] || !referenced[fmt.Sprintf("%x", secondHash)] {
+		t.Fatal("artifact reconciliation omitted a current or shop-pinned build")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM modules WHERE id = $1`, moduleID); err != nil {
+		t.Fatalf("delete versioned module and its builds: %v", err)
+	}
+}
 
 func TestPostgresStoreIntegration(t *testing.T) {
 	ctx := context.Background()

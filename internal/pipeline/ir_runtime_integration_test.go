@@ -134,6 +134,9 @@ add_action('woocommerce_product_query', function ($query) {
 	if err != nil {
 		t.Fatalf("publish dynamic module build: %v", err)
 	}
+	if err := moduleStore.PromoteInstalledModuleBuild(ctx, seed.ShopID, seed.ModuleID, dynamicArtifact.SHA256); err != nil {
+		t.Fatalf("promote dynamic build for the test shop: %v", err)
+	}
 	storedDynamicWasm, err := artifactStore.Get(ctx, dynamicArtifact.SHA256)
 	if err != nil {
 		t.Fatalf("read published dynamic Wasm: %v", err)

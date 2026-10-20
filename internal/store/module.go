@@ -71,11 +71,17 @@ func (s *Store) ListModuleInventory(ctx context.Context, shopID string) ([]Modul
 		return nil, sql.ErrConnDone
 	}
 	rows, err := s.SQL.QueryContext(ctx, `
-		SELECT m.id::text, m.name, m.abi_version, m.wasm_sha256,
-		       m.build_manifest::text, sm.status::text,
+		SELECT m.id::text, m.name, m.abi_version,
+		       COALESCE(b.wasm_sha256, m.wasm_sha256),
+		       COALESCE(b.build_manifest::text, m.build_manifest::text), sm.status::text,
 		       COALESCE(array_to_json(sm.capabilities)::text, '[]')
 		FROM modules m
 		LEFT JOIN shop_modules sm ON sm.module_id = m.id AND sm.shop_id::text = $1
+		LEFT JOIN module_builds b
+		  ON b.module_id = m.id
+		 AND b.id = CASE WHEN sm.status = 'installed'
+		                 THEN sm.build_id
+		                 ELSE m.current_build_id END
 		ORDER BY m.name
 	`, shopID)
 	if err != nil {
@@ -139,21 +145,26 @@ func (s *Store) InstallRegisteredNewProductsModule(ctx context.Context, shopID, 
 	if err != nil {
 		return err
 	}
+	if !isSHA256Hex(expectedWASMHash) {
+		return ErrModuleBuildUnsupported
+	}
+	expectedWASMHashBytes, _ := hex.DecodeString(expectedWASMHash)
 	tx, err := s.SQL.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	var moduleID, abiVersion string
+	var moduleID, buildID, abiVersion string
 	var wasmHash []byte
 	var manifestRaw sql.NullString
 	err = tx.QueryRowContext(ctx, `
-		SELECT id::text, abi_version, wasm_sha256, build_manifest::text
-		FROM modules
-		WHERE name = $1
-		FOR UPDATE
-	`, NewProductsModuleName).Scan(&moduleID, &abiVersion, &wasmHash, &manifestRaw)
+		SELECT m.id::text, b.id::text, m.abi_version, b.wasm_sha256, b.build_manifest::text
+		FROM modules m
+		JOIN module_builds b ON b.module_id = m.id AND b.id = m.current_build_id
+		WHERE m.name = $1 AND b.wasm_sha256 = $2
+		FOR UPDATE OF m
+	`, NewProductsModuleName, expectedWASMHashBytes).Scan(&moduleID, &buildID, &abiVersion, &wasmHash, &manifestRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -172,10 +183,11 @@ func (s *Store) InstallRegisteredNewProductsModule(ctx context.Context, shopID, 
 		return ErrModuleBuildUnsupported
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO shop_modules (shop_id, module_id, status, capabilities, config)
-		VALUES ($1, $2, 'installed', ARRAY['catalog']::text[], '{"days":30,"limit":8}'::jsonb)
+		INSERT INTO shop_modules (shop_id, module_id, build_id, status, capabilities, config)
+		VALUES ($1, $2, $3, 'installed', ARRAY['catalog']::text[], '{"days":30,"limit":8}'::jsonb)
 		ON CONFLICT (shop_id, module_id) DO UPDATE
 		SET status = 'installed',
+		    build_id = EXCLUDED.build_id,
 		    capabilities = EXCLUDED.capabilities,
 		    config = CASE
 		        WHEN shop_modules.config ? 'days' AND shop_modules.config ? 'limit'
@@ -183,7 +195,7 @@ func (s *Store) InstallRegisteredNewProductsModule(ctx context.Context, shopID, 
 		        ELSE shop_modules.config || EXCLUDED.config
 		    END,
 		    updated_at = now()
-	`, shopID, moduleID)
+	`, shopID, moduleID, buildID)
 	if err != nil {
 		return err
 	}
@@ -326,10 +338,12 @@ func (s *Store) GetInstalledModule(ctx context.Context, shopID, moduleID string)
 	var capabilitiesJSON string
 	var configJSON string
 	err := s.SQL.QueryRowContext(ctx, `
-		SELECT m.id::text, m.name, m.abi_version, m.wasm_sha256,
+		SELECT m.id::text, m.name, m.abi_version, b.wasm_sha256,
 		       array_to_json(sm.capabilities)::text, sm.config::text
 		FROM shop_modules sm
 		JOIN modules m ON m.id = sm.module_id
+		LEFT JOIN module_builds b
+		  ON b.module_id = m.id AND b.id = sm.build_id
 		WHERE sm.shop_id::text = $1
 		  AND sm.module_id::text = $2
 		  AND sm.status = 'installed'
@@ -355,10 +369,12 @@ func (s *Store) GetInstalledModuleByName(ctx context.Context, shopID, name strin
 	var capabilitiesJSON string
 	var configJSON string
 	err := s.SQL.QueryRowContext(ctx, `
-		SELECT m.id::text, m.name, m.abi_version, m.wasm_sha256,
+		SELECT m.id::text, m.name, m.abi_version, b.wasm_sha256,
 		       array_to_json(sm.capabilities)::text, sm.config::text
 		FROM shop_modules sm
 		JOIN modules m ON m.id = sm.module_id
+		LEFT JOIN module_builds b
+		  ON b.module_id = m.id AND b.id = sm.build_id
 		WHERE sm.shop_id::text = $1
 		  AND m.name = $2
 		  AND sm.status = 'installed'
