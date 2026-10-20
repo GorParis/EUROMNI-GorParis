@@ -294,24 +294,17 @@ func TestLowerRealPrestaShopNewProductsFixture(t *testing.T) {
 	if ir.Platform != "prestashop" ||
 		len(ir.Triggers) != 1 ||
 		ir.Triggers[0].Name != "displayHome" ||
-		ir.Triggers[0].Fields["days"] != "integer" ||
-		ir.Triggers[0].Fields["limit"] != "integer" ||
+		len(ir.Triggers[0].Fields) != 0 ||
 		len(ir.Operations) != 1 ||
 		ir.Operations[0].Call != "catalog.product.newest" {
-		t.Fatalf("lowered IR = %#v, want a typed new-products catalog call", ir)
+		t.Fatalf("lowered IR = %#v, want a static new-products catalog call using installed module settings", ir)
 	}
-	envelope, err := BuildIRCallEnvelope(ir, []byte(`{"days":30,"limit":8}`))
+	envelope, err := BuildIRCallEnvelope(ir, []byte(`{}`))
 	if err != nil {
 		t.Fatalf("BuildIRCallEnvelope() returned error: %v", err)
 	}
-	if !bytes.Contains(envelope, []byte(`"days":30`)) || !bytes.Contains(envelope, []byte(`"limit":8`)) {
-		t.Fatalf("ABI envelope = %s, want mapped new-product settings", envelope)
-	}
-	if _, err := BuildIRCallEnvelope(ir, []byte(`{"days":30.5,"limit":8}`)); err == nil {
-		t.Fatal("BuildIRCallEnvelope() accepted a non-integer days setting")
-	}
-	if _, err := BuildIRCallEnvelope(ir, []byte(`{"days":-1,"limit":8}`)); err == nil {
-		t.Fatal("BuildIRCallEnvelope() accepted a negative days setting")
+	if !bytes.Contains(envelope, []byte(`"input":{}`)) {
+		t.Fatalf("ABI envelope = %s, want empty trigger input and host-side module settings", envelope)
 	}
 	if _, err := CompileIRToWasm(ir); err != nil {
 		t.Fatalf("CompileIRToWasm() returned error: %v", err)

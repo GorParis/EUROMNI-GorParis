@@ -2,6 +2,7 @@ package wasm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"time"
@@ -17,6 +18,7 @@ type TrustedContext struct {
 	shopID   string
 	moduleID string
 	caps     map[Capability]struct{}
+	config   []byte
 }
 
 func trustedContext(shopID, moduleID string, caps ...Capability) (TrustedContext, error) {
@@ -42,11 +44,6 @@ func (c TrustedContext) Has(cap Capability) bool {
 
 type productGetInput struct {
 	ProductID string `json:"product_id"`
-}
-
-type productNewestInput struct {
-	Days  int `json:"days"`
-	Limit int `json:"limit"`
 }
 
 func (h *Host) Invoke(ctx context.Context, tc TrustedContext, raw []byte) []byte {
@@ -120,12 +117,23 @@ func (h *Host) catalogProductList(ctx context.Context, tc TrustedContext, env *a
 }
 
 func (h *Host) catalogProductNewest(ctx context.Context, tc TrustedContext, env *abi.Envelope) (any, error) {
-	in, err := abi.DecodeInput[productNewestInput](env.Input)
-	if err != nil {
+	if _, err := abi.DecodeInput[struct{}](env.Input); err != nil {
 		return nil, err
 	}
-	if err := store.ValidateNewProductsQuery(in.Days, in.Limit); err != nil {
-		return nil, abi.Fail(abi.CodeInvalid, err.Error())
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal(tc.config, &config); err != nil || config == nil {
+		return nil, abi.Fail(abi.CodeInvalid, "module configuration is invalid")
+	}
+	days, err := configuredInteger(config, "days")
+	if err != nil {
+		return nil, abi.Fail(abi.CodeInvalid, "module configuration is missing days")
+	}
+	limit, err := configuredInteger(config, "limit")
+	if err != nil {
+		return nil, abi.Fail(abi.CodeInvalid, "module configuration is missing limit")
+	}
+	if err := store.ValidateNewProductsQuery(days, limit); err != nil {
+		return nil, abi.Fail(abi.CodeInvalid, "module configuration has invalid new-products settings")
 	}
 	if h == nil || h.Products == nil {
 		return nil, errors.New("catalog unavailable")
@@ -134,7 +142,7 @@ func (h *Host) catalogProductNewest(ctx context.Context, tc TrustedContext, env 
 	if !ok {
 		return nil, errors.New("new products unavailable")
 	}
-	products, err := reader.ListNewProducts(ctx, tc.shopID, in.Days, in.Limit)
+	products, err := reader.ListNewProducts(ctx, tc.shopID, days, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +150,18 @@ func (h *Host) catalogProductNewest(ctx context.Context, tc TrustedContext, env 
 		products = []store.ProductView{}
 	}
 	return products, nil
+}
+
+func configuredInteger(config map[string]json.RawMessage, key string) (int, error) {
+	raw, exists := config[key]
+	if !exists {
+		return 0, errors.New("setting is missing")
+	}
+	var value *int
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		return 0, errors.New("setting must be an integer")
+	}
+	return *value, nil
 }
 
 func (h *Host) catalogProductGet(ctx context.Context, tc TrustedContext, env *abi.Envelope) (any, error) {

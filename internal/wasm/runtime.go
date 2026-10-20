@@ -240,6 +240,7 @@ func (r *Runtime) runInstalled(ctx context.Context, moduleStore *store.Store, sh
 	if err != nil {
 		return nil, err
 	}
+	trusted.config = append([]byte(nil), installed.Config...)
 	if input != nil {
 		return r.runWithInput(ctx, trusted, key, exportName, input)
 	}

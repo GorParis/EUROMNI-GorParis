@@ -164,18 +164,8 @@ func LowerPHPAnalysisToIR(module string, analysis *PHPAnalysis, provenance Sourc
 		analysis.Hooks[0] == "displayHome" &&
 		hasPHPHookDetail(analysis.HookDetails, PHPHook{Name: "displayHome", Kind: "display", Handler: "renderWidget"}) &&
 		hasPHPFeature(analysis.Features, "prestashop.catalog.new_products"):
-		trigger = IRTrigger{
-			Kind:   "hook",
-			Name:   "displayHome",
-			Fields: map[string]string{"days": "integer", "limit": "integer"},
-		}
-		operation = IROperation{
-			Call: "catalog.product.newest",
-			Input: map[string]IRValue{
-				"days":  {TriggerField: "days"},
-				"limit": {TriggerField: "limit"},
-			},
-		}
+		trigger = IRTrigger{Kind: "hook", Name: "displayHome"}
+		operation = IROperation{Call: "catalog.product.newest", Input: map[string]IRValue{}}
 	default:
 		return ModuleIR{}, errors.New("no IR lowering rule for PHP analysis")
 	}
@@ -273,7 +263,7 @@ func operationInputSchema(call string) (map[string]string, bool) {
 	case "catalog.product.get":
 		return map[string]string{"product_id": "uuid"}, true
 	case "catalog.product.newest":
-		return map[string]string{"days": "integer", "limit": "integer"}, true
+		return map[string]string{}, true
 	default:
 		return nil, false
 	}

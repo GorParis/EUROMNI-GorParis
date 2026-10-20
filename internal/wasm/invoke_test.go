@@ -23,6 +23,7 @@ func mustCtx(t *testing.T, caps ...Capability) TrustedContext {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tc.config = []byte(`{"days":30,"limit":8}`)
 	return tc
 }
 
@@ -53,7 +54,7 @@ func TestCatalogProductNewestSeed(t *testing.T) {
 	raw := h.Invoke(context.Background(), tc, []byte(`{
 		"abi":"euromni.abi.v1",
 		"call":"catalog.product.newest",
-		"input":{"days":30,"limit":1}
+		"input":{}
 	}`))
 	var resp abi.Response
 	if err := json.Unmarshal(raw, &resp); err != nil {
@@ -71,29 +72,48 @@ func TestCatalogProductNewestSeed(t *testing.T) {
 func TestCatalogProductNewestRejectsInvalidBounds(t *testing.T) {
 	h := testHost()
 	tc := mustCtx(t, CapCatalog)
-	for _, input := range []string{
+	for _, config := range []string{
 		`{"days":3651,"limit":1}`,
 		`{"days":30,"limit":101}`,
 		`{"days":30,"limit":0}`,
+		`{"days":30.5,"limit":8}`,
+		`{"days":-1,"limit":8}`,
+		`{"days":null,"limit":8}`,
 	} {
+		tc.config = []byte(config)
 		raw := h.Invoke(context.Background(), tc, []byte(`{
 			"abi":"euromni.abi.v1",
 			"call":"catalog.product.newest",
-			"input":`+input+`
+			"input":{}
 		}`))
 		if !bytes.Contains(raw, []byte(`"invalid"`)) {
-			t.Fatalf("invalid query %s was not rejected: %s", input, raw)
+			t.Fatalf("invalid module configuration %s was not rejected: %s", config, raw)
 		}
+	}
+}
+
+func TestCatalogProductNewestRequiresModuleSettings(t *testing.T) {
+	h := testHost()
+	tc := mustCtx(t, CapCatalog)
+	tc.config = []byte(`{"limit":8}`)
+	raw := h.Invoke(context.Background(), tc, []byte(`{
+		"abi":"euromni.abi.v1",
+		"call":"catalog.product.newest",
+		"input":{}
+	}`))
+	if !bytes.Contains(raw, []byte(`"invalid"`)) {
+		t.Fatalf("missing module setting was not rejected explicitly: %s", raw)
 	}
 }
 
 func TestCatalogProductNewestDisabledWithZeroDays(t *testing.T) {
 	h := testHost()
 	tc := mustCtx(t, CapCatalog)
+	tc.config = []byte(`{"days":0,"limit":8}`)
 	raw := h.Invoke(context.Background(), tc, []byte(`{
 		"abi":"euromni.abi.v1",
 		"call":"catalog.product.newest",
-		"input":{"days":0,"limit":8}
+		"input":{}
 	}`))
 	var resp abi.Response
 	if err := json.Unmarshal(raw, &resp); err != nil {

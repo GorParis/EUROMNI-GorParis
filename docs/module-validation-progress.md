@@ -66,26 +66,30 @@ incluses dans cette campagne.
 ## Pilote Wasm PrestaShop `ps_newproducts` — 20 octobre 2026
 
 Le lowering reconnaît le hook `displayHome`, son handler widget et les accès
-aux nouveaux produits et à leurs deux réglages. Il produit un appel
-`catalog.product.newest` dont le payload fournit `days` (fenêtre de nouveauté
-PrestaShop) et `limit` (nombre de produits configuré, défaut du module : 8).
+aux nouveaux produits et à leurs deux réglages. Il produit un appel statique
+`catalog.product.newest` ; l’hôte lit `days` (fenêtre de nouveauté PrestaShop)
+et `limit` (nombre de produits configuré, défaut du module : 8) depuis le
+document `shop_modules.config` associé au module et à la boutique. La
+configuration n’est jamais transmise par le guest.
 L’hôte rejette les fenêtres supérieures à 3 650 jours et les limites hors de
 1–100 ; une fenêtre nulle produit une liste vide, comme le widget désactivé.
 La requête ne retourne que les produits actifs créés dans la fenêtre, triés du
 plus récent au plus ancien.
 
 `TestLowerRealPrestaShopNewProductsFixture` vérifie l’analyse et le lowering
-sur l’entrée PHP réelle épinglée, le typage du payload, le refus d’une valeur
-non entière ou négative et la compilation. Le test d’intégration
+sur l’entrée PHP réelle épinglée et la compilation. Les tests hôte vérifient
+les bornes, le type entier et le refus d’une configuration manquante ou invalide.
+Le test d’intégration
 `TestRealPrestaShopNewProductsWasmRunsAsInstalledModule` attribue des dates
 synthétiques à des produits seedés, publie le Wasm et son manifeste dans une
 base PostgreSQL d’intégration jetable, charge le module installé dans Wasmtime,
-puis vérifie la réponse pour la fenêtre et la limite demandées.
+puis vérifie la réponse pour les réglages persistés et leur prise en compte
+immédiate après modification.
 
 Cette preuve ne prétend pas exécuter le PHP tiers : l’IR est une règle de
 traduction explicite et bornée. Elle ne couvre ni le paquet PrestaShop Addons
-amont (le test fabrique un manifeste EUROMNI), ni l’extraction automatique des
-réglages du back-office, ni le rendu Smarty, ni la publication dans le volume
+amont (le test fabrique un manifeste EUROMNI), ni une interface d’administration
+pour modifier les réglages, ni le rendu Smarty, ni la publication dans le volume
 PostgreSQL persistant de la stack `euromni-cms-test`. Ces étapes restent
 nécessaires avant de qualifier l’import complet dans le CMS.
 
@@ -135,13 +139,13 @@ La référence de compatibilité est la documentation développeur PrestaShop [`
 
 Les références Shopify et Magento sont épinglées et conservées dans [pipeline/fixtures/real-modules](../pipeline/fixtures/real-modules) avec leurs licences. `TestAnalyzeRealPlatformFixtures` les vérifie depuis le dépôt, sans réseau ni dépendance à `/tmp`. Les tests n’exécutent pas les apps, extensions ou modules ; ils valident uniquement la lecture de leurs manifests et configurations.
 
-La tranche IR v3 compile les entrées statiques et sait résoudre des références dynamiques UUID et entières. Sa provenance comprend les hashes PHP et archive, plus versions plateforme/adaptateur. `PublishModuleBuild` stocke le Wasm puis enregistre hash et manifeste JSONB dans une mise à jour SQL atomique. Le binaire autonome `cmd/artifact-reconciler` lance la réconciliation immédiatement puis à chaque intervalle configuré ; ses défauts provisoires sont 7 jours de grâce et 24 heures de cadence, à revoir avant production. Son test de scheduler couvre le cycle/réessai. Deux règles de lowering catalogue sont validées, WooCommerce `woocommerce_product_query` et PrestaShop `ps_newproducts`; la preuve PrestaShop reste limitée à la base d’intégration jetable et ne constitue pas encore une publication dans la stack CMS persistante.
+La tranche IR v3 compile les entrées statiques et sait résoudre des références dynamiques UUID et entières. Sa provenance comprend les hashes PHP et archive, plus versions plateforme/adaptateur. `PublishModuleBuild` stocke le Wasm puis enregistre hash et manifeste JSONB dans une mise à jour SQL atomique. Le binaire autonome `cmd/artifact-reconciler` lance la réconciliation immédiatement puis à chaque intervalle configuré ; ses défauts provisoires sont 7 jours de grâce et 24 heures de cadence, à revoir avant production. Son test de scheduler couvre le cycle/réessai. Deux règles de lowering catalogue sont validées, WooCommerce `woocommerce_product_query` et PrestaShop `ps_newproducts`; les réglages PrestaShop sont lus côté hôte depuis la configuration installée, mais leur édition et la publication dans la stack CMS persistante restent à démontrer.
 
 ## Prochaines étapes prévisibles
 
 1. vérifier le rejet avec hash ou ABI modifié
 2. vérifier le rejet si module non installé ou module retiré du registre
-3. connecter les réglages `days` et `limit` au flux réel de configuration/exécution des modules
+3. ajouter une interface autorisée pour consulter et modifier les réglages de modules installés, avec validation par schéma de module
 4. ajouter un importeur de paquets amont et un chemin de publication dans le CMS persistant ; décider ensuite comment prendre en charge le rendu de widgets
 5. définir des règles explicites de lowering pour d’autres triggers et vérifier leur sémantique
 6. revoir les valeurs provisoires en vue de la production et planifier la réconciliation dans le cycle du CMS

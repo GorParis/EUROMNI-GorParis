@@ -114,23 +114,23 @@ Deux règles explicites sont actuellement disponibles : le hook WooCommerce
 PrestaShop `ps_newproducts` sur `displayHome` vers
 `catalog.product.newest`. Cette dernière ne s’applique qu’à l’analyse qui
 reconnaît l’appel de nouveaux produits et ses réglages de fenêtre et de nombre.
-Les valeurs `days` et `limit` sont des champs entiers du payload d’exécution ;
-`days: 0` désactive le widget, et l’hôte borne les requêtes à 3 650 jours et
-100 produits. L’appel filtre les produits actifs sur `created_at`, du plus
-récent au plus ancien.
+À l’exécution, l’hôte lit `days` et `limit` depuis la configuration persistée
+de `shop_modules` ; ils ne sont pas fournis par le guest. `days: 0` désactive
+le widget, et l’hôte borne les requêtes à 3 650 jours et 100 produits. L’appel
+filtre les produits actifs sur `created_at`, du plus récent au plus ancien.
 
 L’IR accepte un appel par module et prend en charge `catalog.product.get`,
 `catalog.product.list`, `catalog.product.newest` et `catalog.category.list`.
 Conditions, chaînes d’opérations et traduction générale du code métier restent
 hors périmètre. Le lowering WooCommerce utilise encore une entrée statique ;
-ceux qui nécessitent des réglages utilisent des payloads dynamiques validés.
+le widget PrestaShop utilise un appel statique avec configuration lue côté hôte.
 
 Le test PrestaShop compile l’entrée PHP réelle épinglée, puis publie et exécute
 le Wasm sur une base PostgreSQL d’intégration jetable. Il ne lance jamais le PHP
 tiers. L’archive construite par le test porte un manifeste EUROMNI synthétique ;
-l’ingestion d’un paquet PrestaShop amont, l’extraction automatique des réglages,
-le rendu Smarty et la publication dans la base persistante de la stack locale
-ne sont pas encore couverts.
+l’ingestion d’un paquet PrestaShop amont, l’interface d’administration des
+réglages, le rendu Smarty et la publication dans la base persistante de la stack
+locale ne sont pas encore couverts.
 
 Le chemin lowering → Wasm → module installé → `Runtime.Run` est couvert par un
 test PostgreSQL sous le tag `integration` :

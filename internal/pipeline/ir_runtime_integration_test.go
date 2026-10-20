@@ -216,11 +216,6 @@ func TestRealPrestaShopNewProductsWasmRunsAsInstalledModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lower ps_newproducts source to IR: %v", err)
 	}
-	callEnvelope, err := BuildIRCallEnvelope(ir, []byte(`{"days":30,"limit":1}`))
-	if err != nil {
-		t.Fatalf("build displayHome call envelope: %v", err)
-	}
-
 	oldCreatedAt := time.Now().UTC().Add(-90 * 24 * time.Hour)
 	if _, err := database.ExecContext(ctx, `UPDATE products SET created_at = $1`, oldCreatedAt); err != nil {
 		t.Fatalf("age seeded catalog products: %v", err)
@@ -241,6 +236,13 @@ func TestRealPrestaShopNewProductsWasmRunsAsInstalledModule(t *testing.T) {
 	}
 	if len(expectedProducts) != 1 || expectedProducts[0].ID != newestProductID {
 		t.Fatalf("new product results = %#v, want only newest product %s", expectedProducts, newestProductID)
+	}
+	if _, err := database.ExecContext(ctx, `
+		UPDATE shop_modules
+		SET config = $3::jsonb
+		WHERE shop_id::text = $1 AND module_id::text = $2
+	`, seed.ShopID, seed.ModuleID, `{"days":30,"limit":1}`); err != nil {
+		t.Fatalf("configure installed PrestaShop module: %v", err)
 	}
 
 	wasmBytes, err := CompileIRToWasm(ir)
@@ -269,13 +271,28 @@ func TestRealPrestaShopNewProductsWasmRunsAsInstalledModule(t *testing.T) {
 	if err := runtime.LoadInstalled(ctx, moduleStore, seed.ShopID, seed.ModuleID, storedWasm); err != nil {
 		t.Fatalf("load published PrestaShop module: %v", err)
 	}
-	results, err := runtime.RunWithInput(ctx, moduleStore, seed.ShopID, seed.ModuleID, "run", callEnvelope)
+	results, err := runtime.Run(ctx, moduleStore, seed.ShopID, seed.ModuleID, "run")
 	if err != nil {
 		t.Fatalf("execute published PrestaShop module: %v", err)
 	}
 	expectedResponse := abi.EncodeOK("catalog.product.newest", "", expectedProducts)
 	if len(results) != 1 || results[0] != int32(len(expectedResponse)) {
 		t.Fatalf("guest result = %v, want successful new-products response length %d", results, len(expectedResponse))
+	}
+	if _, err := database.ExecContext(ctx, `
+		UPDATE shop_modules
+		SET config = $3::jsonb
+		WHERE shop_id::text = $1 AND module_id::text = $2
+	`, seed.ShopID, seed.ModuleID, `{"days":0,"limit":8}`); err != nil {
+		t.Fatalf("disable installed PrestaShop module widget: %v", err)
+	}
+	results, err = runtime.Run(ctx, moduleStore, seed.ShopID, seed.ModuleID, "run")
+	if err != nil {
+		t.Fatalf("execute module after changing installed settings: %v", err)
+	}
+	disabledResponse := abi.EncodeOK("catalog.product.newest", "", []store.ProductView{})
+	if len(results) != 1 || results[0] != int32(len(disabledResponse)) {
+		t.Fatalf("guest result after settings update = %v, want disabled response length %d", results, len(disabledResponse))
 	}
 }
 
