@@ -60,5 +60,30 @@ services:
       - -c
       - rm -rf .tmp/postgresql-16-tools && exec go test -p 1 -tags=integration -count=1 ./...
 
+  prestashop-import:
+    image: golang:1.23-bookworm
+    profiles: [module-import]
+    working_dir: /workspace
+    environment:
+      DATABASE_URL: postgres://euromni:${EUROMNI_DB_PASSWORD:?Set EUROMNI_DB_PASSWORD or configure .env}@postgres:5432/euromni?sslmode=disable
+      EUROMNI_ENVIRONMENT: development
+      EUROMNI_ARTIFACT_DIR: /var/lib/euromni/artifacts
+      CGO_ENABLED: "1"
+      GOCACHE: /tmp/go-build-cache
+      GOMODCACHE: /tmp/go-mod-cache
+      GOTOOLCHAIN: local
+    volumes:
+      - .:/workspace:ro,z
+      - module-artifacts:/var/lib/euromni/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - mkdir -p /var/lib/euromni/artifacts && chmod 700 /var/lib/euromni/artifacts && exec go run ./cmd/prestashop-import "$@"
+      - prestashop-import
+
 volumes:
   postgres-data:
+  module-artifacts:

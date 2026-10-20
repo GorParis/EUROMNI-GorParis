@@ -311,6 +311,72 @@ func TestLowerRealPrestaShopNewProductsFixture(t *testing.T) {
 	}
 }
 
+func TestBuildPrestaShopNewProductsFromUpstreamArchive(t *testing.T) {
+	archive, err := os.ReadFile("../../pipeline/fixtures/prestashop-ps_newproducts.zip")
+	if err != nil {
+		t.Fatalf("read pinned upstream archive: %v", err)
+	}
+	pkg, err := ReadPrestaShopNewProductsArchive(archive)
+	if err != nil {
+		t.Fatalf("read upstream PrestaShop archive: %v", err)
+	}
+	if pkg.Name != "ps_newproducts" || pkg.Version != "2.0.1" ||
+		pkg.EntryPath != "ps_newproducts-72e9476406319cbb91ac383121ca9967dc61f277/ps_newproducts.php" {
+		t.Fatalf("package metadata = %+v", pkg)
+	}
+	ir, wasmBytes, err := BuildPrestaShopNewProductsArchive(archive, "euromni-test-adapter")
+	if err != nil {
+		t.Fatalf("build Wasm from upstream package: %v", err)
+	}
+	if ir.Module != pkg.Name || ir.Provenance.ModuleVersion != pkg.Version ||
+		ir.Provenance.ArchiveSHA256 != pkg.ArchiveSHA ||
+		ir.Provenance.SourceReference != "sha256:"+pkg.ArchiveSHA ||
+		ir.Operations[0].Call != "catalog.product.newest" || len(wasmBytes) == 0 {
+		t.Fatalf("built package IR=%+v Wasm bytes=%d", ir, len(wasmBytes))
+	}
+}
+
+func TestReadPrestaShopNewProductsArchiveRejectsUnsafeAndUnrelatedPackages(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{
+			name: "traversal path",
+			files: map[string]string{
+				"ps_newproducts/config.xml":         `<module><name>ps_newproducts</name><version>1.0.0</version></module>`,
+				"ps_newproducts/ps_newproducts.php": `<?php`,
+				"ps_newproducts/../escape.php":      `<?php`,
+			},
+		},
+		{
+			name: "wrong module identity",
+			files: map[string]string{
+				"other-module/config.xml":         `<module><name>other-module</name><version>1.0.0</version></module>`,
+				"other-module/ps_newproducts.php": `<?php`,
+			},
+		},
+		{
+			name: "unsupported PHP behavior",
+			files: map[string]string{
+				"ps_newproducts/config.xml": `<module><name>ps_newproducts</name><version>1.0.0</version></module>`,
+				"ps_newproducts/ps_newproducts.php": `<?php
+$this->name = 'ps_newproducts';
+$this->version = '1.0.0';
+$this->registerHook('displayHome');
+`,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			archive := buildZIP(t, test.files)
+			if _, _, err := BuildPrestaShopNewProductsArchive(archive, "test"); err == nil {
+				t.Fatal("BuildPrestaShopNewProductsArchive accepted an unsupported package")
+			}
+		})
+	}
+}
+
 func TestAnalyzeRealNonPaymentWooCommerceFixture(t *testing.T) {
 	fixtureGlob := "../../pipeline/fixtures/woocommerce-extra-product-sorting-options/woocommerce-extra-product-sorting-options-*/woocommerce-extra-product-sorting-options.php"
 	paths, err := filepath.Glob(fixtureGlob)

@@ -97,8 +97,9 @@ Le prestataire de paiement réel est reporté jusqu’à ce que le CMS fonctionn
 dans le parcours visé et que plusieurs imports hors paiement aient été éprouvés.
 Le premier pilote et son niveau de preuve sont maintenant choisis :
 PrestaShop `ps_newproducts`, avec lowering, génération/exécution Wasm et
-publication dans une base PostgreSQL d’intégration jetable. L’import complet
-et la publication dans la base persistante de la stack CMS restent à cadrer.
+publication maintenant vérifiées dans une base PostgreSQL jetable et dans le
+CMS de test persistant. L’import de paquets PrestaShop Addons et le rendu
+complet restent à cadrer.
 L’ordre de reprise est donc :
 
 1. vérifier et stabiliser le fonctionnement du CMS sur la distribution locale
@@ -106,8 +107,8 @@ L’ordre de reprise est donc :
 2. éprouver les fixtures et pilotes de modules non financiers — analyses
    statiques multi-plateformes, pilote catalogue WooCommerce et premier chemin
    PrestaShop `ps_newproducts` jusqu’à Wasm publié/exécuté en base PostgreSQL
-   jetable passent ; l’import complet et la publication dans la stack CMS
-   persistante restent à démontrer ;
+   jetable passent ; le ZIP source amont `ps_newproducts` est maintenant ingéré
+   par un adaptateur borné, publié et exécuté dans la stack CMS de test ;
 3. reprendre les décisions CMS-05d encore ouvertes, dont la cible de sauvegarde
    hors machine et la mesure du RTO, avant un usage client ;
 4. seulement ensuite, étudier un prestataire de paiement réel.
@@ -122,15 +123,15 @@ Pour les imports, l’analyse statique a été éprouvée sur les modules non
 financiers WooCommerce `woocommerce-extra-product-sorting-options` et PrestaShop
 `ps_newproducts`, ainsi que sur PrestaShop `ps_emailalerts`, Shopify Discount
 et checkout UI, et Magento Japan Tax et gRPC. Le pilote `ps_newproducts` dispose
-maintenant d’un lowering ciblé vers la requête hôte des produits récents ; son
-test d’intégration compile l’entrée PHP réelle, publie puis exécute le Wasm avec
-des dates et produits synthétiques dans une base PostgreSQL jetable. Aucun PHP
-tiers n’est exécuté. La preuve ne couvre pas encore le paquet PrestaShop amont,
-l’extraction des réglages du back-office, le rendu Smarty ni la publication
-dans le volume persistant `euromni-cms-test`. Le pilote WooCommerce précédent
-reste basé sur une source synthétique ; deux imports complets au sens produit
-restent donc à éprouver. Les fixtures de paiement WooCommerce Stripe et
-PrestaShop `ps_cashondelivery` sont exclues de cette tranche.
+maintenant d’un lowering ciblé vers la requête hôte des produits récents. Le
+ZIP source amont officiel `ps_newproducts` est ingéré sans extraction sur disque
+ni exécution PHP ; son Wasm est publié, installé et exécuté dans le CMS de test
+via le profil Compose isolé `module-import`. La preuve n’inclut pas le paquet
+PrestaShop Addons, le rendu Smarty ni la compatibilité dans une instance
+PrestaShop réelle. Le pilote WooCommerce précédent reste basé sur une source
+synthétique ; deux imports complets au sens produit restent donc à éprouver.
+Les fixtures de paiement WooCommerce Stripe et PrestaShop `ps_cashondelivery`
+sont exclues de cette tranche.
 
 ## Sauvegardes hors machine — options examinées, phase en attente
 
@@ -432,18 +433,18 @@ Les étapes de sécurité et d’analyse statique ont été validées sur le pla
 - classification des hooks PrestaShop selon la documentation `9.x` (`action`, `display`, autre) et association à leurs handlers PHP observés
 - lecture des manifests TOML de deux références Shopify (Discount Function et extension checkout)
 - lecture du `module.xml`, des événements et de la DI de deux modules Magento (Japan Tax et gRPC)
-- IR v2 compilable en Wasm, avec hash des octets PHP analysés, version plateforme/adaptateur, appels statiques et référence dynamique UUID limitée à `catalog.product.get`
+- IR v3 compilable en Wasm, avec hash des octets PHP analysés, version plateforme/adaptateur, appels statiques et référence dynamique UUID limitée à `catalog.product.get`
 - manifeste de build v1 vérifiable qui relie IR, provenance, ABI, capabilities et artefact Wasm
 - publication artifact-first avec hash Wasm et manifeste JSONB écrits ensemble dans `modules`
 - ordonnanceur autonome de réconciliation ; valeurs provisoires consignées : grâce 7 jours, cadence 24 heures, retry 5 minutes (à réviser pour la production)
 - lowering déterministe d’un hook WooCommerce vers cet appel, puis exécution du Wasm généré comme module installé via PostgreSQL et `Runtime.Run`
 - validation/résolution d’un champ trigger dynamique dans une enveloppe ABI et passage au guest via `Runtime.RunWithInput`
 
-Les modules PrestaShop sont des snapshots de dépôts GitHub officiels épinglés à des commits ; leur source PHP est analysée mais n’est jamais exécutée. Ces snapshots ne sont pas les packages PrestaShop Addons et ne valident pas encore leur ingestion complète ni leur manifest. La traduction réelle de modules métier reste à construire.
+Les modules PrestaShop sont des snapshots de dépôts GitHub officiels épinglés à des commits ; leur source PHP est analysée mais n’est jamais exécutée. Le pilote `ps_newproducts` valide l’ingestion bornée du ZIP source amont, la publication dans la stack CMS de test et l’exécution Wasm. Ces snapshots ne sont pas les packages PrestaShop Addons et ne couvrent pas le rendu Smarty ni une installation dans une instance PrestaShop. La traduction générale de modules métier reste à construire.
 
 La documentation développeur PrestaShop `9.x` est la baseline actuelle. Il n’y a pas de documentation développeur publique `10.x` disponible au 13 octobre 2026 ; l’adaptateur ne revendique donc pas la compatibilité PS10 et devra être révisé à partir des contrats officiels lors de leur publication.
 
-Les quatre références Shopify et Magento sont épinglées à des commits et conservées dans `pipeline/fixtures/real-modules/` avec leurs fichiers de licence. Les tests confirment uniquement l’analyse déclarative ; aucune app ou extension n’est installée ou exécutée. Un test compile des IR statique et dynamique puis charge/exécute le Wasm par le chemin autorisé du runtime. Le manifeste de build v1 lie les hashes source, archive, IR et Wasm, avec versions et capabilities. `PublishModuleBuild` stocke le Wasm avant d’enregistrer ensemble hash et manifeste en base. L’ordonnanceur autonome utilise provisoirement une grâce de 7 jours, une cadence de 24 heures et un retry de 5 minutes ; son lancement reste indépendant du CMS et ces valeurs sont à revoir avant production. L’IR v2 ne traduit pas automatiquement les modules source.
+Les quatre références Shopify et Magento sont épinglées à des commits et conservées dans `pipeline/fixtures/real-modules/` avec leurs fichiers de licence. Les tests confirment uniquement l’analyse déclarative ; aucune app ou extension n’est installée ou exécutée. Un test compile des IR statique et dynamique puis charge/exécute le Wasm par le chemin autorisé du runtime. Le manifeste de build v1 lie les hashes source, archive, IR et Wasm, avec versions et capabilities. `PublishModuleBuild` stocke le Wasm avant d’enregistrer ensemble hash et manifeste en base. L’ordonnanceur autonome utilise provisoirement une grâce de 7 jours, une cadence de 24 heures et un retry de 5 minutes ; son lancement reste indépendant du CMS et ces valeurs sont à revoir avant production. L’IR v3 ne traduit pas automatiquement les modules source.
 
 ### 3. Sécurité et validation des modules
 

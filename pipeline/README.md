@@ -62,7 +62,7 @@ La traduction générale n’est pas encore implémentée. Le dépôt fournit d�
 le runtime Wasmtime, le contrat d’appel hôte, un stockage local d’artefacts
 content-addressed (`internal/artifact`) et une première analyse statique
 expérimentale pour WooCommerce, PrestaShop, Shopify et Magento. L’upload HTTP,
-l’analyse complète, la traduction et la publication orchestrée restent à construire.
+l’analyse générale et la traduction des autres comportements restent à construire.
 
 ## Première tranche IR → Wasm
 
@@ -119,6 +119,45 @@ de `shop_modules` ; ils ne sont pas fournis par le guest. `days: 0` désactive
 le widget, et l’hôte borne les requêtes à 3 650 jours et 100 produits. L’appel
 filtre les produits actifs sur `created_at`, du plus récent au plus ancien.
 
+### Ingestion bornée du ZIP amont `ps_newproducts`
+
+`cmd/prestashop-import` accepte uniquement le module PrestaShop `ps_newproducts`
+dans son ZIP amont : il vérifie les chemins, liens, doublons, nombre et tailles
+des entrées, puis lit `config.xml` et `ps_newproducts.php` sans extraire ni
+exécuter de PHP. Le build ne réussit que si le package correspond au comportement
+catalogue explicitement reconnu par l’adaptateur. Le SHA-256 de l’archive et
+celui du point d’entrée sont liés au manifeste de build.
+
+Essai local sans effet sur la base :
+
+```sh
+podman compose -p euromni-cms-test --profile cms --profile module-import run --rm -T \
+  prestashop-import \
+  --archive pipeline/fixtures/prestashop-ps_newproducts.zip \
+  --platform-version euromni-test-adapter \
+  --days 30 --limit 8
+```
+
+Pour publier et lancer le Wasm généré dans la base de démonstration isolée,
+ajouter `--install`. Ce mode exige `EUROMNI_ENVIRONMENT=development`, la base
+PostgreSQL locale nommée `euromni` et la boutique seedée `atelier-demo`. Le
+profil Compose `module-import` écrit les artefacts dans son volume privé
+`module-artifacts`, distinct du volume PostgreSQL mais conservé par le nom de
+projet `euromni-cms-test`. L’import enregistre le manifeste et l’installation
+dans PostgreSQL, puis charge et exécute le Wasm via Wasmtime ; aucun PHP tiers
+n’est exécuté.
+
+Le ZIP versionné est un snapshot épinglé du dépôt officiel PrestaShop
+(`ps_newproducts` 2.0.1, commit amont
+`72e9476406319cbb91ac383121ca9967dc61f277`, SHA-256
+`0f0750d8c2a1e6e12fc67169224f597f166b5c80b99cb306f53e9b339b17af77`), pas une
+archive de distribution Addons. `euromni-test-adapter` est une étiquette de
+provenance de test, pas une version PrestaShop effectivement installée. Cette
+preuve couvre l’ingestion bornée, la publication dans EUROMNI et l’exécution
+du Wasm dans le CMS de test ; elle ne couvre ni l’installation du PHP amont dans
+PrestaShop, ni le rendu Smarty, ni une parité fonctionnelle complète avec le
+module d’origine.
+
 L’IR accepte un appel par module et prend en charge `catalog.product.get`,
 `catalog.product.list`, `catalog.product.newest` et `catalog.category.list`.
 Conditions, chaînes d’opérations et traduction générale du code métier restent
@@ -126,11 +165,11 @@ hors périmètre. Le lowering WooCommerce utilise encore une entrée statique ;
 le widget PrestaShop utilise un appel statique avec configuration lue côté hôte.
 
 Le test PrestaShop compile l’entrée PHP réelle épinglée, puis publie et exécute
-le Wasm sur une base PostgreSQL d’intégration jetable. Il ne lance jamais le PHP
-tiers. L’archive construite par le test porte un manifeste EUROMNI synthétique ;
-l’ingestion d’un paquet PrestaShop amont, l’interface d’administration des
-réglages, le rendu Smarty et la publication dans la base persistante de la stack
-locale ne sont pas encore couverts.
+le Wasm sur une base PostgreSQL d’intégration jetable. Le test
+`TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS` reproduit aussi
+l’ingestion du ZIP amont et l’installation transactionnelle dans une base
+jetable. La commande `cmd/prestashop-import` permet le même parcours dans le
+volume de test local après validation explicite.
 
 Le chemin lowering → Wasm → module installé → `Runtime.Run` est couvert par un
 test PostgreSQL sous le tag `integration` :

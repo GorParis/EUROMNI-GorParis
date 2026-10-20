@@ -88,10 +88,8 @@ immédiate après modification.
 
 Cette preuve ne prétend pas exécuter le PHP tiers : l’IR est une règle de
 traduction explicite et bornée. Elle ne couvre ni le paquet PrestaShop Addons
-amont (le test fabrique un manifeste EUROMNI), ni le rendu Smarty, ni la
-publication dans le volume PostgreSQL persistant de la stack
-`euromni-cms-test`. Ces étapes restent nécessaires avant de qualifier l’import
-complet dans le CMS.
+amont, ni le rendu Smarty, ni l’installation du module PHP dans une instance
+PrestaShop.
 
 Les rôles `owner` et `admin` peuvent lire et modifier `days` et `limit` depuis
 l’administration. Les endpoints sont authentifiés, limités à `ps_newproducts`
@@ -105,6 +103,35 @@ Validation ciblée :
 go test -count=1 ./internal/pipeline ./internal/store ./internal/wasm
 go test -tags=integration -count=1 ./internal/pipeline -run '^TestRealPrestaShopNewProductsWasmRunsAsInstalledModule$'
 ```
+
+## Ingestion du ZIP amont et publication dans le CMS de test — 20 octobre 2026
+
+Le ZIP épinglé du dépôt officiel `PrestaShop/ps_newproducts` (commit
+`72e9476406319cbb91ac383121ca9967dc61f277`, SHA-256
+`0f0750d8c2a1e6e12fc67169224f597f166b5c80b99cb306f53e9b339b17af77`, version
+2.0.1) passe maintenant par un parcours d’ingestion spécialisé. Le validateur
+refuse les chemins dangereux, liens, entrées dupliquées ou archives dépassant
+les limites ; il lit seulement l’entrée PHP et `config.xml` après validation
+de l’ensemble. Il ne décompresse pas sur disque et n’exécute jamais le PHP. Le
+lowering strict refuse toute source qui ne correspond pas au seul comportement
+`displayHome`/nouveaux produits déjà pris en charge.
+
+`cmd/prestashop-import` peut faire un dry-run ou, avec `--install`, publier
+l’artefact Wasm content-addressed, enregistrer son manifeste, installer
+`ps_newproducts` et ses réglages dans la boutique `atelier-demo`, puis charger
+et exécuter le module installé sous Wasmtime. Le profil Compose `module-import`,
+lancé dans le projet `euromni-cms-test`, isole l’accès à la base PostgreSQL
+locale et conserve les artefacts dans un volume privé séparé. La commande exige
+aussi l’environnement `development` et rejette les hôtes de base non locaux.
+
+Le parcours a été exécuté avec succès dans le CMS de test : version amont 2.0.1,
+`days=30`, `limit=8`, manifeste et hachage publiés, puis appel catalogue Wasm
+exécuté. Le test `TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS`
+reproduit ce chemin dans une base PostgreSQL jetable. La valeur
+`euromni-test-adapter` de provenance n’affirme pas qu’une version réelle de
+PrestaShop est installée : il s’agit d’un ZIP source de dépôt officiel, et non
+du paquet PrestaShop Addons. Le rendu Smarty, la compatibilité sur une instance
+PrestaShop et l’activation de la vitrine restent hors de cette preuve.
 
 ## Pilote natif isolé transport/commande : Selfnamed WooCommerce
 
@@ -139,20 +166,19 @@ credentials réels est reportée à une décision distincte et devra utiliser de
 credentials de test, des données synthétiques et une sortie réseau explicitement
 autorisée et limitée.
 
-Les fixtures PrestaShop sont des snapshots des dépôts officiels GitHub, épinglés aux commits `359cd5c86c498964d9c38c97db9fcd13d73be3fe`, `d1bac20a8b5a4664759db5c6775be9b426ad4b62` et `72e9476406319cbb91ac383121ca9967dc61f277`. Elles valident l'analyse statique des fichiers PHP réels ; elles ne valident pas encore l'ingestion d'un package PrestaShop Addons ni la traduction en Wasm.
+Les fixtures PrestaShop sont des snapshots des dépôts officiels GitHub, épinglés aux commits `359cd5c86c498964d9c38c97db9fcd13d73be3fe`, `d1bac20a8b5a4664759db5c6775be9b426ad4b62` et `72e9476406319cbb91ac383121ca9967dc61f277`. Elles valident l'analyse statique des fichiers PHP réels. Le ZIP source `ps_newproducts` passe maintenant par l’ingestion bornée décrite plus haut ; cela ne couvre pas le paquet de distribution PrestaShop Addons.
 
 La référence de compatibilité est la documentation développeur PrestaShop [`9.x`](https://devdocs.prestashop-project.org/9/modules/concepts/hooks/), qui décrit l’enregistrement, les familles `action` / `display` et les méthodes handler. Les fixtures montrent une exception (`paymentOptions`) qui reste sans sémantique déduite. Aucune documentation développeur publique `10.x` n’a été trouvée au 13 octobre 2026 ; PS10 n’est donc pas déclaré compatible.
 
 Les références Shopify et Magento sont épinglées et conservées dans [pipeline/fixtures/real-modules](../pipeline/fixtures/real-modules) avec leurs licences. `TestAnalyzeRealPlatformFixtures` les vérifie depuis le dépôt, sans réseau ni dépendance à `/tmp`. Les tests n’exécutent pas les apps, extensions ou modules ; ils valident uniquement la lecture de leurs manifests et configurations.
 
-La tranche IR v3 compile les entrées statiques et sait résoudre des références dynamiques UUID et entières. Sa provenance comprend les hashes PHP et archive, plus versions plateforme/adaptateur. `PublishModuleBuild` stocke le Wasm puis enregistre hash et manifeste JSONB dans une mise à jour SQL atomique. Le binaire autonome `cmd/artifact-reconciler` lance la réconciliation immédiatement puis à chaque intervalle configuré ; ses défauts provisoires sont 7 jours de grâce et 24 heures de cadence, à revoir avant production. Son test de scheduler couvre le cycle/réessai. Deux règles de lowering catalogue sont validées, WooCommerce `woocommerce_product_query` et PrestaShop `ps_newproducts`; les réglages PrestaShop sont lus côté hôte depuis la configuration installée, mais leur édition et la publication dans la stack CMS persistante restent à démontrer.
+La tranche IR v3 compile les entrées statiques et sait résoudre des références dynamiques UUID et entières. Sa provenance comprend les hashes PHP et archive, plus versions plateforme/adaptateur. `PublishModuleBuild` stocke le Wasm puis enregistre hash et manifeste JSONB dans une mise à jour SQL atomique. Le binaire autonome `cmd/artifact-reconciler` lance la réconciliation immédiatement puis à chaque intervalle configuré ; ses défauts provisoires sont 7 jours de grâce et 24 heures de cadence, à revoir avant production. Son test de scheduler couvre le cycle/réessai. Deux règles de lowering catalogue sont validées, WooCommerce `woocommerce_product_query` et PrestaShop `ps_newproducts`; pour ce dernier, les réglages admin owner/admin, l’ingestion du ZIP source, la publication et l’exécution dans le CMS de test sont démontrées.
 
 ## Prochaines étapes prévisibles
 
-1. vérifier le rejet avec hash ou ABI modifié
-2. vérifier le rejet si module non installé ou module retiré du registre
-3. ajouter une interface autorisée pour consulter et modifier les réglages de modules installés, avec validation par schéma de module
-4. ajouter un importeur de paquets amont et un chemin de publication dans le CMS persistant ; décider ensuite comment prendre en charge le rendu de widgets
+1. comparer le comportement du widget rendu avec les données et la configuration PrestaShop d’origine ;
+2. examiner le paquet PrestaShop Addons et définir une preuve distincte de compatibilité avec une instance PrestaShop réelle ;
+3. décider et implémenter le rendu de widget EUROMNI, sans interpréter ou exécuter de template Smarty arbitraire.
 5. définir des règles explicites de lowering pour d’autres triggers et vérifier leur sémantique
 6. revoir les valeurs provisoires en vue de la production et planifier la réconciliation dans le cycle du CMS
 7. ajouter conditions et plusieurs opérations seulement après définition de leur contrat

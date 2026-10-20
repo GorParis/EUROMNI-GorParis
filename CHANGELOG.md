@@ -5,6 +5,7 @@
 - Ajout du lowering ciblé PrestaShop `ps_newproducts` vers `catalog.product.newest`, des entrées IR entières et du test PostgreSQL lowering → Wasm → publication → exécution ; la fixture PHP tierce n’est jamais exécutée et la publication dans la stack CMS persistante reste à faire.
 - Le runtime lit maintenant `days` et `limit` dans la configuration persistée du module installé, côté hôte et sans les exposer au guest ; le test PostgreSQL vérifie qu’une modification de configuration s’applique sans recharger le Wasm.
 - Ajout des endpoints admin protégés et du formulaire owner/admin pour modifier les réglages `ps_newproducts`, avec validation des bornes, isolation par boutique et conservation des autres clés de configuration.
+- Ajout d’une ingestion ZIP bornée du snapshot amont PrestaShop `ps_newproducts` et d’une commande de publication limitée au CMS de test local ; le Wasm est enregistré, installé puis exécuté sans lancer le PHP tiers.
 
 ## 2026-10-17
 
