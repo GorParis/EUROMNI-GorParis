@@ -69,6 +69,12 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 	for _, feature := range []string{
 		"/v1/admin/shipping",
 		"/v1/admin/modules/ps_newproducts/config",
+		"/v1/admin/modules",
+		"/installation",
+		"loadModuleInventory",
+		"renderModuleInventory",
+		"Référence source",
+		"Désinstaller",
 		"Réglages du module enregistrés.",
 		"Configuration transport enregistrée.",
 		"country_codes",
@@ -94,6 +100,7 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 	}
 	for _, feature := range []string{
 		"module-settings-panel",
+		"Gestion des modules",
 		"Fenêtre de publication (jours)",
 		"Nombre maximal de produits",
 	} {

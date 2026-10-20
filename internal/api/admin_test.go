@@ -205,6 +205,97 @@ func TestAdminNewProductsSettingsAuthorizationAndValidation(t *testing.T) {
 	}
 }
 
+type testModuleManager struct {
+	entries      []store.ModuleInventoryEntry
+	installed    []string
+	uninstalled  []string
+	installError error
+}
+
+func (manager *testModuleManager) ListModules(_ context.Context, _ string) ([]store.ModuleInventoryEntry, error) {
+	return manager.entries, nil
+}
+
+func (manager *testModuleManager) InstallModule(_ context.Context, shopID, name string) error {
+	manager.installed = append(manager.installed, shopID+":"+name)
+	return manager.installError
+}
+
+func (manager *testModuleManager) UninstallModule(_ context.Context, shopID, name string) error {
+	manager.uninstalled = append(manager.uninstalled, shopID+":"+name)
+	return nil
+}
+
+func TestAdminModuleManagementAuthorizationAndLifecycle(t *testing.T) {
+	previousManager := moduleManager
+	manager := &testModuleManager{entries: []store.ModuleInventoryEntry{
+		{
+			ID: "module-1", Name: store.NewProductsModuleName, ABIVersion: "euromni.abi.v1",
+			Platform: "prestashop", ModuleVersion: "2.0.1", Adapter: "euromni-test-adapter",
+			AdapterVersion: "1", WASMSHA256: strings.Repeat("a", 64), Capabilities: []string{"catalog"},
+			Status: "installed", CanUninstall: true,
+		},
+	}}
+	SetModuleManager(manager)
+	t.Cleanup(func() { SetModuleManager(previousManager) })
+	t.Cleanup(func() { SetStaffAuthenticator(nil) })
+
+	mux := http.NewServeMux()
+	Register(mux)
+	if response := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules", "", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated inventory status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+	for _, role := range []string{"editor", "support"} {
+		auth := newCatalogTestAuthenticator(role, seed.ShopID)
+		SetStaffAuthenticator(auth)
+		for _, request := range []struct {
+			method string
+			path   string
+		}{
+			{http.MethodGet, "/v1/admin/modules"},
+			{http.MethodPost, "/v1/admin/modules/ps_newproducts/installation"},
+			{http.MethodDelete, "/v1/admin/modules/ps_newproducts/installation"},
+		} {
+			response := performAdminRequest(mux, request.method, request.path, auth.token, "")
+			if response.Code != http.StatusForbidden {
+				t.Errorf("%s %s role status = %d, want %d", request.method, role, response.Code, http.StatusForbidden)
+			}
+		}
+	}
+
+	admin := newCatalogTestAuthenticator("admin", seed.ShopID)
+	SetStaffAuthenticator(admin)
+	inventory := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules", admin.token, "")
+	for _, expected := range []string{`"platform":"prestashop"`, `"module_version":"2.0.1"`, `"capabilities":["catalog"]`} {
+		if inventory.Code != http.StatusOK || !strings.Contains(inventory.Body.String(), expected) {
+			t.Fatalf("module inventory status/body = %d/%s, missing %q", inventory.Code, inventory.Body, expected)
+		}
+	}
+	installed := performAdminRequest(mux, http.MethodPost, "/v1/admin/modules/ps_newproducts/installation", admin.token, "")
+	if installed.Code != http.StatusOK || len(manager.installed) != 1 || manager.installed[0] != seed.ShopID+":ps_newproducts" {
+		t.Fatalf("install status/body/calls = %d/%s/%v", installed.Code, installed.Body, manager.installed)
+	}
+	manager.installError = store.ErrModuleBuildUnsupported
+	unsupportedBuild := performAdminRequest(mux, http.MethodPost, "/v1/admin/modules/ps_newproducts/installation", admin.token, "")
+	if unsupportedBuild.Code != http.StatusConflict {
+		t.Fatalf("unsupported build install status = %d, want %d", unsupportedBuild.Code, http.StatusConflict)
+	}
+	manager.installError = store.ErrNotFound
+	missingBuild := performAdminRequest(mux, http.MethodPost, "/v1/admin/modules/ps_newproducts/installation", admin.token, "")
+	if missingBuild.Code != http.StatusNotFound {
+		t.Fatalf("missing build install status = %d, want %d", missingBuild.Code, http.StatusNotFound)
+	}
+	manager.installError = nil
+	uninstalled := performAdminRequest(mux, http.MethodDelete, "/v1/admin/modules/ps_newproducts/installation", admin.token, "")
+	if uninstalled.Code != http.StatusOK || len(manager.uninstalled) != 1 || manager.uninstalled[0] != seed.ShopID+":ps_newproducts" {
+		t.Fatalf("uninstall status/body/calls = %d/%s/%v", uninstalled.Code, uninstalled.Body, manager.uninstalled)
+	}
+	unsupported := performAdminRequest(mux, http.MethodPost, "/v1/admin/modules/other/installation", admin.token, "")
+	if unsupported.Code != http.StatusNotFound {
+		t.Fatalf("unsupported module install status = %d, want %d", unsupported.Code, http.StatusNotFound)
+	}
+}
+
 func TestAdminLoginIsUnavailableWithoutDatabaseAuthenticator(t *testing.T) {
 	originalReader := productReader
 	SetProductReader(store.NewMemory())

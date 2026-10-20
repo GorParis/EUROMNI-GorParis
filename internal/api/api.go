@@ -20,6 +20,12 @@ var newProductsWidgetRunner interface {
 	RunNewProducts(context.Context, string) ([]store.ProductView, bool, error)
 }
 
+var moduleManager interface {
+	ListModules(context.Context, string) ([]store.ModuleInventoryEntry, error)
+	InstallModule(context.Context, string, string) error
+	UninstallModule(context.Context, string, string) error
+}
+
 func SetProductReader(r store.ProductReader) {
 	productReader = r
 }
@@ -28,6 +34,14 @@ func SetNewProductsWidgetRunner(runner interface {
 	RunNewProducts(context.Context, string) ([]store.ProductView, bool, error)
 }) {
 	newProductsWidgetRunner = runner
+}
+
+func SetModuleManager(manager interface {
+	ListModules(context.Context, string) ([]store.ModuleInventoryEntry, error)
+	InstallModule(context.Context, string, string) error
+	UninstallModule(context.Context, string, string) error
+}) {
+	moduleManager = manager
 }
 
 func currentProductReader() store.ProductReader {
@@ -82,6 +96,9 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/admin/orders/{id}/status", withOrderWriteAuth(adminOrderStatus))
 	mux.HandleFunc("GET /v1/admin/shipping", withStaffAuth(adminShippingConfig))
 	mux.HandleFunc("PUT /v1/admin/shipping", withOrderWriteAuth(adminShippingConfig))
+	mux.HandleFunc("GET /v1/admin/modules", withOrderWriteAuth(adminModuleInventory))
+	mux.HandleFunc("POST /v1/admin/modules/{name}/installation", withOrderWriteAuth(adminInstallModule))
+	mux.HandleFunc("DELETE /v1/admin/modules/{name}/installation", withOrderWriteAuth(adminUninstallModule))
 	mux.HandleFunc("GET /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("PUT /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("GET /v1/admin/shipping/versions/targets", withOrderWriteAuth(adminShippingRateVersionTargets))
@@ -95,6 +112,66 @@ func Register(mux *http.ServeMux) {
 		panic(err)
 	}
 	mux.Handle("GET /admin/", http.StripPrefix("/admin/", http.FileServer(http.FS(adminFS))))
+}
+
+func adminModuleInventory(w http.ResponseWriter, r *http.Request) {
+	if moduleManager == nil {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "module management unavailable"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	modules, err := moduleManager.ListModules(r.Context(), session.ShopID)
+	if err != nil {
+		log.Printf("admin module inventory: %v", err)
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "module inventory unavailable"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": modules})
+}
+
+func adminInstallModule(w http.ResponseWriter, r *http.Request) {
+	adminModuleLifecycle(w, r, true)
+}
+
+func adminUninstallModule(w http.ResponseWriter, r *http.Request) {
+	adminModuleLifecycle(w, r, false)
+}
+
+func adminModuleLifecycle(w http.ResponseWriter, r *http.Request, install bool) {
+	name := r.PathValue("name")
+	if name != store.NewProductsModuleName {
+		writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "module not found"})
+		return
+	}
+	if moduleManager == nil {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "module management unavailable"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	var err error
+	if install {
+		err = moduleManager.InstallModule(r.Context(), session.ShopID, name)
+	} else {
+		err = moduleManager.UninstallModule(r.Context(), session.ShopID, name)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "module installation not found"})
+		return
+	}
+	if errors.Is(err, store.ErrModuleBuildUnsupported) {
+		writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "module build is not supported for installation"})
+		return
+	}
+	if err != nil {
+		operation := "uninstall"
+		if install {
+			operation = "install"
+		}
+		log.Printf("admin module lifecycle %s %s: %v", operation, name, err)
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "module operation unavailable"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": map[string]bool{"installed": install}})
 }
 
 func newProductsWidget(w http.ResponseWriter, r *http.Request) {

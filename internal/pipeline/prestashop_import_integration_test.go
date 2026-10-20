@@ -5,6 +5,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"testing"
 
@@ -96,4 +97,67 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 				i, widgetProducts[i].ID, widgetProducts[i].Slug, product.ID, product.Slug)
 		}
 	}
+	modules, err := widgetRunner.ListModules(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("list registered modules: %v", err)
+	}
+	var registered *store.ModuleInventoryEntry
+	for i := range modules {
+		if modules[i].Name == store.NewProductsModuleName {
+			registered = &modules[i]
+			break
+		}
+	}
+	if registered == nil || registered.Platform != "prestashop" || registered.ModuleVersion != "2.0.1" ||
+		registered.PlatformVersion != "euromni-test-adapter" || registered.Adapter != "prestashop" || registered.Status != "installed" ||
+		!registered.CanInstall || !registered.CanUninstall || registered.WASMSHA256 != manifest.WASMSHA256 {
+		t.Fatalf("module inventory entry = %+v, want the installed PrestaShop build metadata", registered)
+	}
+	if err := widgetRunner.UninstallModule(ctx, seed.ShopID, store.NewProductsModuleName); err != nil {
+		t.Fatalf("reversibly uninstall module: %v", err)
+	}
+	if products, installed, err := widgetRunner.RunNewProducts(ctx, seed.ShopID); err != nil || installed || len(products) != 0 {
+		t.Fatalf("widget after uninstall = (%v, installed=%t, error=%v), want empty and disabled", products, installed, err)
+	}
+	unavailableRunner, err := wasm.NewNewProductsWidgetRunner(moduleStore, unavailableModuleArtifacts{}, widgetRuntime)
+	if err != nil {
+		t.Fatalf("configure module runner with unavailable artifact store: %v", err)
+	}
+	if err := unavailableRunner.InstallModule(ctx, seed.ShopID, store.NewProductsModuleName); err == nil {
+		t.Fatal("installation succeeded without a verifiable Wasm artifact")
+	}
+	modules, err = widgetRunner.ListModules(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("list modules after failed artifact verification: %v", err)
+	}
+	foundDisabled := false
+	for _, module := range modules {
+		if module.Name == store.NewProductsModuleName {
+			foundDisabled = module.Status == "disabled"
+		}
+	}
+	if !foundDisabled {
+		t.Fatalf("module inventory after failed artifact verification = %+v, want ps_newproducts disabled", modules)
+	}
+	if err := widgetRunner.InstallModule(ctx, seed.ShopID, store.NewProductsModuleName); err != nil {
+		t.Fatalf("reinstall verified module build: %v", err)
+	}
+	reinstalledSettings, err = moduleStore.GetNewProductsSettings(ctx, seed.ShopID)
+	if err != nil || reinstalledSettings != settings {
+		t.Fatalf("settings after reinstallation = %+v, error = %v; want preserved %+v", reinstalledSettings, err, settings)
+	}
+	if products, installed, err := widgetRunner.RunNewProducts(ctx, seed.ShopID); err != nil || !installed || len(products) != len(expectedProducts) {
+		t.Fatalf("widget after reinstallation = (%d products, installed=%t, error=%v), want %d products",
+			len(products), installed, err, len(expectedProducts))
+	}
+}
+
+type unavailableModuleArtifacts struct{}
+
+func (unavailableModuleArtifacts) Put(context.Context, io.Reader) (artifact.Artifact, error) {
+	return artifact.Artifact{}, errors.New("artifact writes are unavailable")
+}
+
+func (unavailableModuleArtifacts) Get(context.Context, string) ([]byte, error) {
+	return nil, errors.New("artifact is unavailable")
 }

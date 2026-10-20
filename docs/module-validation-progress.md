@@ -135,6 +135,9 @@ PrestaShop et l’activation de la vitrine restent hors de cette preuve.
 
 ## Rendu du widget nouveautés dans la vitrine EUROMNI
 
+La gestion bornée du registre et de l’installation est décrite dans
+[module-management.md](./module-management.md).
+
 La vitrine dispose maintenant d’un endpoint public `GET /v1/widgets/new-products`
 qui exécute le module installé et renvoie les produits issus de sa réponse ABI.
 Le CMS configure ce runner uniquement avec un store SQL et

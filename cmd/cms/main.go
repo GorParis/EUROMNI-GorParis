@@ -9,6 +9,7 @@ import (
 
 	"euromni/internal/api"
 	"euromni/internal/artifact"
+	"euromni/internal/dbdialect"
 	"euromni/internal/payment"
 	"euromni/internal/store"
 	"euromni/internal/supplier/selfnamed"
@@ -52,6 +53,7 @@ func main() {
 
 func configureNewProductsWidget(reader store.ProductReader) (func(), error) {
 	api.SetNewProductsWidgetRunner(nil)
+	api.SetModuleManager(nil)
 	root := strings.TrimSpace(os.Getenv("EUROMNI_ARTIFACT_DIR"))
 	if root == "" {
 		return func() {}, nil
@@ -59,6 +61,9 @@ func configureNewProductsWidget(reader store.ProductReader) (func(), error) {
 	moduleStore, ok := reader.(*store.Store)
 	if !ok || moduleStore.SQL == nil {
 		return nil, fmt.Errorf("EUROMNI_ARTIFACT_DIR requires a configured SQL store")
+	}
+	if moduleStore.Dialect != dbdialect.PostgreSQL {
+		return nil, fmt.Errorf("module management currently requires PostgreSQL")
 	}
 	artifacts, err := artifact.NewFileStore(root)
 	if err != nil {
@@ -71,6 +76,7 @@ func configureNewProductsWidget(reader store.ProductReader) (func(), error) {
 		return nil, fmt.Errorf("configure new-products widget: %w", err)
 	}
 	api.SetNewProductsWidgetRunner(runner)
+	api.SetModuleManager(runner)
 	return runtime.Close, nil
 }
 

@@ -6,6 +6,8 @@
   const logoutButton = document.querySelector("#logout");
   const productForm = document.querySelector("#product-form");
   const moduleSettingsPanel = document.querySelector("#module-settings-panel");
+  const moduleInventoryStatus = document.querySelector("#module-inventory-status");
+  const moduleInventory = document.querySelector("#module-inventory");
   const moduleSettingsStatus = document.querySelector("#module-settings-status");
   const newProductsSettingsForm = document.querySelector("#new-products-settings-form");
   const categoryForm = document.querySelector("#category-form");
@@ -1129,11 +1131,121 @@
       }
       if (["owner", "admin"].includes(currentIdentity?.role)) {
         renderShipping(await request("/v1/admin/shipping"));
+        await loadModuleInventory();
         await loadNewProductsSettings();
       }
       setStatus(successMessage || `${products.length} produit(s), ${categories.length} catégorie(s).`);
     } catch (error) {
       setStatus(error.message, true);
+    }
+  }
+
+  async function loadModuleInventory() {
+    moduleInventory.replaceChildren();
+    try {
+      const modules = await request("/v1/admin/modules");
+      renderModuleInventory(modules);
+      moduleInventoryStatus.textContent = modules.length
+        ? `${modules.length} module(s) dans le registre.`
+        : "Aucun build de module enregistré.";
+      moduleInventoryStatus.dataset.kind = "info";
+    } catch (error) {
+      moduleInventoryStatus.textContent = error.message;
+      moduleInventoryStatus.dataset.kind = "error";
+    }
+  }
+
+  function renderModuleInventory(modules) {
+    moduleInventory.replaceChildren();
+    for (const module of modules) {
+      const card = document.createElement("article");
+      card.className = "card";
+      const title = document.createElement("h3");
+      title.textContent = module.name;
+      const status = document.createElement("p");
+      status.className = "muted";
+      const states = {
+        installed: "Installé dans cette boutique",
+        disabled: "Désinstallé (réactivable)",
+        registered: "Build enregistré, non installé",
+        error: "Installation en erreur",
+      };
+      status.textContent = `${states[module.status] || module.status} · ${module.platform || "écosystème inconnu"}`;
+      card.append(title, status);
+      const metadata = document.createElement("dl");
+      const details = [
+        ["Version source", module.module_version || "Non renseignée"],
+        ["Version plateforme", module.platform_version || "Non renseignée"],
+        ["Adaptateur", module.adapter
+          ? `${module.adapter}${module.adapter_version ? ` ${module.adapter_version}` : ""}`
+          : "Non renseigné"],
+        ["ABI", module.abi_version || "Non renseignée"],
+        ["Capacités accordées", Array.isArray(module.capabilities) && module.capabilities.length
+          ? module.capabilities.join(", ")
+          : "Aucune"],
+        ["SHA-256 Wasm", module.wasm_sha256 || "Build absent"],
+      ];
+      if (module.source_reference) details.push(["Référence source", module.source_reference]);
+      if (module.source_sha256) details.push(["SHA-256 source", module.source_sha256]);
+      if (module.archive_sha256) details.push(["SHA-256 archive", module.archive_sha256]);
+      for (const [label, value] of details) {
+        const term = document.createElement("dt");
+        term.textContent = label;
+        const description = document.createElement("dd");
+        description.textContent = value;
+        metadata.append(term, description);
+      }
+      card.append(metadata);
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      if (module.can_install && module.status !== "installed") {
+        const install = document.createElement("button");
+        install.type = "button";
+        install.textContent = "Installer dans cette boutique";
+        install.addEventListener("click", () => changeModuleInstallation(module.name, true, install));
+        actions.append(install);
+      }
+      if (module.can_uninstall) {
+        const uninstall = document.createElement("button");
+        uninstall.type = "button";
+        uninstall.className = "danger";
+        uninstall.textContent = "Désinstaller";
+        uninstall.addEventListener("click", () => changeModuleInstallation(module.name, false, uninstall));
+        actions.append(uninstall);
+      }
+      if (actions.childElementCount) card.append(actions);
+      if (module.name === "ps_newproducts" && !module.can_install) {
+        const unavailable = document.createElement("p");
+        unavailable.className = "muted";
+        unavailable.textContent = "Aucun build PrestaShop validé et vérifiable n’est disponible pour l’installation.";
+        card.append(unavailable);
+      }
+      moduleInventory.append(card);
+    }
+  }
+
+  async function changeModuleInstallation(name, install, button) {
+    if (!install && !window.confirm(
+      "Désinstaller ce module de la boutique ? Ses réglages et son build seront conservés et le module pourra être réinstallé.",
+    )) {
+      return;
+    }
+    button.disabled = true;
+    try {
+      await request(`/v1/admin/modules/${encodeURIComponent(name)}/installation`, {
+        method: install ? "POST" : "DELETE",
+      });
+      moduleInventoryStatus.textContent = install
+        ? "Module installé dans cette boutique."
+        : "Module désinstallé ; le build et les réglages sont conservés.";
+      moduleInventoryStatus.dataset.kind = "info";
+      await loadModuleInventory();
+      await loadNewProductsSettings();
+    } catch (error) {
+      moduleInventoryStatus.textContent = error.message;
+      moduleInventoryStatus.dataset.kind = "error";
+    } finally {
+      button.disabled = false;
     }
   }
 

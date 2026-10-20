@@ -36,6 +36,7 @@ func (r *NewProductsWidgetRunner) RunNewProducts(ctx context.Context, shopID str
 	if r == nil || r.Modules == nil || r.Artifacts == nil || r.Runtime == nil {
 		return nil, false, errors.New("new-products module runner is not configured")
 	}
+
 	installed, err := r.Modules.GetInstalledModuleByName(ctx, shopID, store.NewProductsModuleName)
 	if errors.Is(err, store.ErrNotFound) {
 		return []store.ProductView{}, false, nil
@@ -97,4 +98,47 @@ func (r *NewProductsWidgetRunner) RunNewProducts(ctx context.Context, shopID str
 		products = []store.ProductView{}
 	}
 	return products, true, nil
+}
+
+func (r *NewProductsWidgetRunner) ListModules(ctx context.Context, shopID string) ([]store.ModuleInventoryEntry, error) {
+	if r == nil || r.Modules == nil || r.Modules.SQL == nil {
+		return nil, errors.New("module store is not configured")
+	}
+	return r.Modules.ListModuleInventory(ctx, shopID)
+}
+
+func (r *NewProductsWidgetRunner) InstallModule(ctx context.Context, shopID, name string) error {
+	if r == nil || r.Modules == nil || r.Artifacts == nil {
+		return errors.New("module installation is not configured")
+	}
+	if name != store.NewProductsModuleName {
+		return errors.New("module lifecycle is limited to ps_newproducts")
+	}
+	entries, err := r.Modules.ListModuleInventory(ctx, shopID)
+	if err != nil {
+		return fmt.Errorf("list module registry before installation: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.Name != name {
+			continue
+		}
+		if !entry.CanInstall {
+			return store.ErrModuleBuildUnsupported
+		}
+		if _, err := r.Artifacts.Get(ctx, entry.WASMSHA256); err != nil {
+			return fmt.Errorf("verify registered module artifact: %w", err)
+		}
+		return r.Modules.InstallRegisteredNewProductsModule(ctx, shopID, entry.WASMSHA256)
+	}
+	return store.ErrNotFound
+}
+
+func (r *NewProductsWidgetRunner) UninstallModule(ctx context.Context, shopID, name string) error {
+	if r == nil || r.Modules == nil || r.Modules.SQL == nil {
+		return errors.New("module store is not configured")
+	}
+	if name != store.NewProductsModuleName {
+		return errors.New("module lifecycle is limited to ps_newproducts")
+	}
+	return r.Modules.UninstallNewProductsModule(ctx, shopID)
 }
