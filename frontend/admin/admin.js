@@ -460,7 +460,7 @@
       const card = document.createElement("article");
       card.className = "card";
       const title = document.createElement("h3");
-      title.textContent = `${order.number} · ${orderStatusLabel(order.status)}`;
+      title.textContent = `${order.number} · ${orderStatusLabel(order.status)}${order.shipment_status ? ` · ${shipmentStatusLabel(order.shipment_status)}` : ""}`;
       const summary = document.createElement("p");
       summary.className = "muted";
       summary.textContent = `${order.name} · ${order.email} · ${order.grand_total} ${order.currency}`;
@@ -499,7 +499,9 @@
         });
         actions.append(payment);
       }
-      if (order.status === "paid" && ["owner", "admin"].includes(currentIdentity?.role)) {
+      if (order.status === "paid" &&
+          !["shipped", "delivered", "returned"].includes(order.shipment_status) &&
+          ["owner", "admin"].includes(currentIdentity?.role)) {
         const fulfill = document.createElement("button");
         fulfill.type = "button";
         fulfill.textContent = "Marquer comme expédiée";

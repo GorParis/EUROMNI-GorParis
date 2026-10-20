@@ -74,6 +74,7 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 		"Marquer comme expédiée",
 		"showOrderActionForm",
 		"order-action-form",
+		`!["shipped", "delivered", "returned"].includes(order.shipment_status)`,
 		"Référence du virement ou reçu",
 		"Numéro de suivi",
 	} {

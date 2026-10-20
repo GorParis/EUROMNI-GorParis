@@ -1,5 +1,70 @@
 # État du projet EUROMNI
 
+## Reprise CMS sur la machine locale — 20 octobre 2026
+
+Le commit `cf66465` (`Fix admin order action forms`) est poussé sur
+`origin/main`. Il remplace les boîtes `prompt()` non prises en charge par le
+navigateur intégré par des formulaires admin intégrés pour confirmer un
+paiement reçu et une expédition. Le message de succès est conservé après le
+rafraîchissement de la liste.
+
+Un correctif complémentaire est actuellement local et non commité :
+
+- `frontend/admin/admin.js` affiche aussi l’état d’expédition dans la ligne de
+  commande et ne propose plus de déclarer une seconde fois une commande déjà
+  expédiée, livrée ou retournée ;
+- `frontend/assets_test.go` couvre cette règle.
+
+Le cas observé était la commande seedée `AD-1001` : elle était déjà associée à
+une expédition avec suivi, mais son statut de commande était encore `paid`.
+L’admin la présentait donc à tort comme expédiable ; le serveur refusait à juste
+titre la transition. Après rechargement, l’admin affiche maintenant
+« Payée · Expédiée » et ne présente plus le bouton d’expédition pour cette
+commande. Une autre commande payée sans expédition conserve le bouton. Aucune
+action n’a été soumise sur ces commandes durant le diagnostic.
+
+Validations du correctif local : `go test ./frontend`,
+`node --check frontend/admin/admin.js` et `git diff --check` passent. Le
+conteneur CMS de test a été redémarré pour charger les assets et l’admin a été
+rechargé pour vérifier l’affichage.
+
+État de l’essai manuel local :
+
+- stack Podman Compose `euromni-cms-test` en cours, CMS à
+  `http://127.0.0.1:35385` ;
+- pages admin et vitrine ouvertes dans le navigateur partagé ;
+- base de test persistante dans le volume Podman de cette stack ;
+- transporteur Chronopost activé pour la configuration locale, avec le tarif
+  de test existant ; ne pas modifier la configuration ou les commandes sans
+  demande ;
+- compte owner et mot de passe dans `CMS-TEST-CREDENTIALS.txt`, fichier local
+  en mode privé, exclu par `.git/info/exclude` ;
+- accès et procédures locaux dans `CMS-TEST-ACCESS.md`, également exclu du
+  suivi Git.
+
+Ne jamais ajouter ces deux fichiers locaux, `.env` ou `.vscode/settings.json`
+au commit. `.vscode/settings.json` est déjà présent dans l’index comme
+changement préexistant de l’utilisateur ; ne pas le désindexer ni le modifier.
+
+Avant reprise des pushes, le push SSH direct a échoué faute de signature
+disponible (`agent refused operation` / `Permission denied (publickey)`).
+GitKraken a ensuite réussi à pousser `cf66465`. Le prochain développeur doit
+configurer sa propre clé SSH GitHub (ne jamais réutiliser ni demander la clé
+privée d’une autre personne) :
+
+1. Vérifier qu’un fichier de destination n’existe pas déjà, puis créer une clé
+   dédiée sans écraser une clé existante :
+   `ssh-keygen -t ed25519 -C "<e-mail GitHub>" -f ~/.ssh/id_ed25519_euromni`.
+2. Ajouter la clé publique `~/.ssh/id_ed25519_euromni.pub` au compte GitHub
+   ayant accès à `GorParis/EUROMNI-GorParis` ; ne jamais copier, afficher ou
+   transmettre le fichier privé sans suffixe `.pub`.
+3. Charger la clé avec `ssh-add ~/.ssh/id_ed25519_euromni`, puis vérifier
+   l’accès par `ssh -T git@github.com`.
+4. Une fois l’accès confirmé, pousser avec `git push origin main`.
+
+Vérifier `git status` avant tout commit : ne sélectionner que les fichiers du
+correctif et de la documentation, jamais les changements locaux ci-dessus.
+
 ## Cycle de paiement de développement — livré (19 octobre 2026)
 
 La tranche est implémentée et poussée sur `main` dans le commit `e5682d4`
@@ -186,24 +251,20 @@ refus/abandon ; la synchronisation fournisseur ne le modifie pas. Les tests
 couvrent le cycle en mémoire et les parcours SQL sur des instances PostgreSQL
 et MariaDB temporaires isolées.
 
-## Essai manuel local du CMS — suspendu (19 octobre 2026)
+## Essai manuel local du CMS — état précédent (19 octobre 2026)
 
 Un guide local de prise en main, `CMS-TEST-ACCESS.md`, a été préparé en clair à
 la demande de l’utilisateur. Il est exclu localement par `.git/info/exclude`,
 n’est pas versionné et ne doit pas être ajouté à un commit. Son mot de passe
 d’ouverture initialement demandé (`2`) n’est plus nécessaire puisque le guide
 reste en clair. Le mot de passe owner décrit par le guide est généré localement
-et n’est pas un compte ou un secret déjà communiqué.
+et n’est pas un compte ou un secret déjà communiqué. Cette information décrit
+l’état avant la préparation effective de l’environnement ci-dessus.
 
-Le démarrage de la stack Podman `euromni-cms-test` a été interrompu avant que
-des conteneurs CMS/PostgreSQL soient disponibles. La stack est arrêtée ; le
-volume nommé de cette instance a été conservé. Aucun compte admin n’a été créé,
-aucune session n’a été ouverte et aucun navigateur admin/vitrine n’a été lancé.
-Le parcours manuel n’est donc pas validé. À la prochaine reprise, vérifier la
-stack et ses données avant tout bootstrap, démarrer le CMS, puis ouvrir l’admin
-et la vitrine dans deux navigateurs séparés et s’arrêter pour laisser
-l’utilisateur tester. Aucun test automatisé n’a été lancé pour cette tentative
-interrompue.
+À cette date, le démarrage de la stack avait été interrompu avant que le CMS et
+PostgreSQL soient disponibles ; le volume avait été conservé, sans compte ni
+session admin. La suite de l’essai et l’état actuel de la stack sont documentés
+dans « Reprise CMS sur la machine locale — 20 octobre 2026 » ci-dessus.
 
 ## Service de courriel intégré — à concevoir
 
