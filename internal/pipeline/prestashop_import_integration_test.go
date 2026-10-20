@@ -78,4 +78,22 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 	if len(results) != 1 || results[0] != int32(len(expected)) {
 		t.Fatalf("runtime result = %v, want ABI response size %d", results, len(expected))
 	}
+
+	widgetRuntime := wasm.NewRuntime(&wasm.Host{Products: moduleStore, Categories: moduleStore})
+	t.Cleanup(widgetRuntime.Close)
+	widgetRunner, err := wasm.NewNewProductsWidgetRunner(moduleStore, artifactStore, widgetRuntime)
+	if err != nil {
+		t.Fatalf("configure new-products widget runner: %v", err)
+	}
+	widgetProducts, moduleInstalled, err := widgetRunner.RunNewProducts(ctx, seed.ShopID)
+	if err != nil || !moduleInstalled || len(widgetProducts) != len(expectedProducts) {
+		t.Fatalf("new-products widget = (%+v, installed=%t, error=%v), want %d products",
+			widgetProducts, moduleInstalled, err, len(expectedProducts))
+	}
+	for i, product := range expectedProducts {
+		if widgetProducts[i].ID != product.ID || widgetProducts[i].Slug != product.Slug {
+			t.Fatalf("new-products widget product %d = (%s, %s), want (%s, %s)",
+				i, widgetProducts[i].ID, widgetProducts[i].Slug, product.ID, product.Slug)
+		}
+	}
 }

@@ -119,6 +119,53 @@ func TestProductsListReturnsActiveCatalog(t *testing.T) {
 	}
 }
 
+type testNewProductsWidgetRunner struct {
+	products []store.ProductView
+	err      error
+}
+
+func (runner testNewProductsWidgetRunner) RunNewProducts(context.Context, string) ([]store.ProductView, bool, error) {
+	return runner.products, true, runner.err
+}
+
+func TestNewProductsWidgetEndpoint(t *testing.T) {
+	originalRunner := newProductsWidgetRunner
+	t.Cleanup(func() { SetNewProductsWidgetRunner(originalRunner) })
+
+	for _, test := range []struct {
+		name   string
+		runner interface {
+			RunNewProducts(context.Context, string) ([]store.ProductView, bool, error)
+		}
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "installed module returns products",
+			runner:     testNewProductsWidgetRunner{products: []store.ProductView{{ID: seed.ProductID}}},
+			wantStatus: http.StatusOK,
+			wantBody:   `"id":"` + seed.ProductID + `"`,
+		},
+		{
+			name:       "unconfigured module returns service unavailable",
+			wantStatus: http.StatusServiceUnavailable,
+			wantBody:   `"error":"new-products widget is unavailable"`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			SetNewProductsWidgetRunner(test.runner)
+			mux := http.NewServeMux()
+			Register(mux)
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/widgets/new-products", nil))
+			if response.Code != test.wantStatus || !strings.Contains(response.Body.String(), test.wantBody) {
+				t.Fatalf("widget status/body = %d %s, want status %d containing %q",
+					response.Code, response.Body, test.wantStatus, test.wantBody)
+			}
+		})
+	}
+}
+
 func TestProductByIDReturnsProductData(t *testing.T) {
 	originalReader := productReader
 	SetProductReader(store.NewMemory())

@@ -23,6 +23,7 @@ services:
     working_dir: /workspace
     environment:
       DATABASE_URL: postgres://euromni:${EUROMNI_DB_PASSWORD:?Set EUROMNI_DB_PASSWORD or configure .env}@postgres:5432/euromni?sslmode=disable
+      EUROMNI_ARTIFACT_DIR: /var/lib/euromni/artifacts
       CGO_ENABLED: "1"
       GOCACHE: /tmp/go-build-cache
       GOMODCACHE: /tmp/go-mod-cache
@@ -31,12 +32,13 @@ services:
       LISTEN_ADDR: "0.0.0.0:8081"
     volumes:
       - .:/workspace:ro,z
+      - module-artifacts:/var/lib/euromni/artifacts
     ports:
       - "127.0.0.1::8081"
     depends_on:
       postgres:
         condition: service_healthy
-    command: ["sh", "-c", "go run ./cmd/db-migrate && exec go run ./cmd/cms"]
+    command: ["sh", "-c", "mkdir -p /var/lib/euromni/artifacts && chmod 700 /var/lib/euromni/artifacts && go run ./cmd/db-migrate && exec go run ./cmd/cms"]
     restart: unless-stopped
 
   integration-test:

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"euromni/internal/api"
+	"euromni/internal/artifact"
 	"euromni/internal/payment"
 	"euromni/internal/store"
 	"euromni/internal/supplier/selfnamed"
@@ -30,6 +31,11 @@ func main() {
 			log.Printf("close database: %v", err)
 		}
 	}()
+	closeWidget, err := configureNewProductsWidget(reader)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer closeWidget()
 	closePolicy, err := configureShippingPricingPolicy(reader)
 	if err != nil {
 		log.Fatal(err)
@@ -42,6 +48,30 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func configureNewProductsWidget(reader store.ProductReader) (func(), error) {
+	api.SetNewProductsWidgetRunner(nil)
+	root := strings.TrimSpace(os.Getenv("EUROMNI_ARTIFACT_DIR"))
+	if root == "" {
+		return func() {}, nil
+	}
+	moduleStore, ok := reader.(*store.Store)
+	if !ok || moduleStore.SQL == nil {
+		return nil, fmt.Errorf("EUROMNI_ARTIFACT_DIR requires a configured SQL store")
+	}
+	artifacts, err := artifact.NewFileStore(root)
+	if err != nil {
+		return nil, fmt.Errorf("configure module artifact store: %w", err)
+	}
+	runtime := wasm.NewRuntime(&wasm.Host{Products: moduleStore, Categories: moduleStore})
+	runner, err := wasm.NewNewProductsWidgetRunner(moduleStore, artifacts, runtime)
+	if err != nil {
+		runtime.Close()
+		return nil, fmt.Errorf("configure new-products widget: %w", err)
+	}
+	api.SetNewProductsWidgetRunner(runner)
+	return runtime.Close, nil
 }
 
 func configureSelfnamedSupplierProvider() error {

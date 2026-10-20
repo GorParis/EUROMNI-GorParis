@@ -41,6 +41,12 @@ template.innerHTML = `
       gap: 1.25rem;
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
     }
+    .new-products-widget {
+      margin: 0 0 2rem;
+    }
+    .new-products-widget h2 {
+      margin-bottom: 1rem;
+    }
     .product-list[hidden],
     .detail-view[hidden],
     .collection-title[hidden],
@@ -380,8 +386,13 @@ template.innerHTML = `
     <span>Langue du contenu</span>
     <select aria-label="Langue du contenu"></select>
   </label>
+  <section class="new-products-widget" aria-labelledby="new-products-title" hidden>
+    <h2 id="new-products-title">Nouveautés</h2>
+    <p class="new-products-status status" role="status" aria-live="polite" hidden></p>
+    <ul class="product-list new-products-list" aria-label="Nouveaux produits"></ul>
+  </section>
   <nav class="category-toolbar" aria-label="Filtres de catalogue" hidden></nav>
-  <p class="status" part="status" role="status" aria-live="polite">Chargement du catalogue…</p>
+  <p class="status catalog-status" part="status" role="status" aria-live="polite">Chargement du catalogue…</p>
   <section class="cart" aria-labelledby="cart-title">
     <div class="cart-heading">
       <h2 id="cart-title">Votre panier</h2>
@@ -421,7 +432,7 @@ template.innerHTML = `
       </form>
     </div>
   </section>
-  <ul class="product-list" aria-label="Produits" hidden></ul>
+  <ul class="product-list catalog-product-list" aria-label="Produits" hidden></ul>
   <section class="detail-view" aria-live="polite" hidden></section>
 `;
 
@@ -527,6 +538,10 @@ class EuromniCatalog extends HTMLElement {
     this.detailController = null;
     this.categories = [];
     this.currentProducts = [];
+    this.newProducts = [];
+    this.newProductsRequest = null;
+    this.newProductsVisible = false;
+    this.hasConnected = false;
     this.categoryFilter = "";
     this.availableLocales = new Set(["fr-FR"]);
     this.savedLocalePreference = "";
@@ -534,6 +549,7 @@ class EuromniCatalog extends HTMLElement {
   }
 
   connectedCallback() {
+    this.hasConnected = true;
     this.shadowRoot.querySelector(".cart-toggle").addEventListener("click", () => this.toggleCart());
     this.shadowRoot.querySelector(".checkout-form").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -562,19 +578,24 @@ class EuromniCatalog extends HTMLElement {
     this.loadCategories();
     this.restoreCart();
     this.load();
+    this.loadNewProducts();
   }
 
   disconnectedCallback() {
     this.requestController?.abort();
+    this.newProductsRequest?.abort();
     this.detailController?.abort();
     this.shippingController?.abort();
     window.removeEventListener("popstate", this.onPopState);
   }
 
-  attributeChangedCallback(name) {
-    if (this.isConnected) {
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (this.isConnected && this.hasConnected && oldValue !== newValue) {
       if (name === "shipping-src") {
         this.loadShippingOptions(this.shadowRoot.querySelector('[name="country"]').value);
+      } else if (name === "locale") {
+        this.load();
+        this.loadNewProducts();
       } else {
         this.load();
       }
@@ -758,8 +779,8 @@ class EuromniCatalog extends HTMLElement {
   }
 
   async load() {
-    const status = this.shadowRoot.querySelector(".status");
-    const list = this.shadowRoot.querySelector(".product-list");
+    const status = this.shadowRoot.querySelector(".catalog-status");
+    const list = this.shadowRoot.querySelector(".catalog-product-list");
     this.requestController?.abort();
     const controller = new AbortController();
     this.requestController = controller;
@@ -841,6 +862,54 @@ class EuromniCatalog extends HTMLElement {
     }
   }
 
+  async loadNewProducts() {
+    const section = this.shadowRoot.querySelector(".new-products-widget");
+    const status = this.shadowRoot.querySelector(".new-products-status");
+    const list = this.shadowRoot.querySelector(".new-products-list");
+    const controller = new AbortController();
+    this.newProductsRequest?.abort();
+    this.newProductsRequest = controller;
+    this.newProductsVisible = false;
+    status.hidden = true;
+    status.textContent = "";
+    list.replaceChildren();
+    section.hidden = true;
+    try {
+      const response = await fetch("/v1/widgets/new-products", {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      let body;
+      try {
+        body = await response.json();
+      } catch {
+        throw new Error("Réponse invalide du widget nouveautés.");
+      }
+      if (!response.ok || !Array.isArray(body?.data)) {
+        throw new Error(body?.error || "Le widget nouveautés est indisponible.");
+      }
+      if (controller.signal.aborted) return;
+      this.newProducts = body.data;
+      for (const product of this.newProducts) {
+        list.append(this.renderProduct(product));
+      }
+      this.newProductsVisible = this.newProducts.length > 0;
+      section.hidden = !this.newProductsVisible || new URLSearchParams(window.location.search).has("product");
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      this.newProducts = [];
+      this.newProductsVisible = true;
+      section.hidden = new URLSearchParams(window.location.search).has("product");
+      status.hidden = false;
+      status.dataset.kind = "error";
+      status.textContent = "Les nouveautés sont indisponibles pour le moment.";
+    } finally {
+      if (this.newProductsRequest === controller) {
+        this.newProductsRequest = null;
+      }
+    }
+  }
+
   renderCategoryFilters() {
     const nav = this.shadowRoot.querySelector(".category-toolbar");
     nav.replaceChildren();
@@ -919,6 +988,7 @@ class EuromniCatalog extends HTMLElement {
     this.refreshAvailableLocales();
     this.renderCategoryFilters();
     await this.load();
+    await this.loadNewProducts();
     this.renderCart(this.currentCart || { items: [], total: { amount: "0.0000", currency: "" } });
     const country = this.shadowRoot.querySelector('[name="country"]').value;
     if (country) {
@@ -1250,20 +1320,23 @@ class EuromniCatalog extends HTMLElement {
     } else {
       this.categoryFilter = "";
     }
-    const list = this.shadowRoot.querySelector(".product-list");
+    const list = this.shadowRoot.querySelector(".catalog-product-list");
     const detail = this.shadowRoot.querySelector(".detail-view");
+    const newProducts = this.shadowRoot.querySelector(".new-products-widget");
     if (!productID) {
       this.detailController?.abort();
       this.detailController = null;
       detail.hidden = true;
       detail.replaceChildren();
       list.hidden = false;
+      newProducts.hidden = !this.newProductsVisible;
       this.shadowRoot.querySelector(".collection-title").hidden = false;
       document.title = "Atelier Demo — EUROMNI";
       return;
     }
     this.shadowRoot.querySelector(".collection-title").hidden = true;
     list.hidden = true;
+    newProducts.hidden = true;
     detail.hidden = false;
     await this.showProduct(productID);
   }

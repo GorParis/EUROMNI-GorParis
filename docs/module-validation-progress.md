@@ -133,6 +133,31 @@ PrestaShop est installée : il s’agit d’un ZIP source de dépôt officiel, e
 du paquet PrestaShop Addons. Le rendu Smarty, la compatibilité sur une instance
 PrestaShop et l’activation de la vitrine restent hors de cette preuve.
 
+## Rendu du widget nouveautés dans la vitrine EUROMNI
+
+La vitrine dispose maintenant d’un endpoint public `GET /v1/widgets/new-products`
+qui exécute le module installé et renvoie les produits issus de sa réponse ABI.
+Le CMS configure ce runner uniquement avec un store SQL et
+`EUROMNI_ARTIFACT_DIR`; le profil Compose `cms` partage le volume privé
+d’artefacts avec le profil d’import.
+
+Le Web Component affiche les produits avec les cartes, images, traductions et
+prix déjà utilisés par le catalogue. Une réponse vide masque la section ;
+une erreur du service est indiquée sans interrompre le catalogue. La section
+est également actualisée lors d’un changement de langue et masquée sur une fiche
+produit. Les tests vérifient l’endpoint et la réponse du runner sur le ZIP
+publié.
+
+La validation visuelle Playwright sur le CMS de test a vérifié les cinq cartes,
+images et prix, la navigation vers une fiche et son retour, le filtre de
+catégorie, le changement de langue, la sélection de variante et l’ouverture puis
+la fermeture du panier. À 390 px, les cinq images chargent et la page ne déborde
+pas horizontalement. Des réponses simulées confirment que la liste vide masque
+le widget et qu’une erreur 503 affiche son message sans masquer le catalogue.
+Cette vérification a révélé puis corrigé un sélecteur de statut partagé qui
+masquait le message d’erreur ; aucun panier n’a été soumis et aucune commande
+n’a été créée.
+
 ## Pilote natif isolé transport/commande : Selfnamed WooCommerce
 
 Le plugin officiel « Selfnamed: Cosmetics on demand » est publié en version
@@ -176,12 +201,12 @@ La tranche IR v3 compile les entrées statiques et sait résoudre des référenc
 
 ## Prochaines étapes prévisibles
 
-1. comparer le comportement du widget rendu avec les données et la configuration PrestaShop d’origine ;
-2. examiner le paquet PrestaShop Addons et définir une preuve distincte de compatibilité avec une instance PrestaShop réelle ;
-3. décider et implémenter le rendu de widget EUROMNI, sans interpréter ou exécuter de template Smarty arbitraire.
-5. définir des règles explicites de lowering pour d’autres triggers et vérifier leur sémantique
-6. revoir les valeurs provisoires en vue de la production et planifier la réconciliation dans le cycle du CMS
-7. ajouter conditions et plusieurs opérations seulement après définition de leur contrat
+1. valider visuellement le widget dans le navigateur avec le CMS de test et les produits publiés ;
+2. comparer son comportement avec les données et la configuration PrestaShop d’origine ;
+3. examiner le paquet PrestaShop Addons et définir une preuve distincte de compatibilité avec une instance PrestaShop réelle ;
+4. définir des règles explicites de lowering pour d’autres triggers et vérifier leur sémantique ;
+5. revoir les valeurs provisoires en vue de la production et planifier la réconciliation dans le cycle du CMS ;
+6. ajouter conditions et plusieurs opérations seulement après définition de leur contrat.
 
 ## Remarque
 

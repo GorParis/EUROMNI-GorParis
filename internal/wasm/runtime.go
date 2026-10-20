@@ -186,7 +186,7 @@ func (r *Runtime) load(key, name string, wasm, installedHash []byte, replace boo
 
 // Run executes only a module loaded from an installed shop_modules record.
 func (r *Runtime) Run(ctx context.Context, moduleStore *store.Store, shopID, moduleID, exportName string) ([]interface{}, error) {
-	return r.runInstalled(ctx, moduleStore, shopID, moduleID, exportName, nil)
+	return r.runInstalled(ctx, moduleStore, shopID, moduleID, exportName, nil, nil)
 }
 
 // RunWithInput invokes an installed guest export with a validated ABI envelope in linear memory.
@@ -194,10 +194,26 @@ func (r *Runtime) RunWithInput(ctx context.Context, moduleStore *store.Store, sh
 	if err := validateGuestInput(input); err != nil {
 		return nil, err
 	}
-	return r.runInstalled(ctx, moduleStore, shopID, moduleID, exportName, input)
+	return r.runInstalled(ctx, moduleStore, shopID, moduleID, exportName, input, nil)
 }
 
-func (r *Runtime) runInstalled(ctx context.Context, moduleStore *store.Store, shopID, moduleID, exportName string, input []byte) ([]interface{}, error) {
+func (r *Runtime) RunInstalledWithResponse(ctx context.Context, moduleStore *store.Store, shopID, moduleID, exportName string) ([]byte, error) {
+	capture := &hostResponseCapture{}
+	if _, err := r.runInstalled(ctx, moduleStore, shopID, moduleID, exportName, nil, capture); err != nil {
+		return nil, err
+	}
+	if capture.calls != 1 {
+		return nil, fmt.Errorf("installed Wasm made %d host calls, want exactly one", capture.calls)
+	}
+	return append([]byte(nil), capture.response...), nil
+}
+
+type hostResponseCapture struct {
+	calls    int
+	response []byte
+}
+
+func (r *Runtime) runInstalled(ctx context.Context, moduleStore *store.Store, shopID, moduleID, exportName string, input []byte, capture *hostResponseCapture) ([]interface{}, error) {
 	if r == nil {
 		return nil, errors.New("wasm runtime is not initialized")
 	}
@@ -242,9 +258,9 @@ func (r *Runtime) runInstalled(ctx context.Context, moduleStore *store.Store, sh
 	}
 	trusted.config = append([]byte(nil), installed.Config...)
 	if input != nil {
-		return r.runWithInput(ctx, trusted, key, exportName, input)
+		return r.runEntry(ctx, trusted, key, exportName, input, capture)
 	}
-	return r.run(ctx, trusted, key, exportName)
+	return r.runEntry(ctx, trusted, key, exportName, nil, capture)
 }
 
 func validateGuestInput(input []byte) error {
@@ -263,17 +279,17 @@ func (r *Runtime) runWithContext(ctx context.Context, tc TrustedContext, moduleN
 }
 
 func (r *Runtime) run(ctx context.Context, tc TrustedContext, key, exportName string) ([]interface{}, error) {
-	return r.runEntry(ctx, tc, key, exportName, nil)
+	return r.runEntry(ctx, tc, key, exportName, nil, nil)
 }
 
 func (r *Runtime) runWithInput(ctx context.Context, tc TrustedContext, key, exportName string, input []byte) ([]interface{}, error) {
 	if err := validateGuestInput(input); err != nil {
 		return nil, err
 	}
-	return r.runEntry(ctx, tc, key, exportName, input)
+	return r.runEntry(ctx, tc, key, exportName, input, nil)
 }
 
-func (r *Runtime) runEntry(ctx context.Context, tc TrustedContext, key, exportName string, input []byte) ([]interface{}, error) {
+func (r *Runtime) runEntry(ctx context.Context, tc TrustedContext, key, exportName string, input []byte, capture *hostResponseCapture) ([]interface{}, error) {
 	if r == nil || r.engine == nil {
 		return nil, errors.New("wasm runtime is not initialized")
 	}
@@ -306,7 +322,7 @@ func (r *Runtime) runEntry(ctx context.Context, tc TrustedContext, key, exportNa
 	linker := wasmtime.NewLinker(r.engine)
 	defer linker.Close()
 	if err := linker.DefineFunc(store, guestCallModule, guestCallName, func(caller *wasmtime.Caller, inputPtr, inputLen, outputPtr, outputCapacity int32) int32 {
-		return r.callHost(ctx, tc, caller, inputPtr, inputLen, outputPtr, outputCapacity)
+		return r.callHost(ctx, tc, caller, inputPtr, inputLen, outputPtr, outputCapacity, capture)
 	}); err != nil {
 		return nil, fmt.Errorf("link EUROMNI ABI: %w", err)
 	}
@@ -355,7 +371,7 @@ func (r *Runtime) runEntry(ctx context.Context, tc TrustedContext, key, exportNa
 	}
 }
 
-func (r *Runtime) callHost(ctx context.Context, tc TrustedContext, caller *wasmtime.Caller, inputPtr, inputLen, outputPtr, outputCapacity int32) int32 {
+func (r *Runtime) callHost(ctx context.Context, tc TrustedContext, caller *wasmtime.Caller, inputPtr, inputLen, outputPtr, outputCapacity int32, capture *hostResponseCapture) int32 {
 	if caller == nil || inputLen < 0 || outputCapacity < 0 || outputCapacity > maxGuestResponseBytes {
 		return -1
 	}
@@ -382,6 +398,10 @@ func (r *Runtime) callHost(ctx context.Context, tc TrustedContext, caller *wasmt
 		return -1
 	}
 	copy(output, response)
+	if capture != nil {
+		capture.calls++
+		capture.response = append(capture.response[:0], response...)
+	}
 	return int32(len(response))
 }
 

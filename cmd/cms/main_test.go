@@ -46,6 +46,14 @@ func TestConfiguredProductReaderRejectsUnavailableDatabase(t *testing.T) {
 	}
 }
 
+func TestNewProductsWidgetRequiresSQLStoreWhenArtifactsConfigured(t *testing.T) {
+	t.Setenv("EUROMNI_ARTIFACT_DIR", t.TempDir())
+	if closeWidget, err := configureNewProductsWidget(store.NewMemory()); err == nil {
+		closeWidget()
+		t.Fatal("configureNewProductsWidget() succeeded without a SQL store")
+	}
+}
+
 func TestListenAddressDefaultsToLoopbackAndAcceptsOverride(t *testing.T) {
 	t.Setenv("LISTEN_ADDR", "")
 	t.Setenv("PORT", "")

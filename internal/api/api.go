@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 
@@ -14,9 +16,18 @@ import (
 )
 
 var productReader store.ProductReader = store.ProductReaderFromEnv()
+var newProductsWidgetRunner interface {
+	RunNewProducts(context.Context, string) ([]store.ProductView, bool, error)
+}
 
 func SetProductReader(r store.ProductReader) {
 	productReader = r
+}
+
+func SetNewProductsWidgetRunner(runner interface {
+	RunNewProducts(context.Context, string) ([]store.ProductView, bool, error)
+}) {
+	newProductsWidgetRunner = runner
 }
 
 func currentProductReader() store.ProductReader {
@@ -32,6 +43,7 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/reference/eu-countries", euCountriesReference)
 	mux.HandleFunc("GET /v1/products", productsList)
 	mux.HandleFunc("GET /v1/products/{id}", productByID)
+	mux.HandleFunc("GET /v1/widgets/new-products", newProductsWidget)
 	mux.HandleFunc("GET /v1/categories", categoriesList)
 	mux.HandleFunc("GET /v1/categories/{id}", categoryByID)
 	mux.HandleFunc("GET /v1/cart", cartView)
@@ -83,6 +95,23 @@ func Register(mux *http.ServeMux) {
 		panic(err)
 	}
 	mux.Handle("GET /admin/", http.StripPrefix("/admin/", http.FileServer(http.FS(adminFS))))
+}
+
+func newProductsWidget(w http.ResponseWriter, r *http.Request) {
+	if newProductsWidgetRunner == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "new-products widget is unavailable"})
+		return
+	}
+	products, installed, err := newProductsWidgetRunner.RunNewProducts(r.Context(), seed.ShopID)
+	if err != nil {
+		log.Printf("new-products widget: %v", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "new-products widget is unavailable"})
+		return
+	}
+	if !installed || products == nil {
+		products = []store.ProductView{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": products})
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {
