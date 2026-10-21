@@ -164,6 +164,20 @@ podman compose -p euromni-cms-test --profile cms --profile module-import run --r
   --publish-only
 ```
 
+Le point d'entrée de dépôt en quarantaine est
+`POST /v1/admin/modules/imports` avec un corps brut `application/zip` et une
+session Bearer de rôle `owner` ou `admin`. Il est activé uniquement si
+`EUROMNI_QUARANTINE_DIR` désigne un répertoire privé ; sinon l'API répond
+`503`. Les archives sont validées en mémoire, stockées séparément des builds,
+scopées par boutique et indexées par SHA-256, sans extraction, compilation ni
+exécution PHP. La limite par requête est 16 MiB et le quota local est de
+256 MiB par boutique. Cette première tranche ne fournit ni endpoint de revue,
+ni promotion depuis la quarantaine, ni politique de purge ; ne pas l'activer
+en production avant d'avoir configuré la rétention et les contrôles
+opérationnels. Le répertoire de quarantaine est local à une instance CMS et
+ne doit pas être partagé entre plusieurs processus/instances ; le quota n'est
+pas un mécanisme de coordination distribué.
+
 Le ZIP versionné est un snapshot épinglé du dépôt officiel PrestaShop
 (`ps_newproducts` 2.0.1, commit amont
 `72e9476406319cbb91ac383121ca9967dc61f277`, SHA-256

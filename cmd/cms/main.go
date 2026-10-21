@@ -11,6 +11,7 @@ import (
 	"euromni/internal/artifact"
 	"euromni/internal/dbdialect"
 	"euromni/internal/payment"
+	"euromni/internal/quarantine"
 	"euromni/internal/store"
 	"euromni/internal/supplier/selfnamed"
 	"euromni/internal/wasm"
@@ -37,6 +38,9 @@ func main() {
 		log.Fatal(err)
 	}
 	defer closeWidget()
+	if err := configureModuleArchiveQuarantine(); err != nil {
+		log.Fatal(err)
+	}
 	closePolicy, err := configureShippingPricingPolicy(reader)
 	if err != nil {
 		log.Fatal(err)
@@ -49,6 +53,20 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func configureModuleArchiveQuarantine() error {
+	api.SetModuleArchiveQuarantine(nil)
+	root := strings.TrimSpace(os.Getenv("EUROMNI_QUARANTINE_DIR"))
+	if root == "" {
+		return nil
+	}
+	quarantineStore, err := quarantine.NewFileStore(root)
+	if err != nil {
+		return fmt.Errorf("configure module archive quarantine: %w", err)
+	}
+	api.SetModuleArchiveQuarantine(quarantineStore)
+	return nil
 }
 
 func configureNewProductsWidget(reader store.ProductReader) (func(), error) {

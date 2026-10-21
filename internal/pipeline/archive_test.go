@@ -3,8 +3,11 @@ package pipeline
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +33,111 @@ func TestValidatePHPArchiveRejectsTraversalAndUnexpectedFiles(t *testing.T) {
 	if err := ValidatePHPArchive(payload); err == nil {
 		t.Fatal("ValidatePHPArchive() accepted an unsafe archive")
 	}
+}
+
+func TestValidatePHPArchiveRejectsWindowsPathsDuplicatesAndExpandedBombs(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		entries [][2]string
+	}{
+		{
+			name: "windows drive path",
+			entries: [][2]string{
+				{"manifest.json", `{"name":"demo","version":"1.0.0","platform":"woocommerce","shop":"shop"}`},
+				{"C:/outside.php", `<?php`},
+			},
+		},
+		{
+			name: "absolute path",
+			entries: [][2]string{
+				{"manifest.json", `{"name":"demo","version":"1.0.0","platform":"woocommerce","shop":"shop"}`},
+				{"/outside.php", `<?php`},
+			},
+		},
+		{
+			name: "unsupported extension",
+			entries: [][2]string{
+				{"manifest.json", `{"name":"demo","version":"1.0.0","platform":"woocommerce","shop":"shop"}`},
+				{"module.php", `<?php`},
+				{"payload.so", "native code"},
+			},
+		},
+		{
+			name: "case-insensitive duplicate path",
+			entries: [][2]string{
+				{"manifest.json", `{"name":"demo","version":"1.0.0","platform":"woocommerce","shop":"shop"}`},
+				{"MANIFEST.JSON", `{"name":"demo","version":"1.0.0","platform":"woocommerce","shop":"shop"}`},
+				{"module.php", `<?php`},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidatePHPArchive(buildZIPEntries(t, test.entries)); err == nil {
+				t.Fatal("ValidatePHPArchive accepted unsafe archive paths")
+			}
+		})
+	}
+	if err := ValidatePHPArchive(buildZIPWithSymlink(t)); !errors.Is(err, ErrPHPArchiveUnsafe) {
+		t.Fatalf("symlink archive error = %v, want ErrPHPArchiveUnsafe", err)
+	}
+	if err := ValidatePHPArchive(buildZIPEntries(t, tooManyArchiveEntries())); !errors.Is(err, ErrPHPArchiveUnsafe) {
+		t.Fatalf("too many entries error = %v, want ErrPHPArchiveUnsafe", err)
+	}
+
+	entries := [][2]string{
+		{"manifest.json", `{"name":"demo","version":"1.0.0","platform":"woocommerce","shop":"shop"}`},
+		{"module.php", `<?php`},
+	}
+	expanded := strings.Repeat("x", MaxEntryBytes)
+	for index := 0; index < 16; index++ {
+		entries = append(entries, [2]string{fmt.Sprintf("data-%02d.txt", index), expanded})
+	}
+	if err := ValidatePHPArchive(buildZIPEntries(t, entries)); !errors.Is(err, ErrPHPArchiveUnsafe) {
+		t.Fatalf("expanded archive error = %v, want ErrPHPArchiveUnsafe", err)
+	}
+}
+
+func tooManyArchiveEntries() [][2]string {
+	entries := make([][2]string, 0, MaxPHPArchiveFiles+1)
+	entries = append(entries,
+		[2]string{"manifest.json", `{"name":"demo","version":"1.0.0","platform":"woocommerce","shop":"shop"}`},
+		[2]string{"module.php", `<?php`},
+	)
+	for index := 0; len(entries) < MaxPHPArchiveFiles+1; index++ {
+		entries = append(entries, [2]string{fmt.Sprintf("file-%03d.txt", index), "x"})
+	}
+	return entries
+}
+
+func buildZIPWithSymlink(t *testing.T) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for _, entry := range [][2]string{
+		{"manifest.json", `{"name":"demo","version":"1.0.0","platform":"woocommerce","shop":"shop"}`},
+		{"module.php", "<?php"},
+	} {
+		file, err := writer.Create(entry[0])
+		if err != nil {
+			t.Fatalf("create zip entry %q: %v", entry[0], err)
+		}
+		if _, err := file.Write([]byte(entry[1])); err != nil {
+			t.Fatalf("write zip entry %q: %v", entry[0], err)
+		}
+	}
+	header := &zip.FileHeader{Name: "link.php", Method: zip.Store}
+	header.SetMode(os.ModeSymlink | 0o777)
+	link, err := writer.CreateHeader(header)
+	if err != nil {
+		t.Fatalf("create symlink entry: %v", err)
+	}
+	if _, err := link.Write([]byte("module.php")); err != nil {
+		t.Fatalf("write symlink entry: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
+	return buffer.Bytes()
 }
 
 func TestParsePHPManifestAcceptsSupportedModuleContract(t *testing.T) {
@@ -460,15 +568,24 @@ func contains(values []string, needle string) bool {
 
 func buildZIP(t *testing.T, files map[string]string) []byte {
 	t.Helper()
+	entries := make([][2]string, 0, len(files))
+	for name, content := range files {
+		entries = append(entries, [2]string{name, content})
+	}
+	return buildZIPEntries(t, entries)
+}
+
+func buildZIPEntries(t *testing.T, files [][2]string) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	for name, content := range files {
-		w, err := zw.Create(name)
+	for _, entry := range files {
+		w, err := zw.Create(entry[0])
 		if err != nil {
-			t.Fatalf("create zip entry %q: %v", name, err)
+			t.Fatalf("create zip entry %q: %v", entry[0], err)
 		}
-		if _, err := w.Write([]byte(content)); err != nil {
-			t.Fatalf("write zip entry %q: %v", name, err)
+		if _, err := w.Write([]byte(entry[1])); err != nil {
+			t.Fatalf("write zip entry %q: %v", entry[0], err)
 		}
 	}
 	if err := zw.Close(); err != nil {

@@ -1,16 +1,21 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"euromni/internal/pipeline"
+	"euromni/internal/quarantine"
 	"euromni/internal/seed"
 	"euromni/internal/store"
 )
@@ -332,6 +337,76 @@ func TestAdminModuleManagementAuthorizationAndLifecycle(t *testing.T) {
 	}
 }
 
+func TestAdminModuleArchiveQuarantineAuthorizationAndValidation(t *testing.T) {
+	previousQuarantine := moduleArchiveQuarantine
+	quarantineRoot := filepath.Join(t.TempDir(), "quarantine")
+	quarantineStore, err := quarantine.NewFileStore(quarantineRoot)
+	if err != nil {
+		t.Fatalf("create quarantine store: %v", err)
+	}
+	SetModuleArchiveQuarantine(quarantineStore)
+	t.Cleanup(func() { SetModuleArchiveQuarantine(previousQuarantine) })
+	t.Cleanup(func() { SetStaffAuthenticator(nil) })
+
+	mux := http.NewServeMux()
+	Register(mux)
+	validArchive := makeAdminModuleArchive(t)
+	if response := performAdminArchiveRequest(mux, "", validArchive, "application/zip"); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated upload status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+	for _, role := range []string{"editor", "support"} {
+		auth := newCatalogTestAuthenticator(role, seed.ShopID)
+		SetStaffAuthenticator(auth)
+		if response := performAdminArchiveRequest(mux, auth.token, validArchive, "application/zip"); response.Code != http.StatusForbidden {
+			t.Errorf("%s upload status = %d, want %d; body=%s", role, response.Code, http.StatusForbidden, response.Body)
+		}
+	}
+
+	admin := newCatalogTestAuthenticator("admin", seed.ShopID)
+	SetStaffAuthenticator(admin)
+	SetModuleArchiveQuarantine(nil)
+	if response := performAdminArchiveRequest(mux, admin.token, validArchive, "application/zip"); response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured quarantine status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	SetModuleArchiveQuarantine(quarantineStore)
+	if response := performAdminArchiveRequest(mux, admin.token, validArchive, "application/octet-stream"); response.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("unsupported content type status = %d, want %d", response.Code, http.StatusUnsupportedMediaType)
+	}
+	if response := performAdminArchiveRequest(mux, admin.token, []byte("not a zip"), "application/zip"); response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid archive status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	invalidManifest := makeAdminModuleArchiveWithManifest(t, `{"name":"demo","version":"1.0.0","platform":"woocommerce"}`)
+	if response := performAdminArchiveRequest(mux, admin.token, invalidManifest, "application/zip"); response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid manifest status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if response := performAdminArchiveRequest(mux, admin.token,
+		make([]byte, pipeline.MaxPHPArchiveBytes+1), "application/zip"); response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d, want %d", response.Code, http.StatusRequestEntityTooLarge)
+	}
+	entries, err := os.ReadDir(quarantineRoot)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("rejected uploads wrote to quarantine: entries=%v error=%v", entries, err)
+	}
+
+	response := performAdminArchiveRequest(mux, admin.token, validArchive, "application/zip")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("valid archive upload status = %d, want %d; body=%s", response.Code, http.StatusAccepted, response.Body)
+	}
+	var receipt struct {
+		Data quarantine.Archive `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &receipt); err != nil {
+		t.Fatalf("decode quarantine receipt: %v", err)
+	}
+	if receipt.Data.Size != int64(len(validArchive)) || receipt.Data.SHA256 == "" {
+		t.Fatalf("quarantine receipt = %+v", receipt.Data)
+	}
+	stored, err := quarantineStore.Get(context.Background(), seed.ShopID, receipt.Data.SHA256)
+	if err != nil || !bytes.Equal(stored, validArchive) {
+		t.Fatalf("stored quarantine archive = %d bytes, error = %v", len(stored), err)
+	}
+}
+
 func TestAdminLoginIsUnavailableWithoutDatabaseAuthenticator(t *testing.T) {
 	originalReader := productReader
 	SetProductReader(store.NewMemory())
@@ -577,4 +652,41 @@ func performAdminRequest(mux *http.ServeMux, method, path, token, body string) *
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	return response
+}
+
+func performAdminArchiveRequest(mux *http.ServeMux, token string, archive []byte, contentType string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, "/v1/admin/modules/imports", bytes.NewReader(archive))
+	request.Header.Set("Content-Type", contentType)
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	return response
+}
+
+func makeAdminModuleArchive(t *testing.T) []byte {
+	return makeAdminModuleArchiveWithManifest(t, `{"name":"demo","version":"1.0.0","platform":"woocommerce","shop":"atelier-demo"}`)
+}
+
+func makeAdminModuleArchiveWithManifest(t *testing.T, manifest string) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for name, content := range map[string]string{
+		"manifest.json": manifest,
+		"module.php":    "<?php return true;",
+	} {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatalf("create archive entry: %v", err)
+		}
+		if _, err := entry.Write([]byte(content)); err != nil {
+			t.Fatalf("write archive entry: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+	return buffer.Bytes()
 }

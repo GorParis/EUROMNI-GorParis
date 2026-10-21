@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.13 |
+| Version | 3.15 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-21 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -48,7 +48,9 @@ reste limitée à l’IR supportée ; le prototype Rust `no_std` confirme une fi
 minimale, pas la traduction de modules métier. Les cibles runtime Windows/amd64
 et Linux/amd64 ont été testées dans le workflow natif de distribution ; les
 architectures et systèmes de fichiers non testés restent exclus. Il n’existe
-pas de traduction générique PHP ni d’endpoint d’ingestion HTTP authentifié.
+pas de traduction générique PHP. L'ingestion HTTP QP-03 existe en opt-in et
+dépose uniquement des ZIP validés en quarantaine privée ; elle ne compile,
+n'extrait ni n'exécute le PHP.
 Voir [`portability.md`](portability.md) pour les limites et preuves ; QP-01
 reste ouvert sur le processus de build/promotion métier.
 
@@ -67,7 +69,7 @@ la documentation du projet.
 |---|---|---|---|---|---|
 | QP-01 | P0 | Prouver une toolchain qui produit un artefact Wasm portable compatible avec `euromni.call`, sans imports système implicites. Dépend du contrat ABI actuel. | Build reproductible depuis un worker épinglé ; module n’importe que l’ABI autorisée et s’exécute sur la matrice Wasmtime approuvée. Aucun compilateur/LLVM local requis en production. | Spike Rust `no_std` 1.99.1/Cargo `--frozen` : imports, exports, exécution Wasmtime et égalité SHA-256 de deux builds propres ; CI Go/Rust Linux/Windows verte (run 39580872372), distribution Linux/Windows avec intégrations, smoke tests et artefacts publiés (run 39581659670). Preuve limitée à une fixture minimale ; le processus de traduction/build/promotion métier et sa provenance restent à définir et évaluer. | En cours |
 | QP-02 | P0 | Définir le manifeste/versionnement d’artefact et son lien atomique avec `modules` et `shop_modules`. | Hash source, hash Wasm, plateforme/version, versions d’adaptateur/IR/compilateur, ABI et capabilities sont traçables ; un échec ne remplace pas la version active. | Builds immuables, pointeur courant et pin par installation migrés en PostgreSQL/MariaDB ; publication et promotion transactionnelles couvertes par intégration PostgreSQL, migration et parcours MariaDB dédiés réussis. Manifeste strict, allowlist des versions approuvées, promotion dans le CMS de test et exécution du build promu vérifiés. | Terminé |
-| QP-03 | P0 | Concevoir une ingestion admin authentifiée avec quarantaine d’archives. | Taille/nombre d’entrées bornés ; traversal, chemins absolus, liens symboliques, archives bombes et extensions non autorisées rejetés ; aucun PHP exécuté. | Tests négatifs d’archives et revue sécurité ; aucun endpoint anonyme. | À faire |
+| QP-03 | P0 | Concevoir et implémenter une ingestion admin authentifiée avec quarantaine isolée. Le premier incrément accepte un ZIP brut (pas multipart), le valide sans extraction ni exécution, le stocke sous empreinte dans un répertoire privé configurable et ne le publie pas comme build. | Authentification admin, charge plafonnée, nombre d’entrées et taille décompressée totale bornés ; doublons, traversal, chemins absolus/Windows, liens/types spéciaux, archive corrompue/bombe et extensions non autorisées rejetés. Échec de validation sans écriture en quarantaine ; aucune exécution de PHP ; aucun endpoint anonyme. | Tests API d’auth/rôle/type/limite/manifest valide ou invalide ; tests du stockage privé, cloisonnement boutique et intégrité ; tests locaux Linux réussis. Qualification Windows CI et revue de sécurité encore requises ; rétention/rate-limit et déploiement multi-instance hors de ce premier incrément. | En cours |
 | QP-04 | P1 | Créer les adaptateurs statiques WooCommerce et PrestaShop et leur matrice de versions/hooks supportés. | Un jeu de fixtures autorisé par plateforme produit des diagnostics déterministes et identifie les appels de données/effets de bord. | Fixtures, version source, résultats d’analyse golden et rapports de limites. | À faire |
 | QP-05 | P1 | Définir l’IR métier et sa validation avant toute génération. | Chaque opération IR déclare types, capability, erreurs et comportement ; capacités inconnues ou accès système impossibles à générer. | Schémas versionnés, tests de validation et cas rejetés. | À faire |
 | QP-06 | P1 | Implémenter la traduction contrôlée de l’IR et la compilation reproductible. | Aucun résultat LLM n’est exécuté directement ; source/config identiques produisent le même artefact, ou une différence est expliquée. | Toolchain verrouillée, provenance, tests de reproductibilité et SBOM selon dépendances retenues. | À faire |
@@ -77,14 +79,12 @@ la documentation du projet.
 | QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) : Windows/amd64 et Linux/amd64 retenus ; le run 39581659670 valide sur les deux runners les intégrations PostgreSQL 16, builds CGo, smoke HTTP et publication des archives avec checksums adjacents. La CI Go/Rust des deux cibles passe au run 39580872372. Les limites par filesystem/architecture sont documentées ; qualification limitée aux configurations testées, sans certification générique de production. | Terminé |
 
 QP-10 est qualifié pour les runners Windows/amd64 et Linux/amd64 décrits dans
-[`portability.md`](portability.md). La suite immédiate reste QP-01 : définir et
-qualifier le processus de build/promotion des guests métier, sans confondre le
-prototype Rust et le compilateur IR actuel. Un worker épinglé est acceptable
-s’il produit un artefact portable et reproductible ; Docker ne devient pas une
-dépendance de production. La réorganisation générale du backend est différée
-jusqu’à stabilisation de ces frontières et des contrats. Continuer ensuite
-QP-03, QP-04/05, QP-06/07, puis QP-08/09 ; ne pas commencer la traduction
-générique avant d’avoir validé l’IR avec les deux plateformes pilotes.
+[`portability.md`](portability.md). QP-01 dispose maintenant d'un parcours
+pilote de publication/promotion testable, sans preuve de traduction PHP
+générale ni de compatibilité avec un CMS réel. La tranche active est QP-03 :
+ingestion authentifiée et quarantaine isolée, sans extraction ni exécution du
+PHP. QP-04/05, puis QP-06/07, précisent les adaptateurs et l'IR avant d'élargir
+la traduction métier. La réorganisation générale du backend reste différée.
 
 ### Prochaine tranche — QP-01 : contrat du flux de build métier
 
@@ -254,4 +254,6 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.10 | 2026-10-21 | QP-10 consolidé : CI Go/Rust verte sur Linux/amd64 et Windows/amd64 (run 39580872372) ; distribution CMS verte sur les deux cibles (run 39581659670, commit 6610399), avec tests d'intégration PostgreSQL 16, smoke HTTP, checksum SHA-256 et deux artefacts publiés. QP-01 reste en cours : prochaine tranche proposée, cadrer le contrat et le test d'acceptation du flux de build métier sur un seul module/version épinglé, sans refonte backend ni traduction PHP. | En attente du responsable qualité |
 | 3.11 | 2026-10-21 | QP-01 cadrage précisé sur le snapshot PrestaShop `ps_newproducts` 2.0.1, commit amont `72e9476406319cbb91ac383121ca9967dc61f277`, ZIP SHA-256 `0f0750d8c2a1e6e12fc67169224f597f166b5c80b99cb306f53e9b339b17af77`. Contrat d'entrée/sortie et test d'acceptation décrits ; l'étiquette `euromni-test-adapter` est explicitement non représentative d'une version CMS réelle. Restent à implémenter l'épinglage obligatoire de la source et la preuve de reproductibilité/imports/exports dans le parcours de publication candidat. | En attente du responsable qualité |
 | 3.12 | 2026-10-21 | QP-01 implémenté pour le pilote épinglé : l'importeur refuse toute archive autre que le ZIP PrestaShop dont le SHA-256 est documenté ; tests vérifient le rejet sans déplacement du build/pin, la reproductibilité de l'IR/Wasm/manifeste, et l'interface Wasm (seul import `euromni.call`, exports `memory`/`run`). Tests archive ciblés et intégration PostgreSQL/Wasmtime réussis. Le périmètre reste le snapshot et le compilateur IR embarqué, sans revendication de compatibilité CMS réel. | En attente du responsable qualité |
-| 3.13 | 2026-10-21 | QP-01 : le test d'acceptation utilise `PublishModuleBuildOnly` pour publier un candidat immuable sans installation ; il relit et valide artefact/manifeste, constate le pointeur courant candidat avec pin installé inchangé, puis promeut explicitement le digest et exécute le build promu via Wasmtime. Tests pipeline, intégration PostgreSQL/Wasmtime ciblée, `go vet ./internal/pipeline` et `git diff --check` réussis. | En attente du responsable qualité |
+| 3.13 | 2026-10-21 | QP-01 : le test d'acceptation utilise `PublishModuleBuildOnly` pour publier un candidat immuable sans installation ; il relit et valide artefact/manifeste, constate le pointeur courant candidat avec pin installé inchangé, puis promeut explicitement le digest et exécute le build promu via Wasmtime. Tests pipeline et intégration PostgreSQL/Wasmtime ciblée réussis ; CI Go Linux/Windows du commit `ed73e39` verte (run 39600548552). | En attente du responsable qualité |
+| 3.14 | 2026-10-21 | QP-03 lancé : contrat du premier incrément limité à un POST admin authentifié de ZIP brut, validation en mémoire sans extraction/exécution, puis stockage privé en quarantaine séparée, sans publication de build. Limites globales, chemins/types/doublons et tests d'abus à couvrir ; habilitation production conditionnée aux validations multiplateformes et à une revue sécurité. | En attente du responsable qualité |
+| 3.15 | 2026-10-21 | QP-03 premier incrément codé localement : route d'import authentifiée pour les rôles owner/admin, activée uniquement par `EUROMNI_QUARANTINE_DIR`, validation stricte du manifeste et du ZIP, écriture privée adressée par SHA-256 dans un espace boutique séparé, quota local de 256 MiB, aucune extraction/exécution/publication. Tests unitaires complets `go test ./...` réussis. Les tests du package quarantaine compilent pour Windows ; les packages Wasmtime nécessitent une toolchain CGo Windows et restent à valider en CI. Revue de sécurité, rétention/rate-limit et déploiement multi-instance encore en attente. | En attente du responsable qualité |

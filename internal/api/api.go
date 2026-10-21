@@ -103,6 +103,7 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/admin/modules/{name}/installation", withOrderWriteAuth(adminInstallModule))
 	mux.HandleFunc("DELETE /v1/admin/modules/{name}/installation", withOrderWriteAuth(adminUninstallModule))
 	mux.HandleFunc("POST /v1/admin/modules/{name}/build", withOrderWriteAuth(adminPromoteModuleBuild))
+	mux.HandleFunc("POST /v1/admin/modules/imports", withOrderWriteAuth(adminQuarantineModuleArchive))
 	mux.HandleFunc("GET /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("PUT /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("GET /v1/admin/shipping/versions/targets", withOrderWriteAuth(adminShippingRateVersionTargets))

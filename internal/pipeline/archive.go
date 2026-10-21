@@ -104,57 +104,67 @@ func ValidatePHPArchive(data []byte) error {
 
 	seenManifest := false
 	seenPHP := false
+	seenPaths := make(map[string]struct{}, len(reader.File))
+	var totalUncompressed uint64
 	for _, archived := range reader.File {
-		if archived.FileInfo().IsDir() {
+		name := strings.ReplaceAll(archived.Name, "\\", "/")
+		directory := archived.FileInfo().IsDir()
+		cleanName := strings.TrimSuffix(name, "/")
+		cleaned := path.Clean(cleanName)
+		if name == "" || cleanName == "" || strings.ContainsRune(name, '\x00') ||
+			cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") ||
+			strings.HasPrefix(cleaned, "/") || cleaned != cleanName || strings.Contains(cleaned, ":") {
+			return ErrPHPArchiveUnsafe
+		}
+		mode := archived.Mode()
+		if mode&os.ModeSymlink != 0 || (mode.Type() != 0 && mode.Type() != os.ModeDir) ||
+			(directory && mode.Type() != 0 && mode.Type() != os.ModeDir) ||
+			(!directory && mode.IsDir()) {
+			return ErrPHPArchiveUnsafe
+		}
+		pathKey := strings.ToLower(cleaned)
+		if _, duplicate := seenPaths[pathKey]; duplicate {
+			return ErrPHPArchiveUnsafe
+		}
+		seenPaths[pathKey] = struct{}{}
+		if directory {
+			if archived.UncompressedSize64 != 0 || archived.CompressedSize64 != 0 {
+				return ErrPHPArchiveUnsafe
+			}
 			continue
 		}
-		if archived.FileInfo().Mode()&os.ModeSymlink != 0 {
-			return ErrPHPArchiveUnsafe
-		}
-		name := strings.ReplaceAll(archived.Name, "\\", "/")
-		if name == "" || name == "." || strings.Contains(name, "\x00") {
-			return ErrPHPArchiveUnsafe
-		}
-		if strings.HasPrefix(name, "/") || strings.HasPrefix(name, "../") || name == ".." || strings.Contains(name, "/../") || strings.Contains(name, "..//") || strings.Contains(name, "..\\") {
-			return ErrPHPArchiveUnsafe
-		}
-		cleaned := path.Clean(name)
-		if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-			return ErrPHPArchiveUnsafe
-		}
-		if strings.HasPrefix(cleaned, "/") || strings.Contains(cleaned, "//") {
-			return ErrPHPArchiveUnsafe
-		}
 
-		ext := strings.ToLower(filepath.Ext(name))
+		ext := strings.ToLower(filepath.Ext(cleaned))
 		switch ext {
 		case ".php", ".json", ".md", ".txt":
 		default:
 			return ErrPHPArchiveUnexpectedFileType
 		}
-		if strings.EqualFold(name, "manifest.json") || strings.HasSuffix(strings.ToLower(name), "/manifest.json") {
+		if strings.EqualFold(cleaned, "manifest.json") || strings.HasSuffix(strings.ToLower(cleaned), "/manifest.json") {
 			seenManifest = true
 		}
 		if ext == ".php" {
 			seenPHP = true
 		}
-		if archived.UncompressedSize64 > MaxEntryBytes {
+		if archived.UncompressedSize64 > MaxEntryBytes ||
+			totalUncompressed > (32<<20)-archived.UncompressedSize64 {
 			return ErrPHPArchiveUnsafe
 		}
-		if archived.UncompressedSize64 == 0 && archived.Method == zip.Store {
-			continue
-		}
+		totalUncompressed += archived.UncompressedSize64
 		opened, err := archived.Open()
 		if err != nil {
 			return fmt.Errorf("%w: open %q: %v", ErrPHPArchiveInvalid, archived.Name, err)
 		}
-		_, copyErr := io.CopyN(io.Discard, opened, MaxEntryBytes+1)
-		_ = opened.Close()
-		if copyErr == nil {
-			return ErrPHPArchiveUnsafe
+		entrySize, readErr := io.Copy(io.Discard, io.LimitReader(opened, MaxEntryBytes+1))
+		closeErr := opened.Close()
+		if readErr != nil {
+			return fmt.Errorf("%w: read %q: %v", ErrPHPArchiveInvalid, archived.Name, readErr)
 		}
-		if !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, io.ErrUnexpectedEOF) {
-			return fmt.Errorf("%w: read %q: %v", ErrPHPArchiveInvalid, archived.Name, copyErr)
+		if closeErr != nil {
+			return fmt.Errorf("%w: close %q: %v", ErrPHPArchiveInvalid, archived.Name, closeErr)
+		}
+		if entrySize > MaxEntryBytes || uint64(entrySize) != archived.UncompressedSize64 {
+			return ErrPHPArchiveUnsafe
 		}
 	}
 	if !seenManifest {

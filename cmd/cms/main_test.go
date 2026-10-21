@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -51,6 +52,19 @@ func TestNewProductsWidgetRequiresSQLStoreWhenArtifactsConfigured(t *testing.T) 
 	if closeWidget, err := configureNewProductsWidget(store.NewMemory()); err == nil {
 		closeWidget()
 		t.Fatal("configureNewProductsWidget() succeeded without a SQL store")
+	}
+}
+
+func TestModuleArchiveQuarantineIsOptInAndUsesPrivateStore(t *testing.T) {
+	t.Cleanup(func() { api.SetModuleArchiveQuarantine(nil) })
+	t.Setenv("EUROMNI_QUARANTINE_DIR", "")
+	if err := configureModuleArchiveQuarantine(); err != nil {
+		t.Fatalf("disable module archive quarantine: %v", err)
+	}
+
+	t.Setenv("EUROMNI_QUARANTINE_DIR", filepath.Join(t.TempDir(), "quarantine"))
+	if err := configureModuleArchiveQuarantine(); err != nil {
+		t.Fatalf("configure module archive quarantine: %v", err)
 	}
 }
 
