@@ -9,11 +9,22 @@ observés sur le run `Go CI #59` : les matrices CI utilisent maintenant
 Le runner `windows-2022` reste inchangé ; la distribution CMS reste épinglée à
 `ubuntu-22.04` et `windows-2022`.
 
-Vérifications locales : versions d’actions et runtimes confirmés dans leurs
-métadonnées amont, diagnostics YAML de VS Code sans erreur, `git diff --check`
-propre. Ces modifications ne sont pas encore poussées : leur exécution sur les
-runners GitHub reste à confirmer au prochain push. Les annotations du run #59
-reflètent son ancien commit et ne signalent pas un échec de build.
+Le run `Go CI #60` du commit `7b166c5` a réussi sur ses quatre jobs Ubuntu
+24.04/Windows 2022. Les jobs Windows ont installé la toolchain C puis passé
+`go vet ./...` et `go test ./...`. Les références `checkout@v7` et
+`setup-go@v7` ont donc été exercées sur les deux systèmes. Le run standalone
+`#8`, tentative 2, a également réussi sur Linux et Windows, avec tests
+d'intégration, builds, smoke tests et publication d'artefacts. Il cible le
+commit antérieur `6610399` : il ne valide donc pas encore les références
+`checkout@v7`, `setup-go@v7` et `upload-artifact@v7` du commit `7b166c5`.
+Run complet à faire : lancer un nouveau `workflow_dispatch` de
+`CMS standalone distribution` depuis `main`, avec le debug activé, et vérifier
+que le run référence exactement le SHA `7b166c503667726789b14b1120cae8f88a502fbc`.
+Ne pas utiliser « Re-run jobs » sur le run #8 : cela conserve son ancien SHA.
+Le critère de réussite est le succès des jobs `Package linux-amd64` et
+`Package windows-amd64`, incluant tests d'intégration, smoke tests des binaires
+extraits et upload des archives/checksums pour les deux cibles.
+Les annotations de l'ancien run #59 concernaient son ancien commit.
 
 ## Revue ciblée QP-03 — quarantaine (21 octobre 2026)
 
@@ -30,6 +41,35 @@ Validation ciblée : `go test ./internal/quarantine` réussit. Cette lecture est
 un contrôle de code ciblé, pas une revue de sécurité indépendante. Le rate-limit
 et le stockage partagé entre plusieurs processus restent hors support et à
 résoudre ou documenter avant un déploiement multi-instance.
+
+Première passe gratuite sur le dépôt (21 octobre) : `gosec` G201/G202 ne trouve
+aucune construction SQL par concaténation/formatage sur 78 fichiers. Le scan
+complet `gosec` avait 23 alertes avant correctif ; le serveur HTTP n'a désormais
+plus G114 grâce aux délais d'en-tête/lecture/écriture/inactivité. Les 22 alertes
+restantes (conversions bornées, chemins CLI/fichiers, commandes backup et
+fixture unsafe) restent à trier manuellement, sans suppression aveugle des
+règles.
+
+`govulncheck` avait signalé 3 avis atteignables dans `pgx/v5@v5.7.2` et
+`x/text@v0.21.0`. Go minimal est maintenant 1.25.0 ; `pgx` v5.9.2 et `x/text`
+v0.41.0 appliquent les correctifs. L’avis SQLi pgx était conditionné au
+protocole simple avec une requête dollar-quoted ; aucune n’a été trouvée dans
+le SQL runtime. Après mise à niveau, `govulncheck ./...` trouve 0 vulnérabilité
+atteignable (1 avis de package importé et 22 avis de modules restent sans chemin
+d’appel détecté).
+
+Le store applicatif refuse maintenant `default_query_exec_mode=simple_protocol`
+dans `DATABASE_URL` et un test de régression vérifie ce rejet sans connexion
+réseau. L’application conserve ainsi le protocole étendu par défaut. Le
+migrateur garde le protocole simple uniquement pour ses migrations embarquées,
+sans valeurs contrôlées par les requêtes HTTP.
+
+Validations locales : Go 1.25.0 `go test ./...`, `go vet ./...`, intégrations
+PostgreSQL via Podman `--userns=keep-id`, et Playwright owner/vitrine (10
+produits) passent. Le CMS de test redémarré utilise Go 1.25.14, `/health`,
+`/admin/` et `/storefront/` répondent `200`. Windows/amd64 avec ce nouveau
+minimum Go reste à valider par le prochain CI après push. Aucun test d’injection
+actif ni audit indépendant n’a été fait ; les scanners ne les remplacent pas.
 
 ## Reprise CMS sur la machine locale — 20 octobre 2026
 

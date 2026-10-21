@@ -2,13 +2,15 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"os"
 	"strings"
 	"time"
 
 	"euromni/internal/dbdialect"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // Store holds the active database connection and SQL dialect.
@@ -40,9 +42,21 @@ func Open(dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := sql.Open(driverName, driverDSN)
-	if err != nil {
-		return nil, err
+	var db *sql.DB
+	if dialect == dbdialect.PostgreSQL {
+		config, err := pgx.ParseConfig(driverDSN)
+		if err != nil {
+			return nil, err
+		}
+		if config.DefaultQueryExecMode == pgx.QueryExecModeSimpleProtocol {
+			return nil, errors.New("PostgreSQL simple protocol is disabled for application database connections")
+		}
+		db = stdlib.OpenDB(*config)
+	} else {
+		db, err = sql.Open(driverName, driverDSN)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := db.Ping(); err != nil {
 		_ = db.Close()

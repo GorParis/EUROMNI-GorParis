@@ -28,7 +28,7 @@ le serveur Go EUROMNI peut etre construit sans CGo.
 |---|---|---|
 | Guest Wasm | Le WAT minimal et l'IR generent un module utilisant `euromni.call`. La fixture minimale est le seul contrat de guest actuellement prouve. | Format cible du pipeline, pas une declaration de support pour un compilateur de code source arbitraire. |
 | Go `wasip1` vers Wasm | Le spike consigne avec Go 1.26.8 retrouve `euromni.call` et des imports `wasi_snapshot_preview1` ; cette configuration ne respecte pas le linker strict. | Rejete pour cette configuration precise ; les autres compilateurs et versions restent a evaluer. |
-| Runtime Go + Wasmtime | `go.mod` cible Go 1.23 et depend de `wasmtime-go/v36`. Le binding requiert CGo. | Windows/amd64 et Linux/amd64 sont les cibles runtime qualifiees ; tests natifs, PostgreSQL 16, packaging et smoke tests CI sont requis sur les deux. |
+| Runtime Go + Wasmtime | `go.mod` cible Go 1.25 et depend de `wasmtime-go/v36`. Le binding requiert CGo. | Windows/amd64 et Linux/amd64 sont les cibles runtime qualifiees ; tests natifs, PostgreSQL 16, packaging et smoke tests CI sont requis sur les deux. |
 | PostgreSQL | Compose utilise PostgreSQL 16 pour le developpement et les tests locaux. | La version seule ne valide ni une offre hebergee ni un profil de production. |
 | FileStore | Le CMS et le reconciliateur partagent le meme stockage local par SHA-256. POSIX utilise des permissions de repertoire privees ; Windows configure un DACL NTFS protege. | Les garanties de permissions, atomicite et durabilite doivent etre verifiees sur chaque systeme de fichiers retenu. |
 

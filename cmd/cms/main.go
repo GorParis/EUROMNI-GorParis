@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"euromni/internal/api"
 	"euromni/internal/artifact"
@@ -50,8 +51,19 @@ func main() {
 	addr := listenAddress()
 	mux := newHandler(reader)
 	log.Printf("euromni cms listening on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := newHTTPServer(addr, mux).ListenAndServe(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       90 * time.Second,
 	}
 }
 

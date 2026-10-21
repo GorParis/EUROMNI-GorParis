@@ -8,6 +8,9 @@ pas une preuve que l'arbre de travail est propre.
 
 - Branche de travail : `main`. Vérifier `git status --short --branch` et
   `git log -5 --oneline` avant de modifier quoi que ce soit.
+- Go minimal du projet : 1.25.0 (`go.mod`). Les dépendances `pgx/v5` et
+  `x/text` ont été mises à niveau vers les versions correctives v5.9.2 et
+  v0.41.0 ; les images Compose utilisent `golang:1.25-bookworm`.
 - QP-01 dispose d'un parcours PrestaShop `ps_newproducts` 2.0.1 épinglé par
   son commit source et SHA-256 d'archive. Il couvre builds répétés,
   vérification du manifeste, publication candidate sans installation, pin
@@ -36,32 +39,56 @@ pas une preuve que l'arbre de travail est propre.
 - `go test ./...` : réussi après les changements QP-03.
 - `go vet ./...` : réussi.
 - `git diff --check` : réussi.
-- Tests package quarantaine compilés pour Windows/amd64. La chaîne CGO/Windows
-  reste à vérifier avec un développeur Windows ; ne pas la déclarer qualifiée
-  sur la base de l'environnement local.
-- La CI du commit QP-01 précédent (`ed73e39`) a réussi sur Linux et Windows.
-  Vérifier le statut du run du commit courant après le push ; ne pas présumer
-  qu'il est terminé.
+- Après la mise à niveau Go/dépendances : `GOTOOLCHAIN=go1.25.0 go test ./...`,
+  `GOTOOLCHAIN=go1.25.0 go vet ./...` et
+  `podman compose --podman-run-args=--userns=keep-id -p euromni-cms-test --profile integration run --rm integration-test`
+  passent. Sans `--userns=keep-id`, le conteneur ne peut pas nettoyer des
+  outils PostgreSQL temporaires laissés dans `.tmp` par le mapping rootless.
+- La stack CMS persistante a été recréée sans supprimer le volume PostgreSQL ;
+  Go 1.25.14 est actif et health/admin/storefront répondent HTTP 200.
+- Playwright sur le CMS PostgreSQL mis à niveau : connexion owner, dashboard et
+  vitrine passent (10 produits).
+- `gosec` G201/G202 : zéro finding SQL sur 78 fichiers. Le scan complet a
+  signalé G114, corrigé par des timeouts HTTP ; 22 alertes restantes sont à
+  trier. `govulncheck ./...` : zéro vulnérabilité atteignable après upgrade ;
+  il reste un avis de package importé et 22 avis de modules sans chemin d'appel.
+- Le store applicatif refuse `default_query_exec_mode=simple_protocol` dans
+  `DATABASE_URL` ; un test le vérifie sans connexion réseau. Seul le migrateur
+  utilise le protocole simple, pour les migrations embarquées non paramétrées.
+- La CI Go du commit `7b166c5` (run #60) a réussi sur Ubuntu 24.04 et
+  Windows 2022. Le job Windows a installé GCC UCRT64 puis passé `go vet ./...`
+  et `go test ./...`, y compris les tests quarantaine. Cela qualifie le runner
+  CI Windows pour l'ancien plancher Go ; le nouveau plancher 1.25 attend encore
+  un run CI Windows après push.
+- Le workflow standalone #8, tentative 2, a réussi sur Linux et Windows
+  (intégrations, builds, smoke tests et publication d'artefacts), mais il cible
+  le commit antérieur `6610399`. Il ne valide pas encore les références
+  `checkout@v7`, `setup-go@v7` et `upload-artifact@v7` de `7b166c5`. Pour lever
+  ce point, lancer un nouveau `workflow_dispatch` de `CMS standalone distribution`
+  depuis `main`, debug activé, puis confirmer que le SHA du run est
+  `7b166c503667726789b14b1120cae8f88a502fbc`. Ne pas rerun le run #8, car cela
+  réutiliserait `6610399`. Vérifier les deux jobs de packaging, les smoke tests
+  et les archives/checksums Linux et Windows publiés.
 - `go test ./internal/quarantine ./cmd/quarantine-reconciler` : réussi après
   l'ajout de la purge ponctuelle (21 octobre 2026).
 
 ## Prochaines actions recommandées
 
-1. Vérifier le hash du dernier commit poussé et le statut de la CI Linux/Windows.
-2. Demander une revue de sécurité ciblée sur le validateur ZIP, l'endpoint
-   d'upload et le stockage en quarantaine ; corriger toute finding avant
-   activation hors environnement de test.
-3. Décider la durée et la fréquence de rétention, puis planifier
+1. Obtenir une revue de sécurité indépendante du validateur ZIP, de l'endpoint
+  d'upload et du stockage en quarantaine ; traiter les findings avant toute
+  activation hors environnement de test. Le contrôle local du 21 octobre était
+  ciblé et ne remplace pas cette revue.
+2. Décider la durée et la fréquence de rétention, puis planifier
   `cmd/quarantine-reconciler` avec `EUROMNI_QUARANTINE_DIR` et une option
   `-older-than` explicite (par exemple `720h` pour 30 jours). La commande ne
   crée pas le répertoire cible et ne définit pas de politique par défaut.
   Garder la quarantaine isolée des artefacts publiés.
-4. Évaluer l'absence de limitation de débit, l'usage du stockage local et le
+3. Évaluer l'absence de limitation de débit, l'usage du stockage local et le
    scénario multi-instance ; documenter les limites ou choisir une solution
    coordonnée avant le déploiement.
-5. Rejouer `go test ./...`, `go vet ./...`, les tests d'intégration pertinents,
+4. Rejouer `go test ./...`, `go vet ./...`, les tests d'intégration pertinents,
    et vérifier la matrice CI Windows/Linux après chaque changement.
-6. Ne pas commencer la traduction PHP générale. QP-04/05 (contrats des
+5. Ne pas commencer la traduction PHP générale. QP-04/05 (contrats des
    adaptateurs et de l'IR) sont des prérequis avant l'élargissement métier.
 
 ## Message de reprise à copier dans une nouvelle conversation

@@ -18,7 +18,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   cms:
-    image: golang:1.23-bookworm
+    image: golang:1.25-bookworm
     profiles: [cms]
     working_dir: /workspace
     environment:
@@ -42,7 +42,7 @@ services:
     restart: unless-stopped
 
   integration-test:
-    image: golang:1.23-bookworm
+    image: golang:1.25-bookworm
     profiles: [integration]
     user: "1000:1000"
     working_dir: /workspace
@@ -63,7 +63,7 @@ services:
       - rm -rf .tmp/postgresql-16-tools && exec go test -p 1 -tags=integration -count=1 ./...
 
   prestashop-import:
-    image: golang:1.23-bookworm
+    image: golang:1.25-bookworm
     profiles: [module-import]
     working_dir: /workspace
     environment:

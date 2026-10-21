@@ -30,7 +30,7 @@ go test ./...
 go run ./cmd/cms
 ```
 
-Prérequis : Go 1.23+ et PostgreSQL 16+ (recommandé), ou MariaDB 11.8 après avoir pris connaissance de son état de validation dans [`docs/database-support.md`](docs/database-support.md). Docker et un hébergeur cloud sont facultatifs. Le CMS écoute par défaut sur `127.0.0.1:8081`; utilisez `LISTEN_ADDR` pour définir explicitement une autre adresse. L’ABI Wasm n’est pas exposée en HTTP.
+Prérequis : Go 1.25+ et PostgreSQL 16+ (recommandé), ou MariaDB 11.8 après avoir pris connaissance de son état de validation dans [`docs/database-support.md`](docs/database-support.md). Docker et un hébergeur cloud sont facultatifs. Le CMS écoute par défaut sur `127.0.0.1:8081`; utilisez `LISTEN_ADDR` pour définir explicitement une autre adresse. L’ABI Wasm n’est pas exposée en HTTP.
 
 Sans `DATABASE_URL`, le serveur démarre volontairement avec un catalogue mémoire
 de démonstration et l’authentification staff est indisponible. Pour une instance

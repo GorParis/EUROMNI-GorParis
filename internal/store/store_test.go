@@ -44,6 +44,13 @@ func TestProductReaderFromEnvFallsBackToMemory(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsPostgreSQLSimpleProtocol(t *testing.T) {
+	_, err := Open("postgres://user:password@localhost:5432/euromni?default_query_exec_mode=simple_protocol")
+	if err == nil || !strings.Contains(err.Error(), "simple protocol is disabled") {
+		t.Fatalf("Open() error = %v, want simple protocol rejection", err)
+	}
+}
+
 func TestMemoryCartIsolationTotalsAndInventory(t *testing.T) {
 	ctx := context.Background()
 	memory := NewMemory()

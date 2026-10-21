@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"euromni/internal/api"
 	"euromni/internal/store"
@@ -81,6 +82,24 @@ func TestListenAddressDefaultsToLoopbackAndAcceptsOverride(t *testing.T) {
 	t.Setenv("LISTEN_ADDR", "0.0.0.0:8081")
 	if got := listenAddress(); got != "0.0.0.0:8081" {
 		t.Fatalf("explicit listen address = %q, want 0.0.0.0:8081", got)
+	}
+}
+
+func TestHTTPServerUsesFiniteTimeouts(t *testing.T) {
+	handler := http.NotFoundHandler()
+	server := newHTTPServer("127.0.0.1:8081", handler)
+	if server.Addr != "127.0.0.1:8081" || server.Handler == nil {
+		t.Fatalf("server address/handler = %q/%T", server.Addr, server.Handler)
+	}
+	response := httptest.NewRecorder()
+	server.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("server handler status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+	if server.ReadHeaderTimeout != 5*time.Second || server.ReadTimeout != 60*time.Second ||
+		server.WriteTimeout != 60*time.Second || server.IdleTimeout != 90*time.Second {
+		t.Fatalf("server timeouts = header:%s read:%s write:%s idle:%s",
+			server.ReadHeaderTimeout, server.ReadTimeout, server.WriteTimeout, server.IdleTimeout)
 	}
 }
 
