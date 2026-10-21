@@ -187,18 +187,28 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 	secondWasm = append(secondWasm, 0x00, 0x10, 0x0e)
 	secondWasm = append(secondWasm, []byte("build-revision")...)
 	secondWasm = append(secondWasm, 0x01)
-	secondArtifact, secondManifest, err := PublishModuleBuild(
+	secondArtifact, secondManifest, err := PublishModuleBuildOnly(
 		ctx, artifactStore, moduleStore, moduleID, ir, secondWasm,
 	)
 	if err != nil {
-		t.Fatalf("publish second immutable module build: %v", err)
+		t.Fatalf("publish candidate module build without installation: %v", err)
 	}
 	if secondArtifact.SHA256 == manifest.WASMSHA256 {
 		t.Fatal("second module build has the same Wasm digest")
 	}
+	candidateWasm, err := artifactStore.Get(ctx, secondArtifact.SHA256)
+	if err != nil {
+		t.Fatalf("read published candidate artifact: %v", err)
+	}
+	if secondArtifact.Size != int64(len(candidateWasm)) || secondArtifact.SHA256 != secondManifest.WASMSHA256 {
+		t.Fatalf("candidate artifact = %+v, manifest = %+v; metadata differs", secondArtifact, secondManifest)
+	}
+	if err := secondManifest.Validate(ir, candidateWasm); err != nil {
+		t.Fatalf("verify candidate build manifest and artifact: %v", err)
+	}
 	if installed, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID); err != nil ||
 		installed == nil || hex.EncodeToString(installed.WASMSHA256) != manifest.WASMSHA256 {
-		t.Fatalf("publishing second build changed installed pin: module=%+v error=%v", installed, err)
+		t.Fatalf("publishing candidate changed installed pin: module=%+v error=%v", installed, err)
 	}
 	modules, err = widgetRunner.ListModules(ctx, seed.ShopID)
 	if err != nil {
@@ -212,7 +222,7 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 		}
 	}
 	if registered == nil || len(registered.Builds) != 2 {
-		t.Fatalf("module inventory after second publication = %+v, want two available builds", registered)
+		t.Fatalf("module inventory after candidate publication = %+v, want two available builds", registered)
 	}
 	var secondBuildListed bool
 	for _, build := range registered.Builds {
@@ -221,7 +231,7 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 		}
 	}
 	if !secondBuildListed {
-		t.Fatalf("second build inventory = %+v, want current, promotable, and not installed", registered.Builds)
+		t.Fatalf("candidate build inventory = %+v, want current, promotable, and not installed", registered.Builds)
 	}
 	unavailableRunner, err := wasm.NewNewProductsWidgetRunner(moduleStore, unavailableModuleArtifacts{}, widgetRuntime)
 	if err != nil {
@@ -235,7 +245,7 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 		t.Fatalf("failed artifact verification changed installed build: module=%+v error=%v", stillPinned, err)
 	}
 	if err := widgetRunner.PromoteModule(ctx, seed.ShopID, store.NewProductsModuleName, secondManifest.WASMSHA256); err != nil {
-		t.Fatalf("promote second build through module manager: %v", err)
+		t.Fatalf("promote candidate through module manager: %v", err)
 	}
 	promotedModule, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID)
 	if err != nil || hex.EncodeToString(promotedModule.WASMSHA256) != secondManifest.WASMSHA256 {
@@ -245,6 +255,12 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 	if err != nil || !promotedInstalled || len(promotedProducts) != len(expectedProducts) {
 		t.Fatalf("widget after build promotion = (%d products, installed=%t, error=%v)",
 			len(promotedProducts), promotedInstalled, err)
+	}
+	for i, product := range expectedProducts {
+		if promotedProducts[i].ID != product.ID || promotedProducts[i].Slug != product.Slug {
+			t.Fatalf("promoted widget product %d = (%s, %s), want (%s, %s)",
+				i, promotedProducts[i].ID, promotedProducts[i].Slug, product.ID, product.Slug)
+		}
 	}
 	if err := widgetRunner.UninstallModule(ctx, seed.ShopID, store.NewProductsModuleName); err != nil {
 		t.Fatalf("reversibly uninstall module: %v", err)

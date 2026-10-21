@@ -152,7 +152,9 @@ aucune boutique, utiliser `--publish-only` avec les mêmes garde-fous de
 développement. Le pointeur courant du module et l’inventaire des builds sont
 mis à jour ; les pins `shop_modules` restent inchangés. Le candidat apparaît
 alors dans l’admin pour une promotion explicite et peut être vérifié avant
-activation :
+activation. Le test d'intégration vérifie la relecture et le manifeste de
+l'artefact, confirme que le pin installé est inchangé, puis promeut le digest
+et exécute ce build via Wasmtime :
 
 ```sh
 podman compose -p euromni-cms-test --profile cms --profile module-import run --rm -T \

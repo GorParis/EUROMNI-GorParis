@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.12 |
+| Version | 3.13 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-21 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -134,9 +134,10 @@ après relecture de l'artefact et vérification de son manifeste, modifie le pin
 **Couvert par les tests ciblés :** vérification du hash avant analyse ZIP ;
 rejet d'une fixture altérée ; égalité de deux IR, Wasm et manifestes issus de
 builds répétés ; imports/exports requis ; validations de manifeste et d'archives ;
-publication/installation, conservation du pin lors de la publication d'un
-second build, promotion et exécution Wasmtime via
-`internal/pipeline/prestashop_import_integration_test.go`. Le manifeste
+publication du candidat avec `PublishModuleBuildOnly`, relecture et validation
+de l'artefact/manifeste, pointeur courant vers le candidat sans changement du
+pin installé, promotion explicite, puis exécution Wasmtime de ce même artefact
+via `internal/pipeline/prestashop_import_integration_test.go`. Le manifeste
 déterministe constitue le rapport reliant provenance, IR, ABI, toolchain et
 artefact. Reste à faire évoluer ces tests si le pilote acquiert une toolchain
 ou des entrées de build externes ; le test actuel couvre le compilateur IR
@@ -253,3 +254,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.10 | 2026-10-21 | QP-10 consolidé : CI Go/Rust verte sur Linux/amd64 et Windows/amd64 (run 39580872372) ; distribution CMS verte sur les deux cibles (run 39581659670, commit 6610399), avec tests d'intégration PostgreSQL 16, smoke HTTP, checksum SHA-256 et deux artefacts publiés. QP-01 reste en cours : prochaine tranche proposée, cadrer le contrat et le test d'acceptation du flux de build métier sur un seul module/version épinglé, sans refonte backend ni traduction PHP. | En attente du responsable qualité |
 | 3.11 | 2026-10-21 | QP-01 cadrage précisé sur le snapshot PrestaShop `ps_newproducts` 2.0.1, commit amont `72e9476406319cbb91ac383121ca9967dc61f277`, ZIP SHA-256 `0f0750d8c2a1e6e12fc67169224f597f166b5c80b99cb306f53e9b339b17af77`. Contrat d'entrée/sortie et test d'acceptation décrits ; l'étiquette `euromni-test-adapter` est explicitement non représentative d'une version CMS réelle. Restent à implémenter l'épinglage obligatoire de la source et la preuve de reproductibilité/imports/exports dans le parcours de publication candidat. | En attente du responsable qualité |
 | 3.12 | 2026-10-21 | QP-01 implémenté pour le pilote épinglé : l'importeur refuse toute archive autre que le ZIP PrestaShop dont le SHA-256 est documenté ; tests vérifient le rejet sans déplacement du build/pin, la reproductibilité de l'IR/Wasm/manifeste, et l'interface Wasm (seul import `euromni.call`, exports `memory`/`run`). Tests archive ciblés et intégration PostgreSQL/Wasmtime réussis. Le périmètre reste le snapshot et le compilateur IR embarqué, sans revendication de compatibilité CMS réel. | En attente du responsable qualité |
+| 3.13 | 2026-10-21 | QP-01 : le test d'acceptation utilise `PublishModuleBuildOnly` pour publier un candidat immuable sans installation ; il relit et valide artefact/manifeste, constate le pointeur courant candidat avec pin installé inchangé, puis promeut explicitement le digest et exécute le build promu via Wasmtime. Tests pipeline, intégration PostgreSQL/Wasmtime ciblée, `go vet ./internal/pipeline` et `git diff --check` réussis. | En attente du responsable qualité |
