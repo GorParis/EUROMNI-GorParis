@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"euromni/internal/privatefs"
 )
@@ -181,6 +182,75 @@ func (s *FileStore) Get(ctx context.Context, scope, digest string) ([]byte, erro
 		return nil, err
 	}
 	return archive, nil
+}
+
+func (s *FileStore) PurgeBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	if s == nil || s.root == "" {
+		return 0, errors.New("quarantine store is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	scopes, err := os.ReadDir(s.root)
+	if err != nil {
+		return 0, fmt.Errorf("list quarantine scopes: %w", err)
+	}
+	var expired []string
+	for _, scope := range scopes {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		scopePath := filepath.Join(s.root, scope.Name())
+		scopeInfo, err := os.Lstat(scopePath)
+		if err != nil {
+			return 0, fmt.Errorf("inspect quarantine scope: %w", err)
+		}
+		if !scopeInfo.IsDir() || !validDigest(scope.Name()) {
+			return 0, ErrArchiveCorrupt
+		}
+		archives, err := os.ReadDir(scopePath)
+		if err != nil {
+			return 0, fmt.Errorf("list shop quarantine: %w", err)
+		}
+		for _, archive := range archives {
+			archivePath := filepath.Join(scopePath, archive.Name())
+			info, err := os.Lstat(archivePath)
+			if err != nil {
+				return 0, fmt.Errorf("inspect shop quarantine entry: %w", err)
+			}
+			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+				return 0, ErrArchiveCorrupt
+			}
+			if strings.HasPrefix(archive.Name(), ".quarantine-") {
+				continue
+			}
+			if !validDigest(archive.Name()) {
+				return 0, ErrArchiveCorrupt
+			}
+			if info.ModTime().Before(cutoff) {
+				expired = append(expired, archivePath)
+			}
+		}
+	}
+
+	removed := 0
+	for _, path := range expired {
+		if err := ctx.Err(); err != nil {
+			return removed, err
+		}
+		if err := os.Remove(path); err != nil {
+			return removed, fmt.Errorf("remove expired quarantined archive: %w", err)
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func scopeDigest(scope string) string {

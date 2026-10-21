@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestFileStoreKeepsArchivesPrivateScopedAndVerifiable(t *testing.T) {
@@ -58,5 +59,51 @@ func TestFileStoreRejectsInvalidAndCancelledUploads(t *testing.T) {
 	cancel()
 	if _, err := store.Put(ctx, "shop", []byte("archive")); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled upload error = %v, want context.Canceled", err)
+	}
+}
+
+func TestFileStorePurgesOnlyArchivesBeforeCutoff(t *testing.T) {
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "quarantine"))
+	if err != nil {
+		t.Fatalf("create quarantine store: %v", err)
+	}
+	oldArchive, err := store.Put(context.Background(), "shop-one", []byte("old archive"))
+	if err != nil {
+		t.Fatalf("store old archive: %v", err)
+	}
+	newArchive, err := store.Put(context.Background(), "shop-two", []byte("new archive"))
+	if err != nil {
+		t.Fatalf("store new archive: %v", err)
+	}
+	oldPath := filepath.Join(store.root, scopeDigest("shop-one"), oldArchive.SHA256)
+	oldTime := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
+		t.Fatalf("age old archive: %v", err)
+	}
+
+	removed, err := store.PurgeBefore(context.Background(), time.Now().Add(-24*time.Hour))
+	if err != nil || removed != 1 {
+		t.Fatalf("purge removed=%d, error=%v; want one removal", removed, err)
+	}
+	if _, err := store.Get(context.Background(), "shop-one", oldArchive.SHA256); err == nil {
+		t.Fatal("expired archive still exists")
+	}
+	if content, err := store.Get(context.Background(), "shop-two", newArchive.SHA256); err != nil || string(content) != "new archive" {
+		t.Fatalf("recent archive content=%q, error=%v", content, err)
+	}
+}
+
+func TestFileStorePurgeHonorsCancelledContext(t *testing.T) {
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "quarantine"))
+	if err != nil {
+		t.Fatalf("create quarantine store: %v", err)
+	}
+	if _, err := store.Put(context.Background(), "shop", []byte("archive")); err != nil {
+		t.Fatalf("store archive: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if removed, err := store.PurgeBefore(ctx, time.Now().Add(time.Hour)); !errors.Is(err, context.Canceled) || removed != 0 {
+		t.Fatalf("cancelled purge removed=%d, error=%v; want no removals and context.Canceled", removed, err)
 	}
 }

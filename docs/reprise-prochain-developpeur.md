@@ -23,9 +23,11 @@ pas une preuve que l'arbre de travail est propre.
   local, une limite de 16 MiB par ZIP et un quota local de 256 MiB par boutique.
   Ce quota n'est pas coordonné entre processus ; ne pas partager le répertoire
   entre plusieurs instances.
-- Le circuit ne fournit encore ni revue/promotion depuis quarantaine, ni purge,
-  ni rétention, ni limitation de débit. Ne pas l'activer en production avant
-  décision sur ces contrôles et revue de sécurité.
+- Le circuit ne fournit pas encore de revue/promotion depuis la quarantaine ni
+  de limitation de débit. `cmd/quarantine-reconciler` permet une purge
+  ponctuelle par âge de fichier, mais aucune durée ou fréquence automatique
+  n'est définie. Ne pas l'activer en production avant décision sur ces contrôles
+  et revue de sécurité.
 - `.vscode/` est un dossier non suivi préexistant : ne pas l'ajouter au commit
   sans accord explicite.
 
@@ -34,12 +36,14 @@ pas une preuve que l'arbre de travail est propre.
 - `go test ./...` : réussi après les changements QP-03.
 - `go vet ./...` : réussi.
 - `git diff --check` : réussi.
-- Tests package quarantaine compilés pour Windows/amd64. Les packages utilisant
-  Wasmtime/CGo doivent encore être qualifiés par CI Windows ; l'environnement
-  local ne dispose pas de la toolchain Windows nécessaire.
+- Tests package quarantaine compilés pour Windows/amd64. La chaîne CGO/Windows
+  reste à vérifier avec un développeur Windows ; ne pas la déclarer qualifiée
+  sur la base de l'environnement local.
 - La CI du commit QP-01 précédent (`ed73e39`) a réussi sur Linux et Windows.
   Vérifier le statut du run du commit courant après le push ; ne pas présumer
   qu'il est terminé.
+- `go test ./internal/quarantine ./cmd/quarantine-reconciler` : réussi après
+  l'ajout de la purge ponctuelle (21 octobre 2026).
 
 ## Prochaines actions recommandées
 
@@ -47,8 +51,11 @@ pas une preuve que l'arbre de travail est propre.
 2. Demander une revue de sécurité ciblée sur le validateur ZIP, l'endpoint
    d'upload et le stockage en quarantaine ; corriger toute finding avant
    activation hors environnement de test.
-3. Décider et implémenter la politique de rétention/purge. Ajouter les tests
-   correspondants et garder la quarantaine isolée des artefacts publiés.
+3. Décider la durée et la fréquence de rétention, puis planifier
+  `cmd/quarantine-reconciler` avec `EUROMNI_QUARANTINE_DIR` et une option
+  `-older-than` explicite (par exemple `720h` pour 30 jours). La commande ne
+  crée pas le répertoire cible et ne définit pas de politique par défaut.
+  Garder la quarantaine isolée des artefacts publiés.
 4. Évaluer l'absence de limitation de débit, l'usage du stockage local et le
    scénario multi-instance ; documenter les limites ou choisir une solution
    coordonnée avant le déploiement.
