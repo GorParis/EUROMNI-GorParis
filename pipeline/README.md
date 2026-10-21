@@ -166,12 +166,13 @@ Le ZIP versionné est un snapshot épinglé du dépôt officiel PrestaShop
 (`ps_newproducts` 2.0.1, commit amont
 `72e9476406319cbb91ac383121ca9967dc61f277`, SHA-256
 `0f0750d8c2a1e6e12fc67169224f597f166b5c80b99cb306f53e9b339b17af77`), pas une
-archive de distribution Addons. `euromni-test-adapter` est une étiquette de
-provenance de test, pas une version PrestaShop effectivement installée. Cette
-preuve couvre l’ingestion bornée, la publication dans EUROMNI et l’exécution
-du Wasm dans le CMS de test ; elle ne couvre ni l’installation du PHP amont dans
-PrestaShop, ni le rendu Smarty, ni une parité fonctionnelle complète avec le
-module d’origine.
+archive de distribution Addons. L'importeur vérifie cette empreinte avant de
+lire le ZIP et refuse toute autre archive. `euromni-test-adapter` est une
+étiquette de provenance de test, pas une version PrestaShop effectivement
+installée. Cette preuve couvre l’ingestion bornée, la publication dans EUROMNI
+et l’exécution du Wasm dans le CMS de test ; elle ne couvre ni l’installation
+du PHP amont dans PrestaShop, ni le rendu Smarty, ni une parité fonctionnelle
+complète avec le module d’origine.
 
 L’IR accepte un appel par module et prend en charge `catalog.product.get`,
 `catalog.product.list`, `catalog.product.newest` et `catalog.category.list`.

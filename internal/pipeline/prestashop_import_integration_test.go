@@ -3,8 +3,10 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -16,6 +18,8 @@ import (
 	"euromni/internal/store"
 	"euromni/internal/testdb"
 	"euromni/internal/wasm"
+
+	"github.com/bytecodealliance/wasmtime-go/v36"
 )
 
 func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
@@ -30,6 +34,42 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build upstream module: %v", err)
 	}
+	repeatedIR, repeatedWasm, err := BuildPrestaShopNewProductsArchive(archive, "euromni-test-adapter")
+	if err != nil {
+		t.Fatalf("repeat build from pinned upstream module: %v", err)
+	}
+	irJSON, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatalf("encode first build IR: %v", err)
+	}
+	repeatedIRJSON, err := json.Marshal(repeatedIR)
+	if err != nil {
+		t.Fatalf("encode repeated build IR: %v", err)
+	}
+	if !bytes.Equal(irJSON, repeatedIRJSON) || !bytes.Equal(wasmBytes, repeatedWasm) {
+		t.Fatal("clean builds from the same pinned source did not produce identical IR and Wasm")
+	}
+	firstManifest, err := NewBuildManifest(ir, wasmBytes)
+	if err != nil {
+		t.Fatalf("create first build manifest: %v", err)
+	}
+	repeatedManifest, err := NewBuildManifest(repeatedIR, repeatedWasm)
+	if err != nil {
+		t.Fatalf("create repeated build manifest: %v", err)
+	}
+	firstManifestJSON, err := json.Marshal(firstManifest)
+	if err != nil {
+		t.Fatalf("encode first build manifest: %v", err)
+	}
+	repeatedManifestJSON, err := json.Marshal(repeatedManifest)
+	if err != nil {
+		t.Fatalf("encode repeated build manifest: %v", err)
+	}
+	if !bytes.Equal(firstManifestJSON, repeatedManifestJSON) {
+		t.Fatal("clean builds from the same pinned source produced different manifests")
+	}
+	assertOnlyEUROMNICallImport(t, wasmBytes)
+	assertNewProductsWasmExports(t, wasmBytes)
 	settings := store.NewProductsSettings{Days: 3650, Limit: 8}
 	artifactStore, err := artifact.NewFileStore(t.TempDir() + "/artifacts")
 	if err != nil {
@@ -45,6 +85,15 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 	}
 	if err := manifest.Validate(ir, storedWasm); err != nil {
 		t.Fatalf("verify published build manifest: %v", err)
+	}
+	modifiedArchive := append([]byte(nil), archive...)
+	modifiedArchive[len(modifiedArchive)-1] ^= 1
+	if _, _, err := BuildPrestaShopNewProductsArchive(modifiedArchive, "euromni-test-adapter"); err == nil {
+		t.Fatal("build accepted an archive that differs from the pinned source")
+	}
+	stillInstalled, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil || hex.EncodeToString(stillInstalled.WASMSHA256) != manifest.WASMSHA256 {
+		t.Fatalf("rejected source archive changed installed pin: module=%+v error=%v", stillInstalled, err)
 	}
 	installed, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID)
 	installedSettings, settingsErr := moduleStore.GetNewProductsSettings(ctx, seed.ShopID)
@@ -86,6 +135,22 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 	widgetRunner, err := wasm.NewNewProductsWidgetRunner(moduleStore, artifactStore, widgetRuntime)
 	if err != nil {
 		t.Fatalf("configure new-products widget runner: %v", err)
+	}
+	modulesAfterRejectedSource, err := widgetRunner.ListModules(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("list builds after rejected source archive: %v", err)
+	}
+	var sourceBuildUnchanged bool
+	for _, module := range modulesAfterRejectedSource {
+		if module.Name != store.NewProductsModuleName {
+			continue
+		}
+		sourceBuildUnchanged = len(module.Builds) == 1 &&
+			module.Builds[0].Current &&
+			module.Builds[0].WASMSHA256 == manifest.WASMSHA256
+	}
+	if !sourceBuildUnchanged {
+		t.Fatalf("rejected source archive changed current build: %+v", modulesAfterRejectedSource)
 	}
 	widgetProducts, moduleInstalled, err := widgetRunner.RunNewProducts(ctx, seed.ShopID)
 	if err != nil || !moduleInstalled || len(widgetProducts) != len(expectedProducts) {
@@ -217,6 +282,31 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 	if products, installed, err := widgetRunner.RunNewProducts(ctx, seed.ShopID); err != nil || !installed || len(products) != len(expectedProducts) {
 		t.Fatalf("widget after reinstallation = (%d products, installed=%t, error=%v), want %d products",
 			len(products), installed, err, len(expectedProducts))
+	}
+}
+
+func assertNewProductsWasmExports(t *testing.T, wasmBytes []byte) {
+	t.Helper()
+
+	engine := wasmtime.NewEngine()
+	defer engine.Close()
+	module, err := wasmtime.NewModule(engine, wasmBytes)
+	if err != nil {
+		t.Fatalf("inspect compiled Wasm exports: %v", err)
+	}
+	defer module.Close()
+
+	exports := make(map[string]struct{})
+	for _, exported := range module.Exports() {
+		exports[exported.Name()] = struct{}{}
+	}
+	if len(exports) != 2 {
+		t.Fatalf("compiled Wasm exports = %v, want only memory and run", exports)
+	}
+	for _, name := range []string{"memory", "run"} {
+		if _, ok := exports[name]; !ok {
+			t.Errorf("compiled Wasm is missing required %q export", name)
+		}
 	}
 }
 

@@ -321,8 +321,14 @@ func TestBuildPrestaShopNewProductsFromUpstreamArchive(t *testing.T) {
 		t.Fatalf("read upstream PrestaShop archive: %v", err)
 	}
 	if pkg.Name != "ps_newproducts" || pkg.Version != "2.0.1" ||
-		pkg.EntryPath != "ps_newproducts-72e9476406319cbb91ac383121ca9967dc61f277/ps_newproducts.php" {
+		pkg.EntryPath != "ps_newproducts-72e9476406319cbb91ac383121ca9967dc61f277/ps_newproducts.php" ||
+		pkg.ArchiveSHA != prestaShopNewProductsArchiveSHA256 {
 		t.Fatalf("package metadata = %+v", pkg)
+	}
+	modifiedArchive := append([]byte(nil), archive...)
+	modifiedArchive[len(modifiedArchive)-1] ^= 1
+	if _, _, err := BuildPrestaShopNewProductsArchive(modifiedArchive, "euromni-test-adapter"); err == nil {
+		t.Fatal("builder accepted an archive that differs from the pinned source")
 	}
 	ir, wasmBytes, err := BuildPrestaShopNewProductsArchive(archive, "euromni-test-adapter")
 	if err != nil {
@@ -370,8 +376,31 @@ $this->registerHook('displayHome');
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			archive := buildZIP(t, test.files)
-			if _, _, err := BuildPrestaShopNewProductsArchive(archive, "test"); err == nil {
-				t.Fatal("BuildPrestaShopNewProductsArchive accepted an unsupported package")
+			pkg, err := ReadPrestaShopNewProductsArchive(archive)
+			if test.name != "unsupported PHP behavior" {
+				if err == nil {
+					t.Fatal("ReadPrestaShopNewProductsArchive accepted an unsupported package")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("read structurally valid unsupported package: %v", err)
+			}
+			analysis, err := AnalyzePHPSource(string(pkg.EntryPoint))
+			if err != nil {
+				t.Fatalf("analyze unsupported module source: %v", err)
+			}
+			provenance, err := NewPackageProvenance(pkg.EntryPoint, archive, SourceProvenance{
+				ModuleVersion:   pkg.Version,
+				PlatformVersion: "test",
+				Adapter:         "prestashop",
+				AdapterVersion:  prestaShopAdapterVersion,
+			})
+			if err != nil {
+				t.Fatalf("create unsupported module provenance: %v", err)
+			}
+			if _, err := LowerPHPAnalysisToIR(pkg.Name, analysis, provenance); err == nil {
+				t.Fatal("LowerPHPAnalysisToIR accepted unsupported PHP behavior")
 			}
 		})
 	}

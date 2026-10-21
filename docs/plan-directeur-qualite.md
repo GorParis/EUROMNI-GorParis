@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.7 |
+| Version | 3.12 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-21 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -112,14 +112,15 @@ La publication candidate fait avancer le pointeur courant mais ne change pas
 le pin des boutiques déjà installées. Seule une promotion explicite par hash,
 après relecture de l'artefact et vérification de son manifeste, modifie le pin.
 
-**Test d'acceptation à ajouter/renforcer**, isolé en PostgreSQL et Wasmtime :
+**Test d'acceptation**, isolé en PostgreSQL et Wasmtime :
 
-1. Vérifier le SHA-256 exact du ZIP avant analyse ; rejeter un octet modifié,
-   une identité/version différente, une archive dangereuse ou hors limites.
-2. Construire deux fois depuis des répertoires de travail propres avec la
-   même configuration épinglée ; comparer l'IR sérialisé, les octets Wasm et
-   leurs hashes. Exiger uniquement l'import `euromni.call`, les exports
-   d'entrée/mémoire convenus, l'ABI supportée et les capabilities calculées.
+1. Vérifier le SHA-256 exact du ZIP avant analyse ; rejeter un octet modifié
+   sans changer le build courant ni le pin installé. Les rejets d'identité,
+   d'archive dangereuse ou hors limites sont couverts par les tests d'archive.
+2. Construire deux fois sans état mutable partagé avec la même configuration
+   épinglée ; comparer l'IR sérialisé, les octets Wasm et les manifestes.
+   Exiger uniquement l'import `euromni.call`, les exports `memory` et `run`,
+   l'ABI supportée et les capabilities calculées.
 3. Vérifier que manifeste, IR, package et artefact concordent ; rejeter hash
    source/Wasm incohérent, version de compilateur/adaptateur/IR non approuvée,
    import/ABI interdits, Wasm absent ou corrompu. Tout rejet laisse le pointeur
@@ -130,15 +131,16 @@ après relecture de l'artefact et vérification de son manifeste, modifie le pin
    même artefact dans Wasmtime et comparer la réponse à l'oracle catalogue
    seedé.
 
-**Déjà couvert :** validations de manifeste et d'archives, import de la fixture,
+**Couvert par les tests ciblés :** vérification du hash avant analyse ZIP ;
+rejet d'une fixture altérée ; égalité de deux IR, Wasm et manifestes issus de
+builds répétés ; imports/exports requis ; validations de manifeste et d'archives ;
 publication/installation, conservation du pin lors de la publication d'un
-second build, promotion et exécution via Wasmtime dans
-`internal/pipeline/prestashop_import_integration_test.go`. **À combler dans
-cette tranche :** épinglage obligatoire du hash source de la fixture, preuve
-de deux builds propres équivalents dans un même test d'acceptation, vérification
-explicite des imports/exports dans ce parcours, et rapport de build stable qui
-relie les étapes. Réutiliser ces fonctions/tests avant d'ajouter de nouvelles
-couches d'abstraction.
+second build, promotion et exécution Wasmtime via
+`internal/pipeline/prestashop_import_integration_test.go`. Le manifeste
+déterministe constitue le rapport reliant provenance, IR, ABI, toolchain et
+artefact. Reste à faire évoluer ces tests si le pilote acquiert une toolchain
+ou des entrées de build externes ; le test actuel couvre le compilateur IR
+embarqué sans dépendance à un répertoire de travail.
 
 Hors périmètre : installation du PHP dans un vrai PrestaShop, parité complète
 avec l'amont, traduction PHP générale, adaptateurs multi-versions, endpoint
@@ -250,3 +252,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.9 | 2026-10-21 | Le run CI 39580273018 valide Linux et le guest Wasm sur les deux runners, mais échoue sur Windows parce que le test des credentials comparait `Mode().Perm()` (sémantique POSIX) au lieu de vérifier l’ACL Windows. Le test vérifie désormais le dossier privé hérité. Le run 39580872372 passe ensuite les tests Go complets sur Linux/Windows et le guest Rust/Wasm sur les deux cibles ; une nouvelle qualification du workflow de distribution reste requise. | En attente du responsable qualité |
 | 3.10 | 2026-10-21 | QP-10 consolidé : CI Go/Rust verte sur Linux/amd64 et Windows/amd64 (run 39580872372) ; distribution CMS verte sur les deux cibles (run 39581659670, commit 6610399), avec tests d'intégration PostgreSQL 16, smoke HTTP, checksum SHA-256 et deux artefacts publiés. QP-01 reste en cours : prochaine tranche proposée, cadrer le contrat et le test d'acceptation du flux de build métier sur un seul module/version épinglé, sans refonte backend ni traduction PHP. | En attente du responsable qualité |
 | 3.11 | 2026-10-21 | QP-01 cadrage précisé sur le snapshot PrestaShop `ps_newproducts` 2.0.1, commit amont `72e9476406319cbb91ac383121ca9967dc61f277`, ZIP SHA-256 `0f0750d8c2a1e6e12fc67169224f597f166b5c80b99cb306f53e9b339b17af77`. Contrat d'entrée/sortie et test d'acceptation décrits ; l'étiquette `euromni-test-adapter` est explicitement non représentative d'une version CMS réelle. Restent à implémenter l'épinglage obligatoire de la source et la preuve de reproductibilité/imports/exports dans le parcours de publication candidat. | En attente du responsable qualité |
+| 3.12 | 2026-10-21 | QP-01 implémenté pour le pilote épinglé : l'importeur refuse toute archive autre que le ZIP PrestaShop dont le SHA-256 est documenté ; tests vérifient le rejet sans déplacement du build/pin, la reproductibilité de l'IR/Wasm/manifeste, et l'interface Wasm (seul import `euromni.call`, exports `memory`/`run`). Tests archive ciblés et intégration PostgreSQL/Wasmtime réussis. Le périmètre reste le snapshot et le compilateur IR embarqué, sans revendication de compatibilité CMS réel. | En attente du responsable qualité |

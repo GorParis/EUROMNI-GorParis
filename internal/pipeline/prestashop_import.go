@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	MaxPrestaShopArchiveBytes = 16 << 20
-	maxPrestaShopArchiveFiles = 128
-	maxPrestaShopEntryBytes   = 2 << 20
-	maxPrestaShopTotalBytes   = 32 << 20
-	prestaShopAdapterVersion  = buildmeta.PrestaShopAdapterVersion
+	MaxPrestaShopArchiveBytes          = 16 << 20
+	maxPrestaShopArchiveFiles          = 128
+	maxPrestaShopEntryBytes            = 2 << 20
+	maxPrestaShopTotalBytes            = 32 << 20
+	prestaShopAdapterVersion           = buildmeta.PrestaShopAdapterVersion
+	prestaShopNewProductsArchiveSHA256 = "0f0750d8c2a1e6e12fc67169224f597f166b5c80b99cb306f53e9b339b17af77"
 )
 
 var ErrUnsupportedPrestaShopPackage = errors.New("unsupported PrestaShop package")
@@ -140,6 +141,13 @@ func ReadPrestaShopNewProductsArchive(data []byte) (PrestaShopPackage, error) {
 }
 
 func BuildPrestaShopNewProductsArchive(data []byte, platformVersion string) (ModuleIR, []byte, error) {
+	if len(data) == 0 || len(data) > MaxPrestaShopArchiveBytes {
+		return ModuleIR{}, nil, fmt.Errorf("%w: archive size is invalid", ErrUnsupportedPrestaShopPackage)
+	}
+	archiveDigest := sha256.Sum256(data)
+	if hex.EncodeToString(archiveDigest[:]) != prestaShopNewProductsArchiveSHA256 {
+		return ModuleIR{}, nil, fmt.Errorf("%w: archive hash is not the pinned source package", ErrUnsupportedPrestaShopPackage)
+	}
 	pkg, err := ReadPrestaShopNewProductsArchive(data)
 	if err != nil {
 		return ModuleIR{}, nil, err
