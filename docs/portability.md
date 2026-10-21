@@ -168,40 +168,29 @@ distribution produit un fichier de sommes SHA-256 adjacent a chaque archive ;
 il detecte une corruption accidentelle mais ne constitue pas une attestation
 signee de provenance.
 
-Le 2026-10-21, le test a ete execute localement sur Linux/amd64 avec Go
-1.26.10, Rust 1.99.1 et Cargo 1.99.1 : deux builds propres identiques,
-SHA-256 `4df40e34e013652f30cfd8a3a262279b7554d1075bbe8bb62d02cf67166328d7`,
-imports verifies et execution Wasmtime reussie. `go test ./...` et
-`go vet ./...` passent aussi localement. Le workflow CI ordinaire est
-maintenant configure pour executer `go vet` et `go test ./...` sur Linux et
-Windows, en plus du guest Wasm sur les deux cibles. Cette nouvelle matrice de
-tests Go Windows reste a executer. Le run precedent
-[39575446499](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39575446499)
-est vert sur le commit `e808933` pour les tests Go Linux et les tests Rust
-Windows/Linux. Le run de distribution
-[39577013455](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39577013455)
-a echoue avant le packaging : les tests Windows supposaient une ACL differente
-pour un dossier temporaire deja cree, et les tests PostgreSQL conservaient des
-attentes anterieures aux migrations et aux pins de builds immuables. Les
-assertions et la creation securisee du dossier sont corrigees dans le worktree ;
-la CI doit encore confirmer ces corrections.
-Le premier run apres correction,
-[39580273018](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39580273018),
-a confirme la CI Linux et la matrice Wasm, mais le test Windows a ensuite revele
-une assertion de permissions POSIX (`Mode().Perm()`) inadaptee aux ACL Windows.
-Le test controle maintenant l'ACL privee du dossier parent sur Windows ; une
-nouvelle execution
-[39580872372](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39580872372)
-a passe sur Linux et Windows, pour les tests Go complets et le guest Rust/Wasm.
-La suite d'integration complete et la generation des checksums de distribution
-doivent encore etre confirmees sur le dernier commit.
+Le 2026-10-21, le test de reproductibilite a ete execute localement sur
+Linux/amd64 avec Go 1.26.10, Rust 1.99.1 et Cargo 1.99.1 : deux builds propres
+identiques, SHA-256
+`4df40e34e013652f30cfd8a3a262279b7554d1075bbe8bb62d02cf67166328d7`, imports
+verifies et execution Wasmtime reussie.
 
-Les tests d'integration PostgreSQL passent localement pour `internal/store` et
-`internal/wasm`. La suite complete reste partiellement bloquee localement :
-les binaires `pg_dump`/`pg_restore` disponibles sont en version 18.6, alors
-que le serveur embarque est PostgreSQL 16 et que le workflow qualifie doit
-utiliser le client 16. Le run Linux n'a donc pas encore confirme la sauvegarde
-et la restauration apres ces changements.
+La CI ordinaire
+[39580872372](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39580872372)
+passe `go vet`, `go test ./...` et le test Rust/Wasm sur Linux/amd64 et
+Windows/amd64. Le workflow de distribution
+[39581659670](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39581659670),
+sur le commit `6610399`, passe les integrations PostgreSQL 16, les builds CGo
+et smoke tests HTTP des distributions Linux et Windows. Les deux artefacts
+publies sont `euromni-cms-linux-amd64` et `euromni-cms-windows-amd64` ; chacun
+inclut l'archive et son fichier `.sha256`. Les artefacts sont retenus 30 jours
+par GitHub Actions. Cette preuve qualifie les runners et la configuration de
+build testees, pas toutes les installations de production.
+
+La validation locale de la restauration complete reste limitee par les
+executables `pg_dump`/`pg_restore` disponibles en version 18.6, alors que le
+serveur de test embarque est PostgreSQL 16. La reussite de l'integration avec
+le client 16 est attestee par le runner Linux du workflow de distribution,
+pas par cette machine locale.
 
 Cette qualification reste un prototype de guest minimal, pas une toolchain de
 traduction de modules metier. QP-01 reste en cours jusqu'a ce qu'un processus

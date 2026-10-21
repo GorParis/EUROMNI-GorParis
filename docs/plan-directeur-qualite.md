@@ -65,7 +65,7 @@ la documentation du projet.
 
 | ID | Priorité | Action / dépendance | Critère d’acceptation | Preuve attendue | Statut |
 |---|---|---|---|---|---|
-| QP-01 | P0 | Prouver une toolchain qui produit un artefact Wasm portable compatible avec `euromni.call`, sans imports système implicites. Dépend du contrat ABI actuel. | Build reproductible depuis un worker épinglé ; module n’importe que l’ABI autorisée et s’exécute sur la matrice Wasmtime approuvée. Aucun compilateur/LLVM local requis en production. | Spike Rust `no_std` 1.99.1/Cargo `--frozen` : imports, exports, exécution Wasmtime et égalité SHA-256 de deux builds propres ; test local Linux réussi avec versions/empreinte consignées. La matrice CI Linux/Windows est configurée mais reste à exécuter sur ce changement. Preuve limitée à une fixture minimale ; le processus de traduction/build/promotion métier et sa provenance restent à définir et évaluer. | En cours |
+| QP-01 | P0 | Prouver une toolchain qui produit un artefact Wasm portable compatible avec `euromni.call`, sans imports système implicites. Dépend du contrat ABI actuel. | Build reproductible depuis un worker épinglé ; module n’importe que l’ABI autorisée et s’exécute sur la matrice Wasmtime approuvée. Aucun compilateur/LLVM local requis en production. | Spike Rust `no_std` 1.99.1/Cargo `--frozen` : imports, exports, exécution Wasmtime et égalité SHA-256 de deux builds propres ; CI Go/Rust Linux/Windows verte (run 39580872372), distribution Linux/Windows avec intégrations, smoke tests et artefacts publiés (run 39581659670). Preuve limitée à une fixture minimale ; le processus de traduction/build/promotion métier et sa provenance restent à définir et évaluer. | En cours |
 | QP-02 | P0 | Définir le manifeste/versionnement d’artefact et son lien atomique avec `modules` et `shop_modules`. | Hash source, hash Wasm, plateforme/version, versions d’adaptateur/IR/compilateur, ABI et capabilities sont traçables ; un échec ne remplace pas la version active. | Builds immuables, pointeur courant et pin par installation migrés en PostgreSQL/MariaDB ; publication et promotion transactionnelles couvertes par intégration PostgreSQL, migration et parcours MariaDB dédiés réussis. Manifeste strict, allowlist des versions approuvées, promotion dans le CMS de test et exécution du build promu vérifiés. | Terminé |
 | QP-03 | P0 | Concevoir une ingestion admin authentifiée avec quarantaine d’archives. | Taille/nombre d’entrées bornés ; traversal, chemins absolus, liens symboliques, archives bombes et extensions non autorisées rejetés ; aucun PHP exécuté. | Tests négatifs d’archives et revue sécurité ; aucun endpoint anonyme. | À faire |
 | QP-04 | P1 | Créer les adaptateurs statiques WooCommerce et PrestaShop et leur matrice de versions/hooks supportés. | Un jeu de fixtures autorisé par plateforme produit des diagnostics déterministes et identifie les appels de données/effets de bord. | Fixtures, version source, résultats d’analyse golden et rapports de limites. | À faire |
@@ -74,7 +74,7 @@ la documentation du projet.
 | QP-07 | P1 | Valider Wasm avant publication et enregistrer l’artefact. | Imports, export mémoire/entrée, ABI, hash, taille, mémoire et fuel conformes ; publication atomique ; artefact corrompu ou non conforme rejeté. | Tests d’imports interdits, hash, limites, rollback et rechargement. | À faire |
 | QP-08 | P2 | Exécuter deux pilotes autorisés, un WooCommerce et un PrestaShop, sur une fonction catalogue ou hook simple, sans paiement. | Les deux passent par la même ABI sans SQL/réseau/filesystem côté guest et leurs sorties correspondent à un oracle documenté. | Sources réelles non financières, Lowerings et exécutions publiées : WooCommerce `woocommerce-extra-product-sorting-options` (GPL-3.0), épinglé au commit `bc5829d4d2383ae956869386eb40e772cf4a76a0` ; `alphabetical` / `reverse_alpha` couverts par oracle et Wasmtime. PrestaShop `ps_newproducts` (AFL-3.0), import et exécution publiés avec réglages. Tests dans PostgreSQL jetable ; aucun PHP exécuté et invités limités à `euromni.call`/capability `catalog`. Restent la compatibilité sur instances plateformes réelles, l’élargissement de versions et les options WooCommerce non traduites (`by_stock`, `review_count`, `on_sale_first`). Stripe et `ps_cashondelivery` exclus. Essai Selfnamed WooCommerce 2.1.0 natif isolé, distinct et non comptabilisé dans QP-08. | En cours |
 | QP-09 | P2 | Définir rétention, sauvegarde, restauration et suppression des sources/artefacts. | Règles par type d’artefact, stockage hors machine, restauration vérifiée, purge traçable. | Procédure et exercice de restauration/purge. | À faire |
-| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) : Windows/amd64 et Linux/amd64 retenus ; tests natifs, Wasmtime, intégrations PostgreSQL 16, FileStore, builds CGo et smoke tests réussis sur les deux runners dans le run 39032334862. Les workflows natifs sont conservés ; les checksums d’archives et les limites par filesystem/architecture sont documentés. Qualification limitée aux configurations testées, sans certification générique de production. | Terminé |
+| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) : Windows/amd64 et Linux/amd64 retenus ; le run 39581659670 valide sur les deux runners les intégrations PostgreSQL 16, builds CGo, smoke HTTP et publication des archives avec checksums adjacents. La CI Go/Rust des deux cibles passe au run 39580872372. Les limites par filesystem/architecture sont documentées ; qualification limitée aux configurations testées, sans certification générique de production. | Terminé |
 
 QP-10 est qualifié pour les runners Windows/amd64 et Linux/amd64 décrits dans
 [`portability.md`](portability.md). La suite immédiate reste QP-01 : définir et
@@ -85,6 +85,29 @@ dépendance de production. La réorganisation générale du backend est différ�
 jusqu’à stabilisation de ces frontières et des contrats. Continuer ensuite
 QP-03, QP-04/05, QP-06/07, puis QP-08/09 ; ne pas commencer la traduction
 générique avant d’avoir validé l’IR avec les deux plateformes pilotes.
+
+### Prochaine tranche proposée — QP-01 : contrat du flux de build métier
+
+Commencer par un cadrage et un test d'acceptation de bout en bout, sans
+réorganisation générale du backend ni nouveau traducteur :
+
+1. Choisir un seul module pilote et une version source exacte déjà autorisée ;
+   consigner référence, archive et empreinte avant tout traitement.
+2. Décrire les étapes et frontières entre import, adaptation/IR, compilation,
+   validation Wasm, enregistrement du manifeste et publication du build
+   immuable ; distinguer le build courant du pin d'installation.
+3. Définir un test qui compare deux builds propres, vérifie imports/exports,
+   ABI et empreintes, puis prouve qu'une publication candidate ne change pas
+   le pin avant une promotion explicite et que le guest promu est exécutable.
+4. Lister les rejets et preuves nécessaires : source/hash incohérent,
+   manifeste ou toolchain non approuvé, import système interdit, artefact
+   différent ou ABI non supportée.
+
+**Critère de sortie de cette tranche de cadrage :** contrat d'entrée/sortie,
+étapes, états d'échec, artefacts de preuve et test d'acceptation approuvés avant
+de choisir les modifications d'implémentation. La traduction fidèle du code
+PHP et les adaptateurs multi-versions restent hors périmètre ; ils dépendront
+de QP-03/04/05. Aucun code tiers n'est exécuté.
 
 La matrice sépare guests Wasm, runtime Go/CGo, worker de build et FileStore.
 Windows/amd64 et Linux/amd64 sont qualifiés dans les configurations CI testées ;
@@ -189,3 +212,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.7 | 2026-10-21 | QP-01/QP-10 : la preuve Rust journalise versions et SHA-256 de deux builds propres ; le CI ordinaire est configuré pour exécuter le guest sur Linux/amd64 et Windows/amd64 ; les archives de distribution reçoivent un checksum adjacent. Test local Linux réussi ; la matrice CI de ce changement reste à exécuter. QP-01 reste en cours : aucun processus métier de traduction/promotion n’est encore qualifié. La réorganisation du backend est différée. | En attente du responsable qualité |
 | 3.8 | 2026-10-21 | Le run de distribution 39577013455 échoue avant packaging : sous Windows, le test de credentials MariaDB détecte que le dossier temporaire a été créé avant l’application de l’ACL privée ; sous Linux, les tests d’intégration contiennent des attentes antérieures au registre de migrations et aux pins `module_builds`. Le code et les tests sont corrigés localement, et la CI ordinaire étendue à Windows ; nouvelle exécution Linux/Windows requise. La suite locale échoue encore dans le test dump/restore car les outils locaux PostgreSQL 18.6 sont incompatibles avec le serveur embarqué PostgreSQL 16. | En attente du responsable qualité |
 | 3.9 | 2026-10-21 | Le run CI 39580273018 valide Linux et le guest Wasm sur les deux runners, mais échoue sur Windows parce que le test des credentials comparait `Mode().Perm()` (sémantique POSIX) au lieu de vérifier l’ACL Windows. Le test vérifie désormais le dossier privé hérité. Le run 39580872372 passe ensuite les tests Go complets sur Linux/Windows et le guest Rust/Wasm sur les deux cibles ; une nouvelle qualification du workflow de distribution reste requise. | En attente du responsable qualité |
+| 3.10 | 2026-10-21 | QP-10 consolidé : CI Go/Rust verte sur Linux/amd64 et Windows/amd64 (run 39580872372) ; distribution CMS verte sur les deux cibles (run 39581659670, commit 6610399), avec tests d'intégration PostgreSQL 16, smoke HTTP, checksum SHA-256 et deux artefacts publiés. QP-01 reste en cours : prochaine tranche proposée, cadrer le contrat et le test d'acceptation du flux de build métier sur un seul module/version épinglé, sans refonte backend ni traduction PHP. | En attente du responsable qualité |
