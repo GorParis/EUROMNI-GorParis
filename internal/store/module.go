@@ -30,22 +30,32 @@ type NewProductsSettings struct {
 }
 
 type ModuleInventoryEntry struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	ABIVersion      string   `json:"abi_version"`
-	Platform        string   `json:"platform,omitempty"`
-	PlatformVersion string   `json:"platform_version,omitempty"`
-	ModuleVersion   string   `json:"module_version,omitempty"`
-	SourceReference string   `json:"source_reference,omitempty"`
-	Adapter         string   `json:"adapter,omitempty"`
-	AdapterVersion  string   `json:"adapter_version,omitempty"`
-	SourceSHA256    string   `json:"source_sha256,omitempty"`
-	ArchiveSHA256   string   `json:"archive_sha256,omitempty"`
-	WASMSHA256      string   `json:"wasm_sha256,omitempty"`
-	Capabilities    []string `json:"capabilities"`
-	Status          string   `json:"status"`
-	CanInstall      bool     `json:"can_install"`
-	CanUninstall    bool     `json:"can_uninstall"`
+	ID              string                      `json:"id"`
+	Name            string                      `json:"name"`
+	ABIVersion      string                      `json:"abi_version"`
+	Platform        string                      `json:"platform,omitempty"`
+	PlatformVersion string                      `json:"platform_version,omitempty"`
+	ModuleVersion   string                      `json:"module_version,omitempty"`
+	SourceReference string                      `json:"source_reference,omitempty"`
+	Adapter         string                      `json:"adapter,omitempty"`
+	AdapterVersion  string                      `json:"adapter_version,omitempty"`
+	SourceSHA256    string                      `json:"source_sha256,omitempty"`
+	ArchiveSHA256   string                      `json:"archive_sha256,omitempty"`
+	WASMSHA256      string                      `json:"wasm_sha256,omitempty"`
+	Capabilities    []string                    `json:"capabilities"`
+	Status          string                      `json:"status"`
+	CanInstall      bool                        `json:"can_install"`
+	CanUninstall    bool                        `json:"can_uninstall"`
+	Builds          []ModuleBuildInventoryEntry `json:"builds"`
+}
+
+type ModuleBuildInventoryEntry struct {
+	WASMSHA256    string `json:"wasm_sha256"`
+	ModuleVersion string `json:"module_version,omitempty"`
+	Platform      string `json:"platform,omitempty"`
+	Current       bool   `json:"current"`
+	Installed     bool   `json:"installed"`
+	CanPromote    bool   `json:"can_promote"`
 }
 
 type moduleBuildManifestMetadata struct {
@@ -134,7 +144,73 @@ func (s *Store) ListModuleInventory(ctx context.Context, shopID string) ([]Modul
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.populateModuleBuildInventory(ctx, shopID, entries); err != nil {
+		return nil, err
+	}
 	return entries, nil
+}
+
+func (s *Store) populateModuleBuildInventory(ctx context.Context, shopID string, entries []ModuleInventoryEntry) error {
+	rows, err := s.SQL.QueryContext(ctx, `
+		SELECT b.module_id::text, b.wasm_sha256, b.build_manifest::text,
+		       b.id = m.current_build_id,
+		       b.id = sm.build_id AND sm.status = 'installed',
+		       b.id = m.current_build_id OR EXISTS (
+		           SELECT 1 FROM shop_modules pinned WHERE pinned.build_id = b.id
+		       )
+		FROM module_builds b
+		JOIN modules m ON m.id = b.module_id
+		LEFT JOIN shop_modules sm ON sm.module_id = m.id AND sm.shop_id::text = $1
+		WHERE b.id = m.current_build_id OR EXISTS (
+		    SELECT 1 FROM shop_modules pinned WHERE pinned.build_id = b.id
+		)
+		ORDER BY b.module_id, b.created_at DESC, b.id
+	`, shopID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	entryByID := make(map[string]int, len(entries))
+	for i := range entries {
+		entryByID[entries[i].ID] = i
+	}
+	for rows.Next() {
+		var moduleID string
+		var wasmHash []byte
+		var manifestRaw sql.NullString
+		var current, installed, retained bool
+		if err := rows.Scan(&moduleID, &wasmHash, &manifestRaw, &current, &installed, &retained); err != nil {
+			return err
+		}
+		index, exists := entryByID[moduleID]
+		if !exists {
+			continue
+		}
+		if len(wasmHash) != 32 {
+			return ErrInvalidModuleWASMHash
+		}
+		build := ModuleBuildInventoryEntry{
+			WASMSHA256: hex.EncodeToString(wasmHash),
+			Current:    current,
+			Installed:  installed,
+		}
+		if manifestRaw.Valid {
+			var manifest moduleBuildManifestMetadata
+			if err := json.Unmarshal([]byte(manifestRaw.String), &manifest); err != nil {
+				return fmt.Errorf("decode build manifest for module %q: %w", entries[index].Name, err)
+			}
+			build.ModuleVersion = manifest.Source.ModuleVersion
+			build.Platform = manifest.Platform
+			build.CanPromote = retained &&
+				moduleBuildCanInstall(entries[index].Name, entries[index].ABIVersion, wasmHash, manifest)
+		}
+		entries[index].Builds = append(entries[index].Builds, build)
+	}
+	return rows.Err()
 }
 
 func (s *Store) InstallRegisteredNewProductsModule(ctx context.Context, shopID, expectedWASMHash string) error {

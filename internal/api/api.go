@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -24,6 +25,7 @@ var moduleManager interface {
 	ListModules(context.Context, string) ([]store.ModuleInventoryEntry, error)
 	InstallModule(context.Context, string, string) error
 	UninstallModule(context.Context, string, string) error
+	PromoteModule(context.Context, string, string, string) error
 }
 
 func SetProductReader(r store.ProductReader) {
@@ -40,6 +42,7 @@ func SetModuleManager(manager interface {
 	ListModules(context.Context, string) ([]store.ModuleInventoryEntry, error)
 	InstallModule(context.Context, string, string) error
 	UninstallModule(context.Context, string, string) error
+	PromoteModule(context.Context, string, string, string) error
 }) {
 	moduleManager = manager
 }
@@ -99,6 +102,7 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/modules", withOrderWriteAuth(adminModuleInventory))
 	mux.HandleFunc("POST /v1/admin/modules/{name}/installation", withOrderWriteAuth(adminInstallModule))
 	mux.HandleFunc("DELETE /v1/admin/modules/{name}/installation", withOrderWriteAuth(adminUninstallModule))
+	mux.HandleFunc("POST /v1/admin/modules/{name}/build", withOrderWriteAuth(adminPromoteModuleBuild))
 	mux.HandleFunc("GET /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("PUT /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("GET /v1/admin/shipping/versions/targets", withOrderWriteAuth(adminShippingRateVersionTargets))
@@ -135,6 +139,60 @@ func adminInstallModule(w http.ResponseWriter, r *http.Request) {
 
 func adminUninstallModule(w http.ResponseWriter, r *http.Request) {
 	adminModuleLifecycle(w, r, false)
+}
+
+func adminPromoteModuleBuild(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name != store.NewProductsModuleName {
+		writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "module not found"})
+		return
+	}
+	if moduleManager == nil {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "module management unavailable"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var request struct {
+		WASMSHA256 string `json:"wasm_sha256"`
+	}
+	if err := decoder.Decode(&request); err != nil || !isSHA256Hex(request.WASMSHA256) {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "a valid wasm_sha256 is required"})
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "request must contain one JSON object"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	if err := moduleManager.PromoteModule(r.Context(), session.ShopID, name, request.WASMSHA256); err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "installed module build not found"})
+		case errors.Is(err, store.ErrModuleBuildUnsupported):
+			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "module build is not supported for promotion"})
+		default:
+			log.Printf("admin module build promotion %s %s: %v", name, request.WASMSHA256, err)
+			writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "module build promotion unavailable"})
+		}
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": map[string]bool{"promoted": true}})
+}
+
+func isSHA256Hex(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func adminModuleLifecycle(w http.ResponseWriter, r *http.Request, install bool) {

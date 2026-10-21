@@ -142,3 +142,35 @@ func (r *NewProductsWidgetRunner) UninstallModule(ctx context.Context, shopID, n
 	}
 	return r.Modules.UninstallNewProductsModule(ctx, shopID)
 }
+
+func (r *NewProductsWidgetRunner) PromoteModule(ctx context.Context, shopID, name, wasmSHA256 string) error {
+	if r == nil || r.Modules == nil || r.Modules.SQL == nil || r.Artifacts == nil {
+		return errors.New("module promotion is not configured")
+	}
+	if name != store.NewProductsModuleName {
+		return errors.New("module lifecycle is limited to ps_newproducts")
+	}
+	entries, err := r.Modules.ListModuleInventory(ctx, shopID)
+	if err != nil {
+		return fmt.Errorf("list module registry before promotion: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.Name != name {
+			continue
+		}
+		for _, build := range entry.Builds {
+			if build.WASMSHA256 != wasmSHA256 {
+				continue
+			}
+			if !build.CanPromote {
+				return store.ErrModuleBuildUnsupported
+			}
+			if _, err := r.Artifacts.Get(ctx, wasmSHA256); err != nil {
+				return fmt.Errorf("verify module artifact before promotion: %w", err)
+			}
+			return r.Modules.PromoteInstalledModuleBuild(ctx, shopID, entry.ID, wasmSHA256)
+		}
+		return store.ErrNotFound
+	}
+	return store.ErrNotFound
+}

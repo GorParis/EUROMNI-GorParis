@@ -209,7 +209,9 @@ type testModuleManager struct {
 	entries      []store.ModuleInventoryEntry
 	installed    []string
 	uninstalled  []string
+	promoted     []string
 	installError error
+	promoteError error
 }
 
 func (manager *testModuleManager) ListModules(_ context.Context, _ string) ([]store.ModuleInventoryEntry, error) {
@@ -224,6 +226,11 @@ func (manager *testModuleManager) InstallModule(_ context.Context, shopID, name 
 func (manager *testModuleManager) UninstallModule(_ context.Context, shopID, name string) error {
 	manager.uninstalled = append(manager.uninstalled, shopID+":"+name)
 	return nil
+}
+
+func (manager *testModuleManager) PromoteModule(_ context.Context, shopID, name, wasmSHA256 string) error {
+	manager.promoted = append(manager.promoted, shopID+":"+name+":"+wasmSHA256)
+	return manager.promoteError
 }
 
 func TestAdminModuleManagementAuthorizationAndLifecycle(t *testing.T) {
@@ -255,6 +262,7 @@ func TestAdminModuleManagementAuthorizationAndLifecycle(t *testing.T) {
 			{http.MethodGet, "/v1/admin/modules"},
 			{http.MethodPost, "/v1/admin/modules/ps_newproducts/installation"},
 			{http.MethodDelete, "/v1/admin/modules/ps_newproducts/installation"},
+			{http.MethodPost, "/v1/admin/modules/ps_newproducts/build"},
 		} {
 			response := performAdminRequest(mux, request.method, request.path, auth.token, "")
 			if response.Code != http.StatusForbidden {
@@ -289,6 +297,34 @@ func TestAdminModuleManagementAuthorizationAndLifecycle(t *testing.T) {
 	uninstalled := performAdminRequest(mux, http.MethodDelete, "/v1/admin/modules/ps_newproducts/installation", admin.token, "")
 	if uninstalled.Code != http.StatusOK || len(manager.uninstalled) != 1 || manager.uninstalled[0] != seed.ShopID+":ps_newproducts" {
 		t.Fatalf("uninstall status/body/calls = %d/%s/%v", uninstalled.Code, uninstalled.Body, manager.uninstalled)
+	}
+	hash := strings.Repeat("a", 64)
+	promoted := performAdminRequest(mux, http.MethodPost, "/v1/admin/modules/ps_newproducts/build", admin.token, `{"wasm_sha256":"`+hash+`"}`)
+	if promoted.Code != http.StatusOK || len(manager.promoted) != 1 ||
+		manager.promoted[0] != seed.ShopID+":ps_newproducts:"+hash ||
+		!strings.Contains(promoted.Body.String(), `"promoted":true`) {
+		t.Fatalf("promote status/body/calls = %d/%s/%v", promoted.Code, promoted.Body, manager.promoted)
+	}
+	for _, body := range []string{
+		`{}`,
+		`{"wasm_sha256":"invalid"}`,
+		`{"wasm_sha256":"` + hash + `","extra":true}`,
+		`{"wasm_sha256":"` + hash + `"} {}`,
+	} {
+		response := performAdminRequest(mux, http.MethodPost, "/v1/admin/modules/ps_newproducts/build", admin.token, body)
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("invalid promotion body %s status = %d, want %d; body=%s", body, response.Code, http.StatusBadRequest, response.Body)
+		}
+	}
+	manager.promoteError = store.ErrModuleBuildUnsupported
+	unsupportedPromotion := performAdminRequest(mux, http.MethodPost, "/v1/admin/modules/ps_newproducts/build", admin.token, `{"wasm_sha256":"`+hash+`"}`)
+	if unsupportedPromotion.Code != http.StatusConflict {
+		t.Fatalf("unsupported promotion status = %d, want %d", unsupportedPromotion.Code, http.StatusConflict)
+	}
+	manager.promoteError = store.ErrNotFound
+	missingPromotion := performAdminRequest(mux, http.MethodPost, "/v1/admin/modules/ps_newproducts/build", admin.token, `{"wasm_sha256":"`+hash+`"}`)
+	if missingPromotion.Code != http.StatusNotFound {
+		t.Fatalf("missing promotion status = %d, want %d", missingPromotion.Code, http.StatusNotFound)
 	}
 	unsupported := performAdminRequest(mux, http.MethodPost, "/v1/admin/modules/other/installation", admin.token, "")
 	if unsupported.Code != http.StatusNotFound {

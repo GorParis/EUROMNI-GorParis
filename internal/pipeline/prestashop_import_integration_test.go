@@ -4,6 +4,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -113,13 +114,80 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 		!registered.CanInstall || !registered.CanUninstall || registered.WASMSHA256 != manifest.WASMSHA256 {
 		t.Fatalf("module inventory entry = %+v, want the installed PrestaShop build metadata", registered)
 	}
+	if len(registered.Builds) != 1 || !registered.Builds[0].Current ||
+		!registered.Builds[0].Installed || !registered.Builds[0].CanPromote {
+		t.Fatalf("initial build inventory = %+v, want current installed promotable build", registered.Builds)
+	}
+	secondWasm := append([]byte(nil), wasmBytes...)
+	secondWasm = append(secondWasm, 0x00, 0x10, 0x0e)
+	secondWasm = append(secondWasm, []byte("build-revision")...)
+	secondWasm = append(secondWasm, 0x01)
+	secondArtifact, secondManifest, err := PublishModuleBuild(
+		ctx, artifactStore, moduleStore, moduleID, ir, secondWasm,
+	)
+	if err != nil {
+		t.Fatalf("publish second immutable module build: %v", err)
+	}
+	if secondArtifact.SHA256 == manifest.WASMSHA256 {
+		t.Fatal("second module build has the same Wasm digest")
+	}
+	if installed, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID); err != nil ||
+		installed == nil || hex.EncodeToString(installed.WASMSHA256) != manifest.WASMSHA256 {
+		t.Fatalf("publishing second build changed installed pin: module=%+v error=%v", installed, err)
+	}
+	modules, err = widgetRunner.ListModules(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("list builds before promotion: %v", err)
+	}
+	registered = nil
+	for i := range modules {
+		if modules[i].Name == store.NewProductsModuleName {
+			registered = &modules[i]
+			break
+		}
+	}
+	if registered == nil || len(registered.Builds) != 2 {
+		t.Fatalf("module inventory after second publication = %+v, want two available builds", registered)
+	}
+	var secondBuildListed bool
+	for _, build := range registered.Builds {
+		if build.WASMSHA256 == secondManifest.WASMSHA256 {
+			secondBuildListed = build.Current && !build.Installed && build.CanPromote
+		}
+	}
+	if !secondBuildListed {
+		t.Fatalf("second build inventory = %+v, want current, promotable, and not installed", registered.Builds)
+	}
+	unavailableRunner, err := wasm.NewNewProductsWidgetRunner(moduleStore, unavailableModuleArtifacts{}, widgetRuntime)
+	if err != nil {
+		t.Fatalf("configure module runner with unavailable artifact store: %v", err)
+	}
+	if err := unavailableRunner.PromoteModule(ctx, seed.ShopID, store.NewProductsModuleName, secondManifest.WASMSHA256); err == nil {
+		t.Fatal("promotion succeeded without a verifiable Wasm artifact")
+	}
+	stillPinned, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil || hex.EncodeToString(stillPinned.WASMSHA256) != manifest.WASMSHA256 {
+		t.Fatalf("failed artifact verification changed installed build: module=%+v error=%v", stillPinned, err)
+	}
+	if err := widgetRunner.PromoteModule(ctx, seed.ShopID, store.NewProductsModuleName, secondManifest.WASMSHA256); err != nil {
+		t.Fatalf("promote second build through module manager: %v", err)
+	}
+	promotedModule, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil || hex.EncodeToString(promotedModule.WASMSHA256) != secondManifest.WASMSHA256 {
+		t.Fatalf("installed build after promotion = %+v, error = %v", promotedModule, err)
+	}
+	promotedProducts, promotedInstalled, err := widgetRunner.RunNewProducts(ctx, seed.ShopID)
+	if err != nil || !promotedInstalled || len(promotedProducts) != len(expectedProducts) {
+		t.Fatalf("widget after build promotion = (%d products, installed=%t, error=%v)",
+			len(promotedProducts), promotedInstalled, err)
+	}
 	if err := widgetRunner.UninstallModule(ctx, seed.ShopID, store.NewProductsModuleName); err != nil {
 		t.Fatalf("reversibly uninstall module: %v", err)
 	}
 	if products, installed, err := widgetRunner.RunNewProducts(ctx, seed.ShopID); err != nil || installed || len(products) != 0 {
 		t.Fatalf("widget after uninstall = (%v, installed=%t, error=%v), want empty and disabled", products, installed, err)
 	}
-	unavailableRunner, err := wasm.NewNewProductsWidgetRunner(moduleStore, unavailableModuleArtifacts{}, widgetRuntime)
+	unavailableRunner, err = wasm.NewNewProductsWidgetRunner(moduleStore, unavailableModuleArtifacts{}, widgetRuntime)
 	if err != nil {
 		t.Fatalf("configure module runner with unavailable artifact store: %v", err)
 	}

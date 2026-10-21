@@ -1140,14 +1140,14 @@
     }
   }
 
-  async function loadModuleInventory() {
+  async function loadModuleInventory(statusMessage) {
     moduleInventory.replaceChildren();
     try {
       const modules = await request("/v1/admin/modules");
       renderModuleInventory(modules);
-      moduleInventoryStatus.textContent = modules.length
+      moduleInventoryStatus.textContent = statusMessage || (modules.length
         ? `${modules.length} module(s) dans le registre.`
-        : "Aucun build de module enregistré.";
+        : "Aucun build de module enregistré.");
       moduleInventoryStatus.dataset.kind = "info";
     } catch (error) {
       moduleInventoryStatus.textContent = error.message;
@@ -1214,6 +1214,38 @@
         actions.append(uninstall);
       }
       if (actions.childElementCount) card.append(actions);
+      const promotableBuilds = (module.builds || []).filter((build) =>
+        build.can_promote && !build.installed
+      );
+      if (module.status === "installed" && promotableBuilds.length) {
+        const promotion = document.createElement("div");
+        promotion.className = "actions";
+        const label = document.createElement("label");
+        label.textContent = "Build à activer dans cette boutique";
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", "Build à activer dans cette boutique");
+        for (const build of promotableBuilds) {
+          const option = document.createElement("option");
+          option.value = build.wasm_sha256;
+          const version = build.module_version || "Version inconnue";
+          const platform = build.platform || "Écosystème inconnu";
+          const markers = [
+            build.current ? "build courant" : "",
+            build.installed ? "déjà installé" : "",
+          ].filter(Boolean);
+          option.textContent = `${version} · ${platform} · ${build.wasm_sha256.slice(0, 12)}${markers.length ? ` · ${markers.join(", ")}` : ""}`;
+          select.append(option);
+        }
+        label.append(select);
+        const promote = document.createElement("button");
+        promote.type = "button";
+        promote.textContent = "Activer ce build";
+        promote.addEventListener("click", () =>
+          promoteModuleBuild(module.name, select.value, promote)
+        );
+        promotion.append(label, promote);
+        card.append(promotion);
+      }
       if (module.name === "ps_newproducts" && !module.can_install) {
         const unavailable = document.createElement("p");
         unavailable.className = "muted";
@@ -1235,12 +1267,31 @@
       await request(`/v1/admin/modules/${encodeURIComponent(name)}/installation`, {
         method: install ? "POST" : "DELETE",
       });
-      moduleInventoryStatus.textContent = install
+      await loadModuleInventory(install
         ? "Module installé dans cette boutique."
-        : "Module désinstallé ; le build et les réglages sont conservés.";
-      moduleInventoryStatus.dataset.kind = "info";
-      await loadModuleInventory();
+        : "Module désinstallé ; le build et les réglages sont conservés.");
       await loadNewProductsSettings();
+    } catch (error) {
+      moduleInventoryStatus.textContent = error.message;
+      moduleInventoryStatus.dataset.kind = "error";
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function promoteModuleBuild(name, wasmSHA256, button) {
+    if (!window.confirm(
+      "Activer ce build remplacera le code exécuté par le module dans cette boutique. Les autres boutiques ne seront pas modifiées.",
+    )) {
+      return;
+    }
+    button.disabled = true;
+    try {
+      await request(`/v1/admin/modules/${encodeURIComponent(name)}/build`, {
+        method: "POST",
+        body: JSON.stringify({ wasm_sha256: wasmSHA256 }),
+      });
+      await loadModuleInventory("Build activé dans cette boutique.");
     } catch (error) {
       moduleInventoryStatus.textContent = error.message;
       moduleInventoryStatus.dataset.kind = "error";

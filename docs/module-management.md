@@ -37,8 +37,14 @@ ne propose pas d’action générique.
   relit l’artefact privé avant activation.
 - `DELETE /v1/admin/modules/ps_newproducts/installation` désactive uniquement
   l’installation de la boutique.
+- `POST /v1/admin/modules/ps_newproducts/build` accepte le SHA-256 d’un build
+  immuable disponible et l’active uniquement pour la boutique de la session.
+  Avant de modifier le pin, le CMS vérifie le manifeste, les capacités et
+  l’intégrité de l’artefact privé. Le changement de build ne modifie pas les
+  autres boutiques ; une erreur laisse le pin courant inchangé.
 - L’écran d’administration présente la provenance, l’ABI, le hash Wasm et les
-  capacités, et ne propose les actions que lorsqu’elles sont prises en charge.
+  capacités, liste les builds conservés et propose une activation explicite
+  uniquement pour les builds pris en charge et récupérables.
 
 Les paramètres existants du widget restent accessibles après installation ;
 une désinstallation masque ces paramètres sans les supprimer. L’inventaire
