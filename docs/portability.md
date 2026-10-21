@@ -190,7 +190,11 @@ Le premier run apres correction,
 a confirme la CI Linux et la matrice Wasm, mais le test Windows a ensuite revele
 une assertion de permissions POSIX (`Mode().Perm()`) inadaptee aux ACL Windows.
 Le test controle maintenant l'ACL privee du dossier parent sur Windows ; une
-nouvelle execution reste requise.
+nouvelle execution
+[39580872372](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39580872372)
+a passe sur Linux et Windows, pour les tests Go complets et le guest Rust/Wasm.
+La suite d'integration complete et la generation des checksums de distribution
+doivent encore etre confirmees sur le dernier commit.
 
 Les tests d'integration PostgreSQL passent localement pour `internal/store` et
 `internal/wasm`. La suite complete reste partiellement bloquee localement :
