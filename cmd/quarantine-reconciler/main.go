@@ -24,7 +24,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("quarantine-reconciler", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	root := flags.String("dir", strings.TrimSpace(os.Getenv("EUROMNI_QUARANTINE_DIR")), "private quarantine directory")
-	olderThan := flags.Duration("older-than", 0, "remove archives older than this Go duration")
+	olderThan := flags.Duration("older-than", 0, "remove quarantine files older than this Go duration")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}

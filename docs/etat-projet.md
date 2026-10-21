@@ -1,5 +1,36 @@
 # État du projet EUROMNI
 
+## Mise à jour CI — avertissements Actions (21 octobre 2026)
+
+Les workflows produit ont été mis à jour pour supprimer les avertissements
+observés sur le run `Go CI #59` : les matrices CI utilisent maintenant
+`ubuntu-24.04` au lieu de `ubuntu-latest`, et `actions/checkout`,
+`actions/setup-go` et `actions/upload-artifact` ciblent des versions Node 24.
+Le runner `windows-2022` reste inchangé ; la distribution CMS reste épinglée à
+`ubuntu-22.04` et `windows-2022`.
+
+Vérifications locales : versions d’actions et runtimes confirmés dans leurs
+métadonnées amont, diagnostics YAML de VS Code sans erreur, `git diff --check`
+propre. Ces modifications ne sont pas encore poussées : leur exécution sur les
+runners GitHub reste à confirmer au prochain push. Les annotations du run #59
+reflètent son ancien commit et ne signalent pas un échec de build.
+
+## Revue ciblée QP-03 — quarantaine (21 octobre 2026)
+
+Le contrôle du chemin d’ingestion a confirmé l’authentification owner/admin,
+la limite HTTP de 16 MiB, les plafonds d’entrées et de décompression ZIP, le
+rejet des chemins dangereux, doublons et liens symboliques, ainsi que le
+stockage privé. La revue a aussi trouvé que des fichiers temporaires abandonnés
+après un arrêt brutal comptaient dans le quota sans pouvoir être supprimés par
+le réconciliateur. `PurgeBefore` les retire maintenant lorsqu’ils sont plus
+anciens que le cutoff explicite ; le test vérifie qu’un staging récent reste
+intact.
+
+Validation ciblée : `go test ./internal/quarantine` réussit. Cette lecture est
+un contrôle de code ciblé, pas une revue de sécurité indépendante. Le rate-limit
+et le stockage partagé entre plusieurs processus restent hors support et à
+résoudre ou documenter avant un déploiement multi-instance.
+
 ## Reprise CMS sur la machine locale — 20 octobre 2026
 
 Les commits `cf66465` (`Fix admin order action forms`) et `40b4151`

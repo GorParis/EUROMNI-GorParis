@@ -228,10 +228,8 @@ func (s *FileStore) PurgeBefore(ctx context.Context, cutoff time.Time) (int, err
 			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 				return 0, ErrArchiveCorrupt
 			}
-			if strings.HasPrefix(archive.Name(), ".quarantine-") {
-				continue
-			}
-			if !validDigest(archive.Name()) {
+			temporary := strings.HasPrefix(archive.Name(), ".quarantine-")
+			if !temporary && !validDigest(archive.Name()) {
 				return 0, ErrArchiveCorrupt
 			}
 			if info.ModTime().Before(cutoff) {

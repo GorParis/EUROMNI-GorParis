@@ -62,7 +62,7 @@ func TestFileStoreRejectsInvalidAndCancelledUploads(t *testing.T) {
 	}
 }
 
-func TestFileStorePurgesOnlyArchivesBeforeCutoff(t *testing.T) {
+func TestFileStorePurgesExpiredArchivesAndTemporaryFiles(t *testing.T) {
 	store, err := NewFileStore(filepath.Join(t.TempDir(), "quarantine"))
 	if err != nil {
 		t.Fatalf("create quarantine store: %v", err)
@@ -80,13 +80,31 @@ func TestFileStorePurgesOnlyArchivesBeforeCutoff(t *testing.T) {
 	if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
 		t.Fatalf("age old archive: %v", err)
 	}
+	shopDirectory := filepath.Join(store.root, scopeDigest("shop-two"))
+	staleTemporaryPath := filepath.Join(shopDirectory, ".quarantine-stale")
+	if err := os.WriteFile(staleTemporaryPath, []byte("stale staging file"), 0o600); err != nil {
+		t.Fatalf("write stale staging file: %v", err)
+	}
+	if err := os.Chtimes(staleTemporaryPath, oldTime, oldTime); err != nil {
+		t.Fatalf("age stale staging file: %v", err)
+	}
+	recentTemporaryPath := filepath.Join(shopDirectory, ".quarantine-recent")
+	if err := os.WriteFile(recentTemporaryPath, []byte("active staging file"), 0o600); err != nil {
+		t.Fatalf("write recent staging file: %v", err)
+	}
 
 	removed, err := store.PurgeBefore(context.Background(), time.Now().Add(-24*time.Hour))
-	if err != nil || removed != 1 {
-		t.Fatalf("purge removed=%d, error=%v; want one removal", removed, err)
+	if err != nil || removed != 2 {
+		t.Fatalf("purge removed=%d, error=%v; want two removals", removed, err)
 	}
 	if _, err := store.Get(context.Background(), "shop-one", oldArchive.SHA256); err == nil {
 		t.Fatal("expired archive still exists")
+	}
+	if _, err := os.Stat(staleTemporaryPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale staging file still exists, stat error=%v", err)
+	}
+	if _, err := os.Stat(recentTemporaryPath); err != nil {
+		t.Fatalf("recent staging file was removed: %v", err)
 	}
 	if content, err := store.Get(context.Background(), "shop-two", newArchive.SHA256); err != nil || string(content) != "new archive" {
 		t.Fatalf("recent archive content=%q, error=%v", content, err)

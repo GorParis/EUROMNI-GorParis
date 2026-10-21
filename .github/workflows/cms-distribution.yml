@@ -26,10 +26,10 @@ jobs:
       CGO_ENABLED: "1"
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -203,7 +203,7 @@ jobs:
           }
 
       - name: Upload distribution archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: euromni-cms-${{ matrix.target }}
           path: dist/euromni-cms-${{ matrix.target }}.*
