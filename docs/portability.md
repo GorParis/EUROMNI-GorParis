@@ -185,6 +185,12 @@ pour un dossier temporaire deja cree, et les tests PostgreSQL conservaient des
 attentes anterieures aux migrations et aux pins de builds immuables. Les
 assertions et la creation securisee du dossier sont corrigees dans le worktree ;
 la CI doit encore confirmer ces corrections.
+Le premier run apres correction,
+[39580273018](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39580273018),
+a confirme la CI Linux et la matrice Wasm, mais le test Windows a ensuite revele
+une assertion de permissions POSIX (`Mode().Perm()`) inadaptee aux ACL Windows.
+Le test controle maintenant l'ACL privee du dossier parent sur Windows ; une
+nouvelle execution reste requise.
 
 Les tests d'integration PostgreSQL passent localement pour `internal/store` et
 `internal/wasm`. La suite complete reste partiellement bloquee localement :

@@ -9,11 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"euromni/internal/artifact"
+	"euromni/internal/privatefs"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -299,7 +301,11 @@ func TestMariaDBClientConfigAndPrivateOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if runtime.GOOS == "windows" {
+		if err := privatefs.EnsureDirectory(filepath.Dir(path)); err != nil {
+			t.Fatalf("MariaDB client options directory is not private: %v", err)
+		}
+	} else if info.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("MariaDB client options permissions = %o; want owner-only", info.Mode().Perm())
 	}
 	content, err := os.ReadFile(path)
