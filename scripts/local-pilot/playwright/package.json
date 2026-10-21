@@ -1,0 +1,12 @@
+{
+  "name": "euromni-local-pilot-playwright",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node run.mjs",
+    "test:headed": "node run.mjs --headed"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
+  }
+}
