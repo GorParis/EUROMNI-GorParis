@@ -3,9 +3,9 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.0 |
+| Version | 3.7 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
-| Date de révision | 2026-10-17 |
+| Date de révision | 2026-10-21 |
 | Responsable du document | Responsable produit/technique, à désigner |
 | Périmètre | Architecture, pipeline PHP→Wasm, ABI, artefacts et validation du cœur EUROMNI |
 | Exigence de portabilité | Artefacts Wasm indépendants de l’hôte de build ; plateformes runtime déclarées et testées |
@@ -42,17 +42,15 @@ produit.
 
 ## État de référence
 
-Au 2026-10-13, le runtime Wasmtime, l’ABI hôte, le registre de modules installés
-et le stockage local d’artefacts par SHA-256 existent. Le stockage est streamé,
-borné à 64 Mio et vérifie l’intégrité à la lecture. Le dépôt contient aussi une
-validation d’archives PHP, des analyses statiques ciblées, une IR v2, une
-génération WAT/Wasm limitée et un helper de publication de builds. Il ne contient
-pas de traduction générique de PHP ni d’endpoint d’ingestion HTTP authentifié.
-Le test Go 1.26.8 `wasip1` consigné dans le pipeline observe des imports WASI
-supplémentaires ; cette configuration ne respecte pas le linker strict. Les
-cibles OS/architecture du runtime hôte n’ont pas encore de matrice de tests
-approuvée. Voir [`portability.md`](portability.md) ; ni QP-01 ni QP-10 ne sont
-clos par la seule documentation.
+Au 2026-10-21, le runtime Wasmtime, l’ABI hôte, le registre immuable de builds
+et le stockage local d’artefacts par SHA-256 existent. La génération WAT/Wasm
+reste limitée à l’IR supportée ; le prototype Rust `no_std` confirme une fixture
+minimale, pas la traduction de modules métier. Les cibles runtime Windows/amd64
+et Linux/amd64 ont été testées dans le workflow natif de distribution ; les
+architectures et systèmes de fichiers non testés restent exclus. Il n’existe
+pas de traduction générique PHP ni d’endpoint d’ingestion HTTP authentifié.
+Voir [`portability.md`](portability.md) pour les limites et preuves ; QP-01
+reste ouvert sur le processus de build/promotion métier.
 
 Avant toute reprise de code, vérifier l’état réel de l’arbre de travail et
 l’historique Git. Les notes de version précédentes ne permettent pas de déduire
@@ -67,7 +65,7 @@ la documentation du projet.
 
 | ID | Priorité | Action / dépendance | Critère d’acceptation | Preuve attendue | Statut |
 |---|---|---|---|---|---|
-| QP-01 | P0 | Prouver une toolchain qui produit un artefact Wasm portable compatible avec `euromni.call`, sans imports système implicites. Dépend du contrat ABI actuel. | Build reproductible depuis un worker épinglé ; module n’importe que l’ABI autorisée et s’exécute sur la matrice Wasmtime approuvée. Aucun compilateur/LLVM local requis en production. | Spike Go 1.26.8 : imports WASI incompatibles. Candidate Rust 1.99.1/Cargo `--frozen` : imports, exports, exécution Wasmtime et deux builds en répertoires propres identiques localement sur Windows/amd64 ; CI Linux réussie (run 39030961826). Le workflow natif complet Windows/Linux a réussi (run 39032334862), y compris le test Rust sur les deux runners ; restent à définir et évaluer le processus complet de build/promotion et sa provenance. | En cours |
+| QP-01 | P0 | Prouver une toolchain qui produit un artefact Wasm portable compatible avec `euromni.call`, sans imports système implicites. Dépend du contrat ABI actuel. | Build reproductible depuis un worker épinglé ; module n’importe que l’ABI autorisée et s’exécute sur la matrice Wasmtime approuvée. Aucun compilateur/LLVM local requis en production. | Spike Rust `no_std` 1.99.1/Cargo `--frozen` : imports, exports, exécution Wasmtime et égalité SHA-256 de deux builds propres ; test local Linux réussi avec versions/empreinte consignées. La matrice CI Linux/Windows est configurée mais reste à exécuter sur ce changement. Preuve limitée à une fixture minimale ; le processus de traduction/build/promotion métier et sa provenance restent à définir et évaluer. | En cours |
 | QP-02 | P0 | Définir le manifeste/versionnement d’artefact et son lien atomique avec `modules` et `shop_modules`. | Hash source, hash Wasm, plateforme/version, versions d’adaptateur/IR/compilateur, ABI et capabilities sont traçables ; un échec ne remplace pas la version active. | Builds immuables, pointeur courant et pin par installation migrés en PostgreSQL/MariaDB ; publication et promotion transactionnelles couvertes par intégration PostgreSQL, migration et parcours MariaDB dédiés réussis. Manifeste strict, allowlist des versions approuvées, promotion dans le CMS de test et exécution du build promu vérifiés. | Terminé |
 | QP-03 | P0 | Concevoir une ingestion admin authentifiée avec quarantaine d’archives. | Taille/nombre d’entrées bornés ; traversal, chemins absolus, liens symboliques, archives bombes et extensions non autorisées rejetés ; aucun PHP exécuté. | Tests négatifs d’archives et revue sécurité ; aucun endpoint anonyme. | À faire |
 | QP-04 | P1 | Créer les adaptateurs statiques WooCommerce et PrestaShop et leur matrice de versions/hooks supportés. | Un jeu de fixtures autorisé par plateforme produit des diagnostics déterministes et identifie les appels de données/effets de bord. | Fixtures, version source, résultats d’analyse golden et rapports de limites. | À faire |
@@ -76,18 +74,22 @@ la documentation du projet.
 | QP-07 | P1 | Valider Wasm avant publication et enregistrer l’artefact. | Imports, export mémoire/entrée, ABI, hash, taille, mémoire et fuel conformes ; publication atomique ; artefact corrompu ou non conforme rejeté. | Tests d’imports interdits, hash, limites, rollback et rechargement. | À faire |
 | QP-08 | P2 | Exécuter deux pilotes autorisés, un WooCommerce et un PrestaShop, sur une fonction catalogue ou hook simple, sans paiement. | Les deux passent par la même ABI sans SQL/réseau/filesystem côté guest et leurs sorties correspondent à un oracle documenté. | Sources réelles non financières, Lowerings et exécutions publiées : WooCommerce `woocommerce-extra-product-sorting-options` (GPL-3.0), épinglé au commit `bc5829d4d2383ae956869386eb40e772cf4a76a0` ; `alphabetical` / `reverse_alpha` couverts par oracle et Wasmtime. PrestaShop `ps_newproducts` (AFL-3.0), import et exécution publiés avec réglages. Tests dans PostgreSQL jetable ; aucun PHP exécuté et invités limités à `euromni.call`/capability `catalog`. Restent la compatibilité sur instances plateformes réelles, l’élargissement de versions et les options WooCommerce non traduites (`by_stock`, `review_count`, `on_sale_first`). Stripe et `ps_cashondelivery` exclus. Essai Selfnamed WooCommerce 2.1.0 natif isolé, distinct et non comptabilisé dans QP-08. | En cours |
 | QP-09 | P2 | Définir rétention, sauvegarde, restauration et suppression des sources/artefacts. | Règles par type d’artefact, stockage hors machine, restauration vérifiée, purge traçable. | Procédure et exercice de restauration/purge. | À faire |
-| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) : Windows/amd64 et Linux/amd64 retenus ; tests natifs, Wasmtime, intégrations PostgreSQL 16, FileStore, builds CGo et smoke tests réussis sur les deux runners dans le run 39032334862. Limites explicites par système de fichiers et architectures non testées consignées. | Terminé |
+| QP-10 | P0 | Définir la matrice de portabilité du cœur et du runtime Wasmtime, distincte de la toolchain invitée. | OS/architectures de production décidés et testés ; dépendances natives/CGo, PostgreSQL, stockage et procédure de déploiement documentés. Une cible non testée n’est pas déclarée supportée. | [`portability.md`](portability.md) : Windows/amd64 et Linux/amd64 retenus ; tests natifs, Wasmtime, intégrations PostgreSQL 16, FileStore, builds CGo et smoke tests réussis sur les deux runners dans le run 39032334862. Les workflows natifs sont conservés ; les checksums d’archives et les limites par filesystem/architecture sont documentés. Qualification limitée aux configurations testées, sans certification générique de production. | Terminé |
 
-Ordre de reprise recommandé : traiter **QP-01 et QP-10 ensemble**. Le poste de
-développement n’est pas la cible d’architecture ; un worker de build épinglé
-est acceptable s’il produit un artefact portable et reproductible, sans rendre
-Docker nécessaire en production. Continuer ensuite QP-02/03, QP-04/05,
-QP-06/07, puis QP-08/09. Ne pas commencer la traduction générique avant d’avoir
-validé l’IR avec les deux plateformes pilotes.
+QP-10 est qualifié pour les runners Windows/amd64 et Linux/amd64 décrits dans
+[`portability.md`](portability.md). La suite immédiate reste QP-01 : définir et
+qualifier le processus de build/promotion des guests métier, sans confondre le
+prototype Rust et le compilateur IR actuel. Un worker épinglé est acceptable
+s’il produit un artefact portable et reproductible ; Docker ne devient pas une
+dépendance de production. La réorganisation générale du backend est différée
+jusqu’à stabilisation de ces frontières et des contrats. Continuer ensuite
+QP-03, QP-04/05, QP-06/07, puis QP-08/09 ; ne pas commencer la traduction
+générique avant d’avoir validé l’IR avec les deux plateformes pilotes.
 
-La matrice de portabilité sépare les guests Wasm, le binaire Go/CGo du runtime,
-le worker de build et le FileStore. Elle ne declare aucune plateforme supportee :
-les cibles de production et leurs preuves d'execution restent a approuver.
+La matrice sépare guests Wasm, runtime Go/CGo, worker de build et FileStore.
+Windows/amd64 et Linux/amd64 sont qualifiés dans les configurations CI testées ;
+cela ne constitue pas une déclaration générique de support pour toutes les
+versions de systèmes, toolchains ou configurations de production.
 
 ## Contrôles de passage
 
@@ -184,3 +186,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.4 | 2026-10-19 | CMS-05d externe mise en attente après examen des options S3 européennes (IONOS/Scaleway) et SFTP distant ; orientation vers un bucket objet chiffré côté client sans sélection de fournisseur. Reprise après stabilisation du CMS et essais d’imports ; prévoir une restauration chronométrée. Un module de paiement PrestaShop est proposé comme candidat ultérieur d’analyse statique, non comme intégration d’encaissement. | En attente du responsable qualité |
 | 3.5 | 2026-10-19 | Reprise CMS vérifiée : suite Go, API/PostgreSQL, syntaxe admin/vitrine ; modules non financiers WooCommerce (`woocommerce-extra-product-sorting-options`) et PrestaShop (`ps_newproducts`) ajoutés depuis des commits licenciés et analysés statiquement ; reconnaissance de `WidgetInterface.renderWidget` ajoutée. Le pilote catalogue Wasm exécuté reste basé sur une source synthétique. QP-08 reste en cours : import amont/manifeste, lowerings fidèles et publication/runtime des deux modules restent à réaliser ; aucun PHP tiers n’est exécuté. | En attente du responsable qualité |
 | 3.6 | 2026-10-19 | Pilote natif Selfnamed WooCommerce 2.1.0 réussi dans WordPress 6.9.2/WooCommerce 10.9.0/MariaDB 11.8.3, sous Podman rootless, réseau interne sans port publié, mock API, données synthétiques et bearer token fictif. Le test vérifie une commande, son groupe de livraison et l’absence de doublon ; volumes temporaires nettoyés. Cela valide uniquement le plugin original, pas son import ni son exécution EUROMNI/Wasm. Aucun credential réel utilisé ; leur éventuel usage reste à autoriser séparément. | En attente du responsable qualité |
+| 3.7 | 2026-10-21 | QP-01/QP-10 : la preuve Rust journalise versions et SHA-256 de deux builds propres ; le CI ordinaire est configuré pour exécuter le guest sur Linux/amd64 et Windows/amd64 ; les archives de distribution reçoivent un checksum adjacent. Test local Linux réussi ; la matrice CI de ce changement reste à exécuter. QP-01 reste en cours : aucun processus métier de traduction/promotion n’est encore qualifié. La réorganisation du backend est différée. | En attente du responsable qualité |

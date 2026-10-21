@@ -36,9 +36,15 @@ jobs:
         run: go test -count=1 ./...
 
   wasm-toolchain-spike:
-    name: Rust wasm32-unknown-unknown guest
-    runs-on: ubuntu-latest
+    name: Rust guest on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    env:
+      CGO_ENABLED: "1"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -52,5 +58,13 @@ jobs:
       - name: Install pinned Rust guest target
         run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
 
+      - name: Set up Windows C toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+
       - name: Inspect imports and execute Rust guest
-        run: go test -tags=wasmtoolchain -count=1 ./internal/wasm -run '^TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes$'
+        run: go test -v -tags=wasmtoolchain -count=1 ./internal/wasm -run '^TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes$'

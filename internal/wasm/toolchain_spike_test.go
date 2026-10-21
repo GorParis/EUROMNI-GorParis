@@ -5,10 +5,13 @@ package wasm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -123,6 +126,11 @@ func TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes(t *testing.T) 
 	projectRoot := filepath.Clean(filepath.Join(workingDirectory, "..", ".."))
 	fixtureDirectory := filepath.Join(projectRoot, "pipeline", "testdata", "rust-euromni")
 	buildDirectory := t.TempDir()
+	rustVersion := commandVersion(t, fixtureDirectory, "rustc", "--version")
+	cargoVersion := commandVersion(t, fixtureDirectory, "cargo", "--version")
+	if !strings.HasPrefix(rustVersion, "rustc 1.99.1 ") {
+		t.Fatalf("Rust toolchain = %q, want the pinned 1.99.1 toolchain", rustVersion)
+	}
 	build := func(targetDirectory string) []byte {
 		t.Helper()
 		command := exec.Command("cargo",
@@ -146,8 +154,14 @@ func TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes(t *testing.T) 
 	wasm := build(filepath.Join(buildDirectory, "build-a"))
 	repeatedWASM := build(filepath.Join(buildDirectory, "build-b"))
 	if !bytes.Equal(wasm, repeatedWASM) {
-		t.Fatal("identical Rust guest builds produced different Wasm bytes")
+		firstHash := sha256.Sum256(wasm)
+		secondHash := sha256.Sum256(repeatedWASM)
+		t.Fatalf("identical Rust guest builds produced different Wasm bytes: %s != %s",
+			hex.EncodeToString(firstHash[:]), hex.EncodeToString(secondHash[:]))
 	}
+	wasmHash := sha256.Sum256(wasm)
+	t.Logf("reproducible guest: %s; %s; target=wasm32-unknown-unknown; host=%s/%s; artifact_sha256=%s",
+		rustVersion, cargoVersion, runtime.GOOS, runtime.GOARCH, hex.EncodeToString(wasmHash[:]))
 
 	engine := wasmtime.NewEngine()
 	defer engine.Close()
@@ -199,6 +213,17 @@ func TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes(t *testing.T) 
 	if len(results) != 1 || results[0] != int32(len(expected)) {
 		t.Fatalf("Rust guest result = %v, want ABI response size %d", results, len(expected))
 	}
+}
+
+func commandVersion(t *testing.T, directory, name string, args ...string) string {
+	t.Helper()
+	command := exec.Command(name, args...)
+	command.Dir = directory
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, output)
+	}
+	return strings.TrimSpace(string(output))
 }
 
 func TestMinimalCatalogGuestRuntimeExecution(t *testing.T) {

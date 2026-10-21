@@ -88,6 +88,7 @@ jobs:
             go env GOOS GOARCH CGO_ENABLED
           } > "dist/$bundle/BUILD-INFO.txt"
           tar -czf "dist/$bundle.tar.gz" -C dist "$bundle"
+          (cd dist && sha256sum "$bundle.tar.gz" > "$bundle.tar.gz.sha256")
 
       - name: Smoke test extracted Linux distribution
         if: runner.os == 'Linux'
@@ -147,6 +148,9 @@ jobs:
             (go env GOOS GOARCH CGO_ENABLED)
           ) | Set-Content -Encoding ascii (Join-Path $bundlePath "BUILD-INFO.txt")
           Compress-Archive -Path $bundlePath -DestinationPath (Join-Path "dist" "$bundle.zip")
+          $archive = Join-Path "dist" "$bundle.zip"
+          $checksum = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          "$checksum  $bundle.zip" | Set-Content -Encoding ascii (Join-Path "dist" "$bundle.zip.sha256")
 
       - name: Smoke test extracted Windows distribution
         if: runner.os == 'Windows'

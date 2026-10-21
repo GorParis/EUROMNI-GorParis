@@ -135,5 +135,5 @@ fiscales ou des tarifs. Voir le cadrage et les étapes dans
 - Périmètre v1 du pipeline (un plugin pilote vs extracteur générique).
 - Périmètre produit v1 (moteur seul, boutique, ou bout-en-bout).
 - Où tourne Postgres (cloud / dédié) — le schéma ne dépend pas de ça. L’instance actuelle est chez IONOS.
-- OS/architectures du runtime hôte et toolchain des guests ; les cibles ne sont pas déclarées supportées avant validation. Voir la [matrice de portabilité](portability.md).
+- OS/architectures du runtime hôte et toolchain des guests ; Windows/amd64 et Linux/amd64 sont qualifiés dans les configurations CI documentées, sans déclaration générique de support pour d’autres versions ou environnements. Voir la [matrice de portabilité](portability.md).
 - Conception du service de courriel intégré au CMS et de ses adaptateurs de remise ; aucun fournisseur ni serveur SMTP embarqué n’est choisi.

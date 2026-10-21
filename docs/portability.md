@@ -28,7 +28,7 @@ le serveur Go EUROMNI peut etre construit sans CGo.
 |---|---|---|
 | Guest Wasm | Le WAT minimal et l'IR generent un module utilisant `euromni.call`. La fixture minimale est le seul contrat de guest actuellement prouve. | Format cible du pipeline, pas une declaration de support pour un compilateur de code source arbitraire. |
 | Go `wasip1` vers Wasm | Le spike consigne avec Go 1.26.8 retrouve `euromni.call` et des imports `wasi_snapshot_preview1` ; cette configuration ne respecte pas le linker strict. | Rejete pour cette configuration precise ; les autres compilateurs et versions restent a evaluer. |
-| Runtime Go + Wasmtime | `go.mod` cible Go 1.23 et depend de `wasmtime-go/v36`. Le binding requiert CGo. | Tests natifs valides en CI sur Windows/amd64 et Linux/amd64 ; voir les preuves ci-dessous. |
+| Runtime Go + Wasmtime | `go.mod` cible Go 1.23 et depend de `wasmtime-go/v36`. Le binding requiert CGo. | Windows/amd64 et Linux/amd64 sont les cibles runtime qualifiees ; tests natifs, PostgreSQL 16, packaging et smoke tests CI sont requis sur les deux. |
 | PostgreSQL | Compose utilise PostgreSQL 16 pour le developpement et les tests locaux. | La version seule ne valide ni une offre hebergee ni un profil de production. |
 | FileStore | Le CMS et le reconciliateur partagent le meme stockage local par SHA-256. POSIX utilise des permissions de repertoire privees ; Windows configure un DACL NTFS protege. | Les garanties de permissions, atomicite et durabilite doivent etre verifiees sur chaque systeme de fichiers retenu. |
 
@@ -37,9 +37,9 @@ support :
 
 | OS / architecture | Runtime Wasmtime natif | FileStore | Statut |
 |---|---|---|---|
-| Linux / amd64 | Tests natifs, Wasmtime et PostgreSQL integres au workflow de distribution | Integration et FileStore passes sur runner natif | Matrice CI validee le 2026-10-17 |
+| Linux / amd64 | Tests natifs, Wasmtime et PostgreSQL integres au workflow de distribution | Integration et FileStore passes sur runner natif | Qualifie par le run 39032334862 ; revalide a chaque workflow de distribution |
 | Linux / arm64 | A tester avec CGo actif | A tester | Non valide |
-| Windows / amd64 | Tests Go, Wasmtime, integration PostgreSQL et build natif passes avec CGo actif | Tests FileStore passes avec DACL prive | Matrice CI validee le 2026-10-17 |
+| Windows / amd64 | Tests Go, Wasmtime, integration PostgreSQL et build natif passes avec CGo actif | Tests FileStore passes avec DACL prive | Qualifie par le run 39032334862 ; revalide a chaque workflow de distribution |
 | macOS / amd64 et arm64 | A tester avec CGo actif | A tester | Non valide |
 
 ### Preuves executees le 2026-10-17
@@ -89,6 +89,9 @@ La matrice technique Windows/amd64 et Linux/amd64 est validee sur les runners
 natifs et les filesystems locaux testes. Cela ne qualifie pas Linux/arm64,
 macOS, les filesystems reseau ni tous les environnements de production ;
 aucune garantie n'est etendue au-dela des surfaces explicitement testees.
+La qualification concerne les configurations de runners et les filesystems
+locaux testes ; elle ne certifie pas toutes les versions de Windows/Linux,
+toolchains C ou environnements de production.
 
 Un pilote local Windows sans privileges administrateur est documente dans
 [`local-postgresql.md`](local-postgresql.md). Il utilise PostgreSQL 16.9 issu
@@ -137,7 +140,7 @@ exécuté dans Wasmtime. Commandes reproductibles :
 ```powershell
 rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
 $env:RUSTUP_TOOLCHAIN = "1.99.1"
-go test -tags=wasmtoolchain -count=1 ./internal/wasm -run '^TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes$'
+go test -v -tags=wasmtoolchain -count=1 ./internal/wasm -run '^TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes$'
 ```
 
 La CI générale a réussi sur Linux amd64 (run
@@ -155,11 +158,28 @@ a échoué sous Ubuntu avant les intégrations : Ubuntu 22.04 ne fournit pas
 `postgresql-client-16` dans ses dépôts activés par défaut. Le workflow ajoute
 désormais le dépôt PGDG. Le run de qualification corrigé
 [39032334862](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/39032334862)
-a passé ses deux jobs natifs, y compris le test Rust sur Windows et Linux. Ce
-spike valide un guest Rust `no_std` minimal et la reproductibilité de cette fixture ;
-il ne démontre ni une traduction PHP ni un processus de build/promotion complet
-et approuvé. QP-01 reste en cours jusqu'à la réussite du nouveau run et à
-l'évaluation du cycle complet de build/promotion.
+a passe ses deux jobs natifs, y compris le test Rust sur Windows et Linux. Le
+workflow CI ordinaire est maintenant configure pour executer aussi la preuve
+de guest sur ces deux cibles. Le test impose Rust 1.99.1 depuis
+`rust-toolchain.toml`, Cargo `--frozen`, deux repertoires de sortie propres,
+une egalite octet a octet et
+journalise les versions ainsi que le SHA-256 du guest. Le workflow de
+distribution produit un fichier de sommes SHA-256 adjacent a chaque archive ;
+il detecte une corruption accidentelle mais ne constitue pas une attestation
+signee de provenance.
+
+Le 2026-10-21, le test a ete execute localement sur Linux/amd64 avec Go
+1.26.10, Rust 1.99.1 et Cargo 1.99.1 : deux builds propres identiques,
+SHA-256 `4df40e34e013652f30cfd8a3a262279b7554d1075bbe8bb62d02cf67166328d7`,
+imports verifies et execution Wasmtime reussie. `go test ./...` et
+`go vet ./...` passent aussi localement. La matrice CI Windows/Linux modifiee
+reste a executer sur le commit contenant ce changement.
+
+Cette qualification reste un prototype de guest minimal, pas une toolchain de
+traduction de modules metier. QP-01 reste en cours jusqu'a ce qu'un processus
+de build/promotion consomme une source/version explicite, valide les imports et
+l'ABI, conserve le manifeste de provenance et fournisse un artefact auditable.
+Ni le ZIP PHP ni le compilateur Wasm actuel ne sont remplaces par cette fixture.
 
 ## Criteres de validation d'une cible hote
 
@@ -193,6 +213,9 @@ testee. Un test non execute ou une cible non disponible reste non validee.
 - Les systemes de fichiers ou services de stockage pris en charge pour les
   artefacts et leurs garanties de durabilite.
 
-Ces decisions ferment QP-01 et QP-10 uniquement apres preuves executees sur
-les cibles approuvees. Voir le [plan directeur qualite](plan-directeur-qualite.md)
-et le [contrat du pipeline](../pipeline/README.md).
+QP-01 reste ouvert jusqu'a la qualification du processus de build/promotion
+des guests metier. La qualification QP-10 s'applique uniquement aux runners
+Windows/amd64 et Linux/amd64 ainsi qu'aux filesystems locaux testes ; toute
+extension du support de production demande des preuves supplementaires. Voir
+le [plan directeur qualite](plan-directeur-qualite.md) et le
+[contrat du pipeline](../pipeline/README.md).

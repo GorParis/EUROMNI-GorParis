@@ -21,8 +21,14 @@ Les distributions Windows et Linux amd64 sont produites sur des runners natifs
 par le workflow GitHub Actions `CMS standalone distribution`, déclenché
 manuellement ou par un tag `cms-v*`. Le runner Linux est Ubuntu 22.04 pour
 garder une base glibc LTS ; le runner Windows est Windows Server 2022. Chaque
-archive est publiée comme artifact de workflow. Cette première tranche ne
-déclare pas les autres OS ou architectures supportés.
+archive est publiée avec un fichier `.sha256` adjacent dans le même artifact.
+Sous Linux, vérifier avec `sha256sum -c euromni-cms-linux-amd64.tar.gz.sha256`.
+Sous PowerShell, comparer le premier champ de
+`euromni-cms-windows-amd64.zip.sha256` avec
+`(Get-FileHash .\euromni-cms-windows-amd64.zip -Algorithm SHA256).Hash`.
+Ces sommes détectent les corruptions accidentelles ; elles ne sont pas une
+attestation signée et ne prouvent pas à elles seules l’origine du fichier.
+Cette première tranche ne déclare pas les autres OS ou architectures supportés.
 
 La validation locale du 17 octobre 2026 a d'abord démarré le binaire Windows
 sans `DATABASE_URL` : `/health`, `/admin/` et `/v1/products` ont répondu HTTP
