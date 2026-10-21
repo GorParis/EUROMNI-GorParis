@@ -913,7 +913,7 @@ func writeMariaDBClientOptions(config *mysql.Config) (string, func() error, erro
 	if err != nil || port < 1 || port > 65535 {
 		return "", nil, errors.New("MariaDB port is invalid")
 	}
-	tempDirectory, err := os.MkdirTemp("", "euromni-mariadb-client-")
+	tempDirectory, err := privatefs.CreateTempDirectory("", "euromni-mariadb-client-")
 	if err != nil {
 		return "", nil, fmt.Errorf("create temporary MariaDB credentials directory: %w", err)
 	}

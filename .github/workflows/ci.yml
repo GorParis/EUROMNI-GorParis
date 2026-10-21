@@ -16,9 +16,15 @@ concurrency:
 
 jobs:
   unit:
-    name: Vet and unit tests
-    runs-on: ubuntu-latest
+    name: Vet and unit tests on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    env:
+      CGO_ENABLED: "1"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -28,6 +34,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Set up Windows C toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
 
       - name: Vet
         run: go vet ./...

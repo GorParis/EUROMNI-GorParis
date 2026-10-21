@@ -16,6 +16,21 @@ func TestEnsureDirectoryCreatesAndValidatesPrivateDirectory(t *testing.T) {
 	}
 }
 
+func TestCreateTempDirectoryCreatesPrivateDirectory(t *testing.T) {
+	path, err := CreateTempDirectory(t.TempDir(), "private-")
+	if err != nil {
+		t.Fatalf("create private temporary directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(path); err != nil {
+			t.Errorf("remove private temporary directory: %v", err)
+		}
+	})
+	if err := EnsureDirectory(path); err != nil {
+		t.Fatalf("validate private temporary directory: %v", err)
+	}
+}
+
 func TestEnsureDirectoryRejectsSymlink(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "target")
 	if err := os.Mkdir(target, 0o700); err != nil {

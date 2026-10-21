@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"testing"
 
 	"euromni/internal/seed"
 	"euromni/internal/testdb"
+	schemafiles "euromni/migrations"
 )
 
 func TestPostgresModuleBuildPublicationPreservesInstallationPin(t *testing.T) {
@@ -490,8 +492,12 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if err := db.SQL.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("read migration ledger: %v", err)
 	}
-	if migrationCount != 14 {
-		t.Fatalf("recorded migrations = %d, want 14", migrationCount)
+	migrationFiles, err := fs.Glob(schemafiles.Files, "*.sql")
+	if err != nil {
+		t.Fatalf("list embedded migrations: %v", err)
+	}
+	if migrationCount != len(migrationFiles) {
+		t.Fatalf("recorded migrations = %d, want %d", migrationCount, len(migrationFiles))
 	}
 	installedModule, err := db.GetInstalledModule(ctx, seed.ShopID, seed.ModuleID)
 	if err != nil {

@@ -8,6 +8,13 @@ import (
 	"os"
 )
 
+func createTempDirectory(parent, prefix string) (string, error) {
+	if parent == "" {
+		parent = os.TempDir()
+	}
+	return os.MkdirTemp(parent, prefix)
+}
+
 func ensurePrivateDirectory(path string) error {
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Errorf("create private directory: %w", err)
