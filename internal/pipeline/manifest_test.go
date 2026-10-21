@@ -1,8 +1,13 @@
 package pipeline
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
+
+	"github.com/bytecodealliance/wasmtime-go/v36"
 )
 
 func TestBuildManifestBindsSourceIRAndWasm(t *testing.T) {
@@ -41,6 +46,7 @@ func TestBuildManifestRejectsChangedSourceIROrWasm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileIRToWasm() returned error: %v", err)
 	}
+
 	manifest, err := NewBuildManifest(ir, wasmBytes)
 	if err != nil {
 		t.Fatalf("NewBuildManifest() returned error: %v", err)
@@ -59,5 +65,35 @@ func TestBuildManifestRejectsChangedSourceIROrWasm(t *testing.T) {
 	manifest.Capabilities = []string{"filesystem"}
 	if err := manifest.Validate(ir, wasmBytes); err == nil {
 		t.Fatal("manifest accepted capabilities not derived from the IR")
+	}
+}
+
+func TestCompiledWasmBindsExactIRInCustomSection(t *testing.T) {
+	firstIR := testCatalogIR()
+	first, err := CompileIRToWasm(firstIR)
+	if err != nil {
+		t.Fatalf("compile first IR: %v", err)
+	}
+	secondIR := testCatalogIR()
+	secondIR.Provenance.PlatformVersion = "9.1"
+	second, err := CompileIRToWasm(secondIR)
+	if err != nil {
+		t.Fatalf("compile second IR: %v", err)
+	}
+	if string(first) == string(second) {
+		t.Fatal("different IR provenance produced identical Wasm bytes")
+	}
+	firstIRBytes, err := json.Marshal(firstIR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstIRHash := sha256.Sum256(firstIRBytes)
+	if !bytes.Contains(first, []byte(hex.EncodeToString(firstIRHash[:]))) {
+		t.Fatal("compiled Wasm is missing the exact IR hash custom section")
+	}
+	engine := wasmtime.NewEngine()
+	defer engine.Close()
+	if _, err := wasmtime.NewModule(engine, first); err != nil {
+		t.Fatalf("Wasmtime rejected the provenance custom section: %v", err)
 	}
 }

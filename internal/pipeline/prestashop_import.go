@@ -13,6 +13,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"euromni/internal/buildmeta"
 )
 
 const (
@@ -20,7 +22,7 @@ const (
 	maxPrestaShopArchiveFiles = 128
 	maxPrestaShopEntryBytes   = 2 << 20
 	maxPrestaShopTotalBytes   = 32 << 20
-	prestaShopAdapterVersion  = "1.0.0"
+	prestaShopAdapterVersion  = buildmeta.PrestaShopAdapterVersion
 )
 
 var ErrUnsupportedPrestaShopPackage = errors.New("unsupported PrestaShop package")

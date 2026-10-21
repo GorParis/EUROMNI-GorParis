@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,12 +12,13 @@ import (
 	"strings"
 
 	"euromni/internal/abi"
+	"euromni/internal/buildmeta"
 	"euromni/internal/wasm"
 
 	"github.com/bytecodealliance/wasmtime-go/v36"
 )
 
-const IRVersion = "euromni.ir.v3"
+const IRVersion = buildmeta.IRVersion
 
 const (
 	WooCommerceSortingModuleName      = "woocommerce-extra-product-sorting-options"
@@ -26,9 +28,10 @@ const (
 )
 
 const (
-	irMemoryPages    = 17
-	irOutputOffset   = abi.MaxCallBytes
-	irOutputCapacity = 1 << 20
+	irMemoryPages     = 17
+	irOutputOffset    = abi.MaxCallBytes
+	irOutputCapacity  = 1 << 20
+	wasmIRHashSection = "euromni.ir.sha256"
 )
 
 type ModuleIR struct {
@@ -110,6 +113,9 @@ func (p SourceProvenance) Validate(platform string) error {
 	}
 	if strings.TrimSpace(p.AdapterVersion) == "" || strings.TrimSpace(p.AdapterVersion) != p.AdapterVersion {
 		return errors.New("source adapter version is required and must be trimmed")
+	}
+	if !buildmeta.IsApprovedAdapter(platform, p.Adapter, p.AdapterVersion) {
+		return errors.New("source adapter version is not approved")
 	}
 	if p.ModuleVersion != "" && strings.TrimSpace(p.ModuleVersion) != p.ModuleVersion {
 		return errors.New("source module version must be trimmed")
@@ -454,7 +460,23 @@ func CompileIRToWasm(ir ModuleIR) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile IR to Wasm: %w", err)
 	}
+	irBytes, err := json.Marshal(ir)
+	if err != nil {
+		return nil, fmt.Errorf("encode IR for Wasm provenance section: %w", err)
+	}
+	irHash := sha256.Sum256(irBytes)
+	wasmBytes = appendWASMCustomSection(wasmBytes, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:])))
 	return wasmBytes, nil
+}
+
+func appendWASMCustomSection(wasmBytes []byte, name string, contents []byte) []byte {
+	nameBytes := []byte(name)
+	payload := binary.AppendUvarint(nil, uint64(len(nameBytes)))
+	payload = append(payload, nameBytes...)
+	payload = append(payload, contents...)
+	wasmBytes = append(wasmBytes, 0)
+	wasmBytes = binary.AppendUvarint(wasmBytes, uint64(len(payload)))
+	return append(wasmBytes, payload...)
 }
 
 func operationHasDynamicInput(operation IROperation) bool {

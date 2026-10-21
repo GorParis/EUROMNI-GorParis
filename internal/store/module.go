@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"euromni/internal/abi"
+	"euromni/internal/buildmeta"
 )
 
 type InstalledModule struct {
@@ -62,7 +63,9 @@ type moduleBuildManifestMetadata struct {
 	Version      string   `json:"version"`
 	Module       string   `json:"module"`
 	Platform     string   `json:"platform"`
+	IRVersion    string   `json:"ir_version"`
 	ABIVersion   string   `json:"abi_version"`
+	Compiler     string   `json:"compiler"`
 	Capabilities []string `json:"capabilities"`
 	WASMSHA256   string   `json:"wasm_sha256"`
 	Source       struct {
@@ -157,7 +160,7 @@ func (s *Store) populateModuleBuildInventory(ctx context.Context, shopID string,
 	rows, err := s.SQL.QueryContext(ctx, `
 		SELECT b.module_id::text, b.wasm_sha256, b.build_manifest::text,
 		       b.id = m.current_build_id,
-		       b.id = sm.build_id AND sm.status = 'installed',
+		       COALESCE(b.id = sm.build_id AND sm.status = 'installed', false),
 		       b.id = m.current_build_id OR EXISTS (
 		           SELECT 1 FROM shop_modules pinned WHERE pinned.build_id = b.id
 		       )
@@ -307,10 +310,13 @@ func (s *Store) UninstallNewProductsModule(ctx context.Context, shopID string) e
 func moduleBuildCanInstall(name, abiVersion string, wasmHash []byte, manifest moduleBuildManifestMetadata) bool {
 	return name == NewProductsModuleName &&
 		abiVersion == abi.Version &&
-		manifest.Version == "euromni.build.v1" &&
+		manifest.Version == buildmeta.ManifestVersion &&
 		manifest.Module == name &&
 		manifest.Platform == "prestashop" &&
+		manifest.IRVersion == buildmeta.IRVersion &&
 		manifest.ABIVersion == abi.Version &&
+		buildmeta.IsApprovedCompiler(manifest.Compiler) &&
+		buildmeta.IsApprovedAdapter(manifest.Platform, manifest.Source.Adapter, manifest.Source.AdapterVersion) &&
 		len(wasmHash) == 32 &&
 		manifest.WASMSHA256 == hex.EncodeToString(wasmHash) &&
 		len(manifest.Capabilities) == 1 &&

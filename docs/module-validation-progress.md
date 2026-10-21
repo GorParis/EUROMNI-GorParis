@@ -248,11 +248,17 @@ installations déjà épinglées. La première publication lie les installations
 historiques non versionnées à un build afin de préserver leur capacité d’exécution.
 
 `RegisterModuleBuild` enregistre le build et met à jour le pointeur courant dans
-une transaction ; un hash déjà enregistré avec une provenance différente est
-refusé. La validation du manifeste exige les hashes source/IR/Wasm, versions et
+une transaction ; `RegisterModuleBuildOnly` publie un candidat dans le registre
+sans modifier les pins des installations, y compris celles encore sans pin.
+Un hash déjà enregistré avec une provenance différente est refusé. La
+validation du manifeste exige les hashes source/IR/Wasm, versions et
 identifiants requis, ABI, capacités triées sans doublons et refuse les champs
-JSON inconnus. Elle ne remplace pas encore un registre des versions d’outils
-autorisées. `PromoteInstalledModuleBuild` fournit une promotion explicite et
+JSON inconnus. L’IR v3, le manifeste v1, les versions d’adaptateur PrestaShop
+et WooCommerce 1.0.0, et les identifiants de compilateur Wasmtime approuvés
+sont centralisés dans `internal/buildmeta`. Le nouveau compilateur ajoute
+l’empreinte SHA-256 de l’IR dans une section Wasm personnalisée ; cette
+empreinte rend distincts les artefacts de provenance différente sans modifier
+le code invité. `PromoteInstalledModuleBuild` fournit une promotion explicite et
 transactionnelle pour une installation donnée. L’inventaire et le runtime lisent
 le build de l’installation, tandis que les nouvelles installations choisissent
 le build courant ou le hash explicitement sélectionné. Le réconciliateur conserve
@@ -262,8 +268,11 @@ des pins de deux boutiques après une publication, la promotion isolée d’une
 boutique et l’absence de mutation après un conflit
 de provenance. `TestMariaDBMigrationAndCommerceFlow` a également appliqué
 successivement la baseline puis la migration incrémentale et validé le parcours
-commerce MariaDB. QP-02 reste ouvert pour fixer un registre des versions
-d’outils autorisées dans le manifeste.
+commerce MariaDB. Les versions approuvées sont désormais verrouillées. Dans
+le CMS local `euromni-cms-test`, le mode `--publish-only` a rendu un build
+candidat visible et promotable sans changer le pin installé ; l’API admin l’a
+ensuite promu pour la boutique de démonstration et l’endpoint du widget a
+exécuté ce build avec succès.
 
 ## Prochaines étapes prévisibles
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -136,6 +137,79 @@ func TestPostgresModuleBuildPublicationPreservesInstallationPin(t *testing.T) {
 	if _, err := database.ExecContext(ctx, `DELETE FROM modules WHERE id = $1`, moduleID); err != nil {
 		t.Fatalf("delete versioned module and its builds: %v", err)
 	}
+}
+
+func TestPostgresModuleBuildOnlyPreservesUnpinnedInstallation(t *testing.T) {
+	ctx := context.Background()
+	database := testdb.Start(t)
+	db := NewSQL(database)
+	moduleID, err := NewCatalogID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO modules (id, name) VALUES ($1, $2)`, moduleID, NewProductsModuleName); err != nil {
+		t.Fatalf("create module: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO shop_modules (shop_id, module_id, status, capabilities)
+		VALUES ($1, $2, 'installed', ARRAY['catalog']::text[])
+	`, seed.ShopID, moduleID); err != nil {
+		t.Fatalf("create unpinned installation: %v", err)
+	}
+	wasmBytes := []byte("publish-only build")
+	wasmHash := sha256.Sum256(wasmBytes)
+	if err := db.RegisterModuleBuildOnly(ctx, moduleID, wasmHash[:], testNewProductsBuildManifestJSON(wasmBytes, "publish-only")); err != nil {
+		t.Fatalf("register build without changing installation: %v", err)
+	}
+	var installedBuildID, currentHash []byte
+	if err := database.QueryRowContext(ctx, `
+		SELECT build_id FROM shop_modules WHERE shop_id = $1 AND module_id = $2
+	`, seed.ShopID, moduleID).Scan(&installedBuildID); err != nil {
+		t.Fatalf("read installation pin: %v", err)
+	}
+	if len(installedBuildID) != 0 {
+		t.Fatal("publish-only operation changed an unpinned installation")
+	}
+	if err := database.QueryRowContext(ctx, `SELECT wasm_sha256 FROM modules WHERE id = $1`, moduleID).Scan(&currentHash); err != nil {
+		t.Fatalf("read published current build: %v", err)
+	}
+	if string(currentHash) != string(wasmHash[:]) {
+		t.Fatal("publish-only operation did not publish the build to the module registry")
+	}
+	inventory, err := db.ListModuleInventory(ctx, seed.ShopID)
+	if err != nil {
+		t.Fatalf("read module inventory after publication: %v", err)
+	}
+	var candidateVisible bool
+	for _, entry := range inventory {
+		if entry.ID != moduleID {
+			continue
+		}
+		for _, build := range entry.Builds {
+			if build.WASMSHA256 == fmt.Sprintf("%x", wasmHash) {
+				candidateVisible = build.Current && build.CanPromote && !build.Installed
+			}
+		}
+	}
+	if !candidateVisible {
+		t.Fatal("published build is not visible as a promotable, uninstalled candidate")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM modules WHERE id = $1`, moduleID); err != nil {
+		t.Fatalf("delete published module and build: %v", err)
+	}
+}
+
+func testNewProductsBuildManifestJSON(wasm []byte, provenance string) []byte {
+	var manifest map[string]any
+	if err := json.Unmarshal(testBuildManifestJSON(wasm, provenance), &manifest); err != nil {
+		panic(err)
+	}
+	manifest["module"] = NewProductsModuleName
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		panic(err)
+	}
+	return encoded
 }
 
 func TestPostgresStoreIntegration(t *testing.T) {

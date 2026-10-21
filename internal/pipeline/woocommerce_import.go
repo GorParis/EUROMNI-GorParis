@@ -12,6 +12,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"euromni/internal/buildmeta"
 )
 
 const (
@@ -19,7 +21,7 @@ const (
 	maxWooCommerceArchiveFiles      = 128
 	maxWooCommerceEntryBytes        = 4 << 20
 	maxWooCommerceTotalBytes        = 32 << 20
-	wooCommerceAdapterVersion       = "1.0.0"
+	wooCommerceAdapterVersion       = buildmeta.WooCommerceAdapterVersion
 	wooCommerceSortingArchiveSHA256 = "65a239244a526bd98fb512a2ac5c5157379a9fcf8ffd2148c6efec007070144e"
 )
 

@@ -34,11 +34,15 @@ func run(args []string) error {
 	days := flags.Int("days", 30, "new-product window in days")
 	limit := flags.Int("limit", 8, "maximum products returned")
 	install := flags.Bool("install", false, "publish the generated Wasm into the isolated development CMS")
+	publishOnly := flags.Bool("publish-only", false, "publish the generated Wasm without changing any shop installation")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments")
+	}
+	if *install && *publishOnly {
+		return fmt.Errorf("--install and --publish-only are mutually exclusive")
 	}
 	if strings.TrimSpace(*archivePath) == "" || strings.TrimSpace(*platformVersion) == "" {
 		return fmt.Errorf("--archive and --platform-version are required")
@@ -74,12 +78,15 @@ func run(args []string) error {
 		return err
 	}
 	fmt.Printf("validated module=%s version=%s archive_sha256=%s wasm_sha256=%s\n", pkg.Name, pkg.Version, pkg.ArchiveSHA, manifest.WASMSHA256)
-	if !*install {
+	if !*install && !*publishOnly {
 		fmt.Println("dry run only; nothing was published")
 		return nil
 	}
-	if strings.TrimSpace(os.Getenv("EUROMNI_ENVIRONMENT")) != "development" {
+	if strings.TrimSpace(os.Getenv("EUROMNI_ENVIRONMENT")) != "development" && *install {
 		return fmt.Errorf("--install requires EUROMNI_ENVIRONMENT=development")
+	}
+	if strings.TrimSpace(os.Getenv("EUROMNI_ENVIRONMENT")) != "development" && *publishOnly {
+		return fmt.Errorf("--publish-only requires EUROMNI_ENVIRONMENT=development")
 	}
 	dsn := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	if err := validateTestDatabaseURL(dsn); err != nil {
@@ -87,7 +94,7 @@ func run(args []string) error {
 	}
 	artifactRoot := strings.TrimSpace(os.Getenv("EUROMNI_ARTIFACT_DIR"))
 	if artifactRoot == "" {
-		return fmt.Errorf("EUROMNI_ARTIFACT_DIR is required for installation")
+		return fmt.Errorf("EUROMNI_ARTIFACT_DIR is required for publication")
 	}
 	database, err := store.Open(dsn)
 	if err != nil {
@@ -110,6 +117,25 @@ func run(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	if *publishOnly {
+		var moduleID string
+		if err := database.SQL.QueryRowContext(ctx, `SELECT id::text FROM modules WHERE name = $1`, store.NewProductsModuleName).Scan(&moduleID); err != nil {
+			return fmt.Errorf("find registered PrestaShop module: %w", err)
+		}
+		stored, builtManifest, err := pipeline.PublishModuleBuildOnly(ctx, artifactStore, database, moduleID, ir, wasmBytes)
+		if err != nil {
+			return err
+		}
+		storedWasm, err := artifactStore.Get(ctx, stored.SHA256)
+		if err != nil {
+			return fmt.Errorf("read published Wasm: %w", err)
+		}
+		if err := builtManifest.Validate(ir, storedWasm); err != nil {
+			return fmt.Errorf("verify published build: %w", err)
+		}
+		fmt.Printf("published without promotion module_id=%s artifact_sha256=%s; shop installations unchanged\n", moduleID, stored.SHA256)
+		return nil
+	}
 	stored, builtManifest, moduleID, err := pipeline.PublishNewProductsModuleBuild(ctx, artifactStore, database, *shopID, settings, ir, wasmBytes)
 	if err != nil {
 		return err

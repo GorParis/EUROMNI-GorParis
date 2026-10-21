@@ -26,6 +26,20 @@ func PublishModuleBuild(ctx context.Context, artifacts artifact.Store, modules *
 	return storedArtifact, manifest, nil
 }
 
+func PublishModuleBuildOnly(ctx context.Context, artifacts artifact.Store, modules *store.Store, moduleID string, ir ModuleIR, wasmBytes []byte) (artifact.Artifact, BuildManifest, error) {
+	if artifacts == nil || modules == nil {
+		return artifact.Artifact{}, BuildManifest{}, errors.New("artifact and module stores are required")
+	}
+	storedArtifact, manifest, digest, manifestJSON, err := storeBuildArtifact(ctx, artifacts, ir, wasmBytes)
+	if err != nil {
+		return artifact.Artifact{}, BuildManifest{}, err
+	}
+	if err := modules.RegisterModuleBuildOnly(ctx, moduleID, digest, manifestJSON); err != nil {
+		return artifact.Artifact{}, BuildManifest{}, fmt.Errorf("register module build without promotion: %w", err)
+	}
+	return storedArtifact, manifest, nil
+}
+
 func PublishNewProductsModuleBuild(ctx context.Context, artifacts artifact.Store, modules *store.Store, shopID string, settings store.NewProductsSettings, ir ModuleIR, wasmBytes []byte) (artifact.Artifact, BuildManifest, string, error) {
 	if artifacts == nil || modules == nil {
 		return artifact.Artifact{}, BuildManifest{}, "", errors.New("artifact and module stores are required")

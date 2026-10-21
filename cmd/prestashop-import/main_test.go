@@ -27,6 +27,30 @@ func TestImportCommandRequiresExplicitDevelopmentInstall(t *testing.T) {
 	}
 }
 
+func TestImportCommandRequiresExplicitDevelopmentPublishOnly(t *testing.T) {
+	t.Setenv("EUROMNI_ENVIRONMENT", "")
+	err := run([]string{
+		"--archive", "../../pipeline/fixtures/prestashop-ps_newproducts.zip",
+		"--platform-version", "euromni-test-adapter",
+		"--publish-only",
+	})
+	if err == nil || !strings.Contains(err.Error(), "EUROMNI_ENVIRONMENT=development") {
+		t.Fatalf("publish-only without explicit development environment error = %v", err)
+	}
+}
+
+func TestImportCommandRejectsConflictingPublishModes(t *testing.T) {
+	err := run([]string{
+		"--archive", "../../pipeline/fixtures/prestashop-ps_newproducts.zip",
+		"--platform-version", "euromni-test-adapter",
+		"--install",
+		"--publish-only",
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("conflicting publish modes error = %v", err)
+	}
+}
+
 func TestValidateTestDatabaseURL(t *testing.T) {
 	for _, test := range []struct {
 		name string

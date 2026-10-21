@@ -147,6 +147,21 @@ projet `euromni-cms-test`. L’import enregistre le manifeste et l’installatio
 dans PostgreSQL, puis charge et exécute le Wasm via Wasmtime ; aucun PHP tiers
 n’est exécuté.
 
+Pour publier un build candidat sans changer la version de Wasm installée dans
+aucune boutique, utiliser `--publish-only` avec les mêmes garde-fous de
+développement. Le pointeur courant du module et l’inventaire des builds sont
+mis à jour ; les pins `shop_modules` restent inchangés. Le candidat apparaît
+alors dans l’admin pour une promotion explicite et peut être vérifié avant
+activation :
+
+```sh
+podman compose -p euromni-cms-test --profile cms --profile module-import run --rm -T \
+  prestashop-import \
+  --archive pipeline/fixtures/prestashop-ps_newproducts.zip \
+  --platform-version 9.0.0-test-build-2 \
+  --publish-only
+```
+
 Le ZIP versionné est un snapshot épinglé du dépôt officiel PrestaShop
 (`ps_newproducts` 2.0.1, commit amont
 `72e9476406319cbb91ac383121ca9967dc61f277`, SHA-256

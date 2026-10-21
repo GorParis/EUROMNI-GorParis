@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"euromni/internal/abi"
+	"euromni/internal/buildmeta"
 )
 
 var ErrInvalidBuildManifest = errors.New("invalid module build manifest")
@@ -112,6 +113,46 @@ func (s *Store) RegisterModuleBuild(ctx context.Context, moduleID string, wasmSH
 		`, moduleID, buildID); err != nil {
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) RegisterModuleBuildOnly(ctx context.Context, moduleID string, wasmSHA256, manifestJSON []byte) error {
+	if s == nil || s.SQL == nil {
+		return sql.ErrConnDone
+	}
+	moduleID, err := abi.RequireUUID("module_id", moduleID)
+	if err != nil {
+		return err
+	}
+	if err := validateBuildManifestJSON(wasmSHA256, manifestJSON); err != nil {
+		return err
+	}
+	tx, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var lockedModuleID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id::text FROM modules WHERE id = $1 FOR UPDATE
+	`, moduleID).Scan(&lockedModuleID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	buildID, err := registerImmutableBuild(ctx, tx, moduleID, wasmSHA256, manifestJSON)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE modules
+		SET current_build_id = $2, wasm_sha256 = $3, build_manifest = $4::jsonb
+		WHERE id = $1
+	`, moduleID, buildID, wasmSHA256, string(manifestJSON)); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -318,19 +359,20 @@ func validateBuildManifestJSON(wasmSHA256, manifestJSON []byte) error {
 	if manifest.WASMSHA256 != hex.EncodeToString(wasmSHA256) {
 		return fmt.Errorf("%w: Wasm hash mismatch", ErrInvalidBuildManifest)
 	}
-	if manifest.Version != "euromni.build.v1" ||
+	if manifest.Version != buildmeta.ManifestVersion ||
 		!nonEmptyManifestValue(manifest.Module) ||
 		!nonEmptyManifestValue(manifest.Platform) ||
-		!nonEmptyManifestValue(manifest.IRVersion) ||
+		manifest.IRVersion != buildmeta.IRVersion ||
 		!isManifestSHA256(manifest.IRSHA256) ||
 		manifest.ABIVersion != abi.Version ||
-		!nonEmptyManifestValue(manifest.Compiler) ||
+		!buildmeta.IsApprovedCompiler(manifest.Compiler) ||
 		manifest.WASMSize <= 0 ||
 		!isManifestSHA256(manifest.Source.SourceSHA256) ||
 		!isManifestSHA256(manifest.Source.ArchiveSHA256) ||
 		!nonEmptyManifestValue(manifest.Source.PlatformVersion) ||
 		!nonEmptyManifestValue(manifest.Source.Adapter) ||
 		!nonEmptyManifestValue(manifest.Source.AdapterVersion) ||
+		!buildmeta.IsApprovedAdapter(manifest.Platform, manifest.Source.Adapter, manifest.Source.AdapterVersion) ||
 		len(manifest.Capabilities) == 0 ||
 		!sort.StringsAreSorted(manifest.Capabilities) {
 		return fmt.Errorf("%w: required provenance or toolchain fields are missing or invalid", ErrInvalidBuildManifest)

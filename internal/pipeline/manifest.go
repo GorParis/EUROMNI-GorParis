@@ -9,10 +9,11 @@ import (
 	"sort"
 
 	"euromni/internal/abi"
+	"euromni/internal/buildmeta"
 )
 
-const BuildManifestVersion = "euromni.build.v1"
-const IRCompilerVersion = "wasmtime-go/v36.Wat2Wasm"
+const BuildManifestVersion = buildmeta.ManifestVersion
+const IRCompilerVersion = buildmeta.CurrentWASMCompiler
 
 type BuildManifest struct {
 	Version      string           `json:"version"`
