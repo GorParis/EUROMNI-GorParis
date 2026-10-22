@@ -1,6 +1,7 @@
 # EUROMNI 
 
 CMS souverain **headless** et **sandboxed** : le cœur d’exécution est en Go, les extensions du marché (WooCommerce, PrestaShop, etc.) sont transpilées vers WebAssembly et isolées dans Wasmtime, le front boutique est livré en composants web (Shadow DOM).
+Orienté ecommerce, sa technologie pourra aussi permettre la conteneurisation et la reproductabilité d'essais sur des particules intriquées localement.
 
 ## Architecture (3 couches)
 
