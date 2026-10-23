@@ -54,6 +54,11 @@ go run ./cmd/staff-bootstrap --shop '<shop-id>' --email '<owner-email>' --name '
 
 Pour la boutique seedée, le compte owner `owner@atelier-demo.example` doit être configuré avec cette même adresse e-mail. Le bootstrap ne remplace pas un compte existant. La déconnexion CMS révoque la session staff courante.
 
+Le flux initial de confirmation de commande et le worker SMTP sont décrits dans
+[`docs/email-service.md`](docs/email-service.md). Le profil Compose `mail`
+utilise Mailpit pour les essais locaux isolés ; aucun serveur d’envoi de
+production n’est configuré.
+
 ## Ordonnanceur d’artefacts Wasm
 
 Un processus Go indépendant réconcilie périodiquement les Wasm référencés par

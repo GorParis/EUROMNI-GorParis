@@ -1,0 +1,23 @@
+CREATE TABLE email_outbox (
+  id               CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  shop_id          CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  order_id         CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  event_type       VARCHAR(64) NOT NULL,
+  idempotency_key  VARCHAR(255) NOT NULL,
+  recipient        VARCHAR(320) NOT NULL,
+  payload          JSON NOT NULL,
+  status           VARCHAR(16) NOT NULL DEFAULT 'pending',
+  attempts         integer NOT NULL DEFAULT 0,
+  available_at     DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  locked_until     DATETIME(6),
+  last_error       VARCHAR(1024),
+  created_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  sent_at          DATETIME(6),
+  UNIQUE KEY email_outbox_idempotency_unique (idempotency_key),
+  KEY email_outbox_delivery_idx (status, available_at, created_at),
+  CONSTRAINT email_outbox_event_type_check CHECK (event_type IN ('order_confirmation')),
+  CONSTRAINT email_outbox_status_check CHECK (status IN ('pending', 'processing', 'sent', 'failed')),
+  CONSTRAINT email_outbox_attempts_check CHECK (attempts >= 0),
+  CONSTRAINT fk_email_outbox_shop FOREIGN KEY (shop_id) REFERENCES shops(id) ON DELETE CASCADE,
+  CONSTRAINT fk_email_outbox_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

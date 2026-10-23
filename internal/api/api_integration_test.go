@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"euromni/internal/seed"
 	"euromni/internal/store"
@@ -159,6 +160,48 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	}
 	if createdOrder.Data.ID == "" {
 		t.Fatal("checkout response has no order ID")
+	}
+	var eventType, recipient, payloadJSON string
+	if err := db.SQL.QueryRowContext(context.Background(), `
+		SELECT event_type, recipient, payload::text
+		FROM email_outbox
+		WHERE order_id::text = $1
+	`, createdOrder.Data.ID).Scan(&eventType, &recipient, &payloadJSON); err != nil {
+		t.Fatalf("read transactional order email event: %v", err)
+	}
+	var emailPayload store.OrderConfirmationPayload
+	if err := json.Unmarshal([]byte(payloadJSON), &emailPayload); err != nil {
+		t.Fatalf("decode transactional order email event: %v", err)
+	}
+	if eventType != "order_confirmation" || recipient != "checkout@example.com" ||
+		emailPayload.OrderNumber == "" || emailPayload.CustomerName != "Checkout integration" ||
+		emailPayload.GrandTotal != "184.9000" || len(emailPayload.Items) == 0 {
+		t.Fatalf("order confirmation event = %q, %q, %+v", eventType, recipient, emailPayload)
+	}
+	message, err := db.ClaimNextEmail(context.Background(), 30*time.Second)
+	if err != nil || message == nil {
+		t.Fatalf("claim order confirmation event: message=%+v error=%v", message, err)
+	}
+	if message.OrderID != createdOrder.Data.ID || message.Attempts != 1 ||
+		message.IdempotencyKey != "order-confirmation:"+createdOrder.Data.ID {
+		t.Fatalf("claimed mail outbox message = %+v", message)
+	}
+	secondMessage, err := db.ClaimNextEmail(context.Background(), 30*time.Second)
+	if err != nil || secondMessage != nil {
+		t.Fatalf("claimed an already leased email event: message=%+v error=%v", secondMessage, err)
+	}
+	if err := db.MarkEmailSent(context.Background(), message.ID); err != nil {
+		t.Fatalf("mark order confirmation as sent: %v", err)
+	}
+	var outboxStatus string
+	var outboxAttempts int
+	if err := db.SQL.QueryRowContext(context.Background(), `
+		SELECT status, attempts FROM email_outbox WHERE id::text = $1
+	`, message.ID).Scan(&outboxStatus, &outboxAttempts); err != nil {
+		t.Fatalf("read delivered email outbox status: %v", err)
+	}
+	if outboxStatus != "sent" || outboxAttempts != 1 {
+		t.Fatalf("delivered email outbox state = %q/%d", outboxStatus, outboxAttempts)
 	}
 
 	if err := db.BootstrapStaff(context.Background(), seed.ShopID, "owner@atelier-demo.example", "Demo Owner", "integration-password"); err != nil {

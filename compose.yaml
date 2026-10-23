@@ -86,6 +86,37 @@ services:
       - mkdir -p /var/lib/euromni/artifacts && chmod 700 /var/lib/euromni/artifacts && exec go run ./cmd/prestashop-import "$@"
       - prestashop-import
 
+  mailpit:
+    image: docker.io/axllent/mailpit:v1.27.8
+    profiles: [mail]
+    ports:
+      - "127.0.0.1::8025"
+
+  mail-worker:
+    image: golang:1.25-bookworm
+    profiles: [mail]
+    working_dir: /workspace
+    environment:
+      DATABASE_URL: postgres://euromni:${EUROMNI_DB_PASSWORD:?Set EUROMNI_DB_PASSWORD or configure .env}@postgres:5432/euromni?sslmode=disable
+      EUROMNI_ENVIRONMENT: development
+      EUROMNI_MAIL_SMTP_ADDR: mailpit:1025
+      EUROMNI_MAIL_FROM: "Atelier Demo <commandes@localhost>"
+      EUROMNI_MAIL_TLS_MODE: none
+      EUROMNI_MAIL_POLL_INTERVAL: 1s
+      CGO_ENABLED: "1"
+      GOCACHE: /tmp/go-build-cache
+      GOMODCACHE: /tmp/go-mod-cache
+      GOTOOLCHAIN: local
+    volumes:
+      - .:/workspace:ro,z
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    command: ["go", "run", "./cmd/mail-worker"]
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   module-artifacts:

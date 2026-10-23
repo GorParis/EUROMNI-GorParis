@@ -260,6 +260,33 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 		t.Fatalf("checkout MariaDB cart: %v", err)
 	}
 	orderID = order.ID
+	var outboxEvent, outboxRecipient string
+	if err := database.QueryRowContext(ctx, `
+		SELECT event_type, recipient FROM email_outbox WHERE order_id = $1
+	`, order.ID).Scan(&outboxEvent, &outboxRecipient); err != nil {
+		t.Fatalf("read MariaDB transactional order email event: %v", err)
+	}
+	if outboxEvent != "order_confirmation" || outboxRecipient != email {
+		t.Fatalf("MariaDB order email event = %q to %q", outboxEvent, outboxRecipient)
+	}
+	var outboxStatus string
+	var outboxAvailable bool
+	if err := database.QueryRowContext(ctx, `
+		SELECT status, available_at <= CURRENT_TIMESTAMP(6)
+		FROM email_outbox WHERE order_id = $1
+	`, order.ID).Scan(&outboxStatus, &outboxAvailable); err != nil {
+		t.Fatalf("read MariaDB email outbox readiness: %v", err)
+	}
+	if outboxStatus != "pending" || !outboxAvailable {
+		t.Fatalf("MariaDB email outbox readiness = %q/%v", outboxStatus, outboxAvailable)
+	}
+	mailMessage, err := store.ClaimNextEmail(ctx, 30*time.Second)
+	if err != nil || mailMessage == nil || mailMessage.OrderID != order.ID || mailMessage.Attempts != 1 {
+		t.Fatalf("claim MariaDB order email event: message=%+v error=%v", mailMessage, err)
+	}
+	if err := store.MarkEmailSent(ctx, mailMessage.ID); err != nil {
+		t.Fatalf("mark MariaDB order email event as sent: %v", err)
+	}
 	adminOrder, err := store.GetAdminOrder(ctx, seed.ShopID, order.ID)
 	if err != nil {
 		t.Fatalf("read MariaDB admin order: %v", err)

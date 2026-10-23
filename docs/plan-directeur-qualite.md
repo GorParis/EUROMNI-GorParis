@@ -3,9 +3,9 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.18 |
+| Version | 3.19 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
-| Date de révision | 2026-10-21 |
+| Date de révision | 2026-10-23 |
 | Responsable du document | Responsable produit/technique, à désigner |
 | Périmètre | Architecture, pipeline PHP→Wasm, ABI, artefacts et validation du cœur EUROMNI |
 | Exigence de portabilité | Artefacts Wasm indépendants de l’hôte de build ; plateformes runtime déclarées et testées |
@@ -198,6 +198,7 @@ standard. Docker et tout hébergeur cloud restent optionnels.
 | CMS-05 | P1 | Terminer l’installation et l’exploitation du CMS sur machine locale/serveur autonome, sans dépendance obligatoire à Docker ni à un hébergeur. Dépend de CMS-01 à CMS-04. | Sous-étapes CMS-05a à CMS-05d ci-dessous terminées : démarrage sûr, migrations reproductibles, binaire portable et exercice vérifié de persistance/restauration. | En cours |
 | CMS-06 | P3 | Évaluer un hébergeur distant (IONOS ou autre) uniquement si le besoin est confirmé, après CMS-05. | Environnement de test isolé, secrets hors Git, TLS, migrations et restauration vérifiés. Cette étape est facultative et ne bloque pas la livraison du CMS autonome. | Reporté — décision différée |
 | CMS-07 | P1 | Ajouter un circuit de livraison tarifée : configuration admin de transporteurs, zones pays et tarifs fixes ; choix du client au checkout ; total serveur et snapshot transport sur commande. | Les tarifs sont tenant-scopés et revalidés dans la transaction de commande ; destinations sans mode actif refusées clairement ; le snapshot reste stable après modification des tarifs. Tests API, store PostgreSQL et frontend couvrent configuration, permissions, calcul du total et affichage client/admin. Les intégrations transporteur, étiquettes, points relais, taxes et paiement restent hors tranche. | Terminé |
+| CMS-08 | P1 | Ajouter une confirmation de commande par outbox transactionnelle et remise SMTP côté hôte. | Événement créé atomiquement au checkout ; worker avec TLS, bail et retries ; tests PostgreSQL et SMTP local ; aucun secret ou réseau SMTP dans Wasm. Mailpit est réservé au développement. Domaine, MTA/SMTP réel, délivrabilité, rétention, rebonds et supervision restent à qualifier avant production. | En cours |
 
 ### Décomposition de CMS-05
 
@@ -262,3 +263,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.16 | 2026-10-21 | Relèvement Go 1.25 et mises à niveau sécurité pgx v5.9.2/x-text v0.41.0 ; govulncheck ne trouve plus de vulnérabilité atteignable. Ajout de timeouts HTTP. Tests Go 1.25, vet, intégrations PostgreSQL/Compose et Playwright passent localement. Gosec SQL G201/G202 à zéro ; 22 alertes gosec générales restent à trier. Validation Windows Go 1.25 en CI et revue sécurité indépendante à venir ; QP-10 repasse en vérification. | En attente du responsable qualité |
 | 3.17 | 2026-10-21 | Go 1.25.0 aligné dans `go.mod`, Compose et documentation ; pgx v5.9.2/x-text v0.41.0 corrigent les avis atteignables. Timeouts HTTP CMS ajoutés. Tests/vet, intégrations PostgreSQL Compose et Playwright passent sous Go 1.25 ; govulncheck atteint zéro finding, G114 corrigée. La CI Windows Go 1.25 reste à exécuter après push ; 22 alertes gosec non SQL restent à trier. | En attente du responsable qualité |
 | 3.18 | 2026-10-21 | Garde-fou ajouté : le store applicatif refuse `default_query_exec_mode=simple_protocol` dans `DATABASE_URL`, avec test sans connexion ; le migrateur conserve son usage simple uniquement pour le SQL embarqué. `go test`/`go vet` Go 1.25, intégrations PostgreSQL Compose, CMS et Playwright passent ; govulncheck ne trouve aucune vulnérabilité atteignable. Reste la CI Windows sous Go 1.25, l’audit indépendant et le tri des 22 alertes gosec restantes. | En attente du responsable qualité |
+| 3.19 | 2026-10-23 | CMS-08 démarré : outbox de confirmation créée dans la transaction checkout, worker SMTP séparé, STARTTLS/TLS implicite et retries, profil Mailpit pour développement. L’envoi réel et l’exploitation du MTA attendent un choix de domaine et d’hébergement. | En attente du responsable qualité |

@@ -363,17 +363,29 @@ PostgreSQL soient disponibles ; le volume avait été conservé, sans compte ni
 session admin. La suite de l’essai et l’état actuel de la stack sont documentés
 dans « Reprise CMS sur la machine locale — 20 octobre 2026 » ci-dessus.
 
-## Service de courriel intégré — à concevoir
+## Service de courriel transactionnel — première tranche
 
-Le CMS devra intégrer un service applicatif pour les courriels transactionnels
-et notifications. « Intégré » ne signifie pas qu’un serveur SMTP devra être
-embarqué : l’architecture envisagée garde événements, modèles, destinataires,
-reprises et journalisation dans le CMS, avec un adaptateur de remise configuré
-côté hôte et un mode local de développement/test. Aucun fournisseur ni choix
-de transport n’est arrêté. La file d’attente, les retries, l’idempotence, la
-localisation, la conformité et les limites anti-abus seront définis dans une
-phase de conception dédiée ; aucun secret ni accès réseau ne sera donné aux
-modules Wasm.
+Le checkout SQL enregistre maintenant un événement de confirmation dans une
+outbox au sein de la transaction de commande. Un processus distinct,
+`cmd/mail-worker`, rend un message texte/HTML localisé et le remet par SMTP
+avec STARTTLS obligatoire par défaut (ou TLS implicite), bail de traitement et
+huit tentatives au maximum avec délais exponentiels. Le mode sans TLS est
+réservé au développement. Les identifiants et le réseau SMTP restent côté hôte,
+hors des modules Wasm. PostgreSQL et MariaDB ont des migrations dédiées.
+
+Mailpit est ajouté au profil Compose `mail` pour un essai local isolé. Les tests
+unitaires couvrent le rendu, l’échappement HTML, la politique TLS, le protocole
+SMTP local et les transitions du worker ; le parcours d’intégration PostgreSQL
+vérifie la création atomique, la réclamation et l’état envoyé. Ce service n’a
+pas encore été déployé sur la base persistante et aucun courriel n’y a été
+envoyé.
+
+Le système est **en développement, pas encore opérationnel en production** :
+le domaine, l’hôte SMTP/MTA, l’adresse expéditeur et le DNS restent à choisir.
+La remise est au moins une fois (un arrêt après acceptation SMTP peut causer un
+doublon). Les messages restent stockés sans politique de rétention ; les
+rebonds, plaintes, supervision, limites d’envoi et mécanisme de rejeu restent à
+concevoir. Voir [`email-service.md`](email-service.md).
 
 ## État actuel du socle
 

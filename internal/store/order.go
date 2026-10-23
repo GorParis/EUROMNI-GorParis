@@ -540,6 +540,23 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 			return nil, err
 		}
 	}
+	confirmationOrder := &OrderView{
+		Number: orderNumber, Currency: currency,
+		Subtotal: subtotal.FloatString(4), ShippingTotal: shippingTotalText,
+		GrandTotal: total, Items: orderLines(lines),
+	}
+	confirmationPayload, err := makeOrderConfirmationPayload(confirmationOrder, details.Name, locale)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO email_outbox (
+			shop_id, order_id, event_type, idempotency_key, recipient, payload
+		)
+		VALUES ($1, $2, 'order_confirmation', $3, $4, $5::jsonb)
+	`, shopID, orderID, "order-confirmation:"+orderID, details.Email, string(confirmationPayload)); err != nil {
+		return nil, err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM cart_lines WHERE cart_id::text = $1`, cartID); err != nil {
 		return nil, err
 	}
