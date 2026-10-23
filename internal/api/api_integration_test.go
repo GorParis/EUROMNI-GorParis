@@ -243,6 +243,39 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	if orderList.Code != http.StatusOK || !strings.Contains(orderList.Body.String(), createdOrder.Data.ID) {
 		t.Fatalf("admin order list status/body = %d/%s; want checkout order", orderList.Code, orderList.Body)
 	}
+	unauthenticatedEmails := performAPIRequest(mux, http.MethodGet, "/v1/admin/emails", "", "")
+	if unauthenticatedEmails.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated email list status/body = %d/%s; want 401", unauthenticatedEmails.Code, unauthenticatedEmails.Body)
+	}
+	emailList := performAPIRequest(mux, http.MethodGet, "/v1/admin/emails?limit=10", staffAuthorization, "")
+	if emailList.Code != http.StatusOK || !strings.Contains(emailList.Body.String(), `"order_confirmation"`) ||
+		!strings.Contains(emailList.Body.String(), `"checkout@example.com"`) ||
+		!strings.Contains(emailList.Body.String(), `"order_number":"`) {
+		t.Fatalf("admin email list status/body = %d/%s; want the checkout confirmation", emailList.Code, emailList.Body)
+	}
+	var emailID string
+	if err := db.SQL.QueryRowContext(context.Background(), `
+		SELECT id::text FROM email_outbox WHERE order_id::text = $1 AND event_type = 'order_confirmation'
+	`, createdOrder.Data.ID).Scan(&emailID); err != nil {
+		t.Fatalf("read confirmation email ID: %v", err)
+	}
+	emailDetail := performAPIRequest(mux, http.MethodGet,
+		"/v1/admin/emails/"+emailID, staffAuthorization, "")
+	if emailDetail.Code != http.StatusOK ||
+		!strings.Contains(emailDetail.Body.String(), `"subject":"`) ||
+		!strings.Contains(emailDetail.Body.String(), `"text_body":"`) ||
+		!strings.Contains(emailDetail.Body.String(), `"payload":{`) {
+		t.Fatalf("admin email detail status/body = %d/%s; want rendered email preview", emailDetail.Code, emailDetail.Body)
+	}
+	invalidEmailPage := performAPIRequest(mux, http.MethodGet, "/v1/admin/emails?limit=0", staffAuthorization, "")
+	if invalidEmailPage.Code != http.StatusBadRequest {
+		t.Fatalf("invalid admin email page status/body = %d/%s; want 400", invalidEmailPage.Code, invalidEmailPage.Body)
+	}
+	foreignEmail := performAPIRequest(mux, http.MethodGet,
+		"/v1/admin/emails/00000000-0000-4000-8000-000000000099", staffAuthorization, "")
+	if foreignEmail.Code != http.StatusNotFound {
+		t.Fatalf("missing/foreign email detail status/body = %d/%s; want 404", foreignEmail.Code, foreignEmail.Body)
+	}
 	invalidOrderPage := performAPIRequest(mux, http.MethodGet, "/v1/admin/orders?limit=0", staffAuthorization, "")
 	if invalidOrderPage.Code != http.StatusBadRequest {
 		t.Fatalf("invalid order page status/body = %d/%s; want 400", invalidOrderPage.Code, invalidOrderPage.Body)
@@ -410,6 +443,11 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	supportOrders := performAPIRequest(mux, http.MethodGet, "/v1/admin/orders", "Bearer "+supportSession.Data.Token, "")
 	if supportOrders.Code != http.StatusOK {
 		t.Fatalf("support order list status/body = %d/%s; want 200", supportOrders.Code, supportOrders.Body)
+	}
+	supportEmails := performAPIRequest(mux, http.MethodGet, "/v1/admin/emails",
+		"Bearer "+supportSession.Data.Token, "")
+	if supportEmails.Code != http.StatusForbidden {
+		t.Fatalf("support email-list status/body = %d/%s; want 403", supportEmails.Code, supportEmails.Body)
 	}
 	supportCancel := performAPIRequest(mux, http.MethodPatch, "/v1/admin/orders/"+createdOrder.Data.ID+"/status",
 		"Bearer "+supportSession.Data.Token, `{"status":"cancelled"}`)

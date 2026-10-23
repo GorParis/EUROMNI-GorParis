@@ -114,7 +114,13 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 		`data-admin-tab="commandes"`,
 		`data-admin-tab="livraison"`,
 		`data-admin-tab="modules"`,
+		`data-admin-tab="emails"`,
+		`data-admin-tab="themes"`,
 		`data-admin-tab="equipe"`,
+		"Consultation des courriels",
+		"Historique de l’outbox",
+		"Chantier volontairement différé",
+		"parmi les derniers chantiers du projet",
 		"Préparer un essai boutique",
 	} {
 		if !strings.Contains(string(adminPage), feature) {

@@ -45,6 +45,107 @@ type EmailOutboxQueue interface {
 	RetryEmail(ctx context.Context, id string, availableAt time.Time, reason string, permanently bool) error
 }
 
+type AdminEmailOutboxEntry struct {
+	ID          string     `json:"id"`
+	OrderID     string     `json:"order_id"`
+	OrderNumber string     `json:"order_number"`
+	EventType   string     `json:"event_type"`
+	Recipient   string     `json:"recipient"`
+	Status      string     `json:"status"`
+	Attempts    int        `json:"attempts"`
+	CreatedAt   time.Time  `json:"created_at"`
+	SentAt      *time.Time `json:"sent_at,omitempty"`
+	LastError   string     `json:"last_error,omitempty"`
+}
+
+type AdminEmailOutboxDetail struct {
+	AdminEmailOutboxEntry
+	Payload json.RawMessage `json:"payload"`
+}
+
+type EmailOutboxAdminReader interface {
+	ListAdminEmails(ctx context.Context, shopID string, limit, offset int) ([]AdminEmailOutboxEntry, error)
+	GetAdminEmail(ctx context.Context, shopID, emailID string) (*AdminEmailOutboxDetail, error)
+}
+
+var _ EmailOutboxAdminReader = (*Store)(nil)
+
+func (s *Store) ListAdminEmails(ctx context.Context, shopID string, limit, offset int) ([]AdminEmailOutboxEntry, error) {
+	if s == nil || s.SQL == nil {
+		return nil, ErrEmailOutboxUnavailable
+	}
+	if limit < 1 || limit > 100 || offset < 0 || offset > 100000 {
+		return nil, errors.New("invalid email outbox pagination")
+	}
+	rows, err := s.SQL.QueryContext(ctx, `
+		SELECT e.id::text, e.order_id::text, COALESCE(o.number, ''), e.event_type,
+		       e.recipient, e.status, e.attempts, e.created_at, e.sent_at,
+		       COALESCE(e.last_error, '')
+		FROM email_outbox e
+		LEFT JOIN orders o ON o.id = e.order_id
+		WHERE e.shop_id = $1
+		ORDER BY e.created_at DESC, e.id DESC
+		LIMIT $2 OFFSET $3
+	`, shopID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	entries := make([]AdminEmailOutboxEntry, 0, limit)
+	for rows.Next() {
+		var entry AdminEmailOutboxEntry
+		var sentAt sql.NullTime
+		if err := rows.Scan(
+			&entry.ID, &entry.OrderID, &entry.OrderNumber, &entry.EventType,
+			&entry.Recipient, &entry.Status, &entry.Attempts, &entry.CreatedAt,
+			&sentAt, &entry.LastError,
+		); err != nil {
+			return nil, err
+		}
+		if sentAt.Valid {
+			entry.SentAt = &sentAt.Time
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func (s *Store) GetAdminEmail(ctx context.Context, shopID, emailID string) (*AdminEmailOutboxDetail, error) {
+	if s == nil || s.SQL == nil {
+		return nil, ErrEmailOutboxUnavailable
+	}
+	var detail AdminEmailOutboxDetail
+	var sentAt sql.NullTime
+	err := s.SQL.QueryRowContext(ctx, `
+		SELECT e.id::text, e.order_id::text, COALESCE(o.number, ''), e.event_type,
+		       e.recipient, e.status, e.attempts, e.created_at, e.sent_at,
+		       COALESCE(e.last_error, ''), e.payload
+		FROM email_outbox e
+		LEFT JOIN orders o ON o.id = e.order_id
+		WHERE e.shop_id = $1 AND e.id::text = $2
+	`, shopID, emailID).Scan(
+		&detail.ID, &detail.OrderID, &detail.OrderNumber, &detail.EventType,
+		&detail.Recipient, &detail.Status, &detail.Attempts, &detail.CreatedAt,
+		&sentAt, &detail.LastError, &detail.Payload,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if sentAt.Valid {
+		detail.SentAt = &sentAt.Time
+	}
+	if !json.Valid(detail.Payload) {
+		return nil, errors.New("stored email payload is invalid JSON")
+	}
+	return &detail, nil
+}
+
 func (s *Store) ClaimNextEmail(ctx context.Context, lease time.Duration) (*EmailOutboxMessage, error) {
 	if s == nil || s.SQL == nil || lease <= 0 {
 		return nil, ErrEmailOutboxUnavailable

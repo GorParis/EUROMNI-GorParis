@@ -26,6 +26,12 @@
   const staffList = document.querySelector("#staff-members");
   const orderList = document.querySelector("#orders");
   const orderDetail = document.querySelector("#order-detail");
+  const emailsPanel = document.querySelector("#emails-panel");
+  const emailsStatus = document.querySelector("#emails-status");
+  const emailsList = document.querySelector("#emails-list");
+  const emailDetail = document.querySelector("#email-detail");
+  const emailsPrevious = document.querySelector("#emails-previous");
+  const emailsNext = document.querySelector("#emails-next");
   const shippingPanel = document.querySelector("#shipping-panel");
   const shippingCarriers = document.querySelector("#shipping-carriers");
   const shippingServices = document.querySelector("#shipping-services");
@@ -45,6 +51,9 @@
   let editingBrand = null;
   let editingSupplier = null;
   let currentIdentity = null;
+  let emailOffset = 0;
+  let emailRequest = 0;
+  let emailDetailRequest = 0;
   let shippingConfig = { carriers: [], services: [], zones: [], rates: [] };
   let shippingHistoryFilter = { carrierCode: "", serviceCode: "", zoneCode: "" };
   let shippingHistoryOffset = 0;
@@ -97,6 +106,9 @@
     } else if (!updateHistory && window.location.hash !== hash) {
       window.history.replaceState(null, "", hash);
     }
+    if (selectedTab.dataset.adminTab === "emails" && !dashboard.hidden) {
+      loadAdminEmails(emailOffset);
+    }
   }
 
   function activateAdminTabFromHash() {
@@ -111,6 +123,9 @@
       shippingHistoryTargetsShopID = null;
       shippingHistoryTargetsGeneration += 1;
       shippingHistoryRequest += 1;
+      emailRequest += 1;
+      emailDetailRequest += 1;
+      emailOffset = 0;
     }
     currentIdentity = identity;
     loginPanel.hidden = true;
@@ -123,10 +138,12 @@
     document.querySelector("#orders-panel").hidden = !canViewOrders;
     shippingPanel.hidden = !canManageShipping;
     moduleSettingsPanel.hidden = !canManageShipping;
+    emailsPanel.hidden = !["owner", "admin"].includes(identity.role);
     document.querySelector("#tab-equipe").hidden = !isOwner;
     document.querySelector("#tab-commandes").hidden = !canViewOrders;
     document.querySelector("#tab-livraison").hidden = !canManageShipping;
     document.querySelector("#tab-modules").hidden = !canManageShipping;
+    document.querySelector("#tab-emails").hidden = !["owner", "admin"].includes(identity.role);
     document.querySelector('[data-admin-open-tab="commandes"]').closest("li").hidden = !canViewOrders;
     document.querySelector('[data-admin-open-tab="livraison"]').closest("li").hidden = !canManageShipping;
     document.querySelector("#identity").textContent =
@@ -142,6 +159,8 @@
     shippingHistoryTargetsShopID = null;
     shippingHistoryTargetsGeneration += 1;
     shippingHistoryRequest += 1;
+    emailRequest += 1;
+    emailDetailRequest += 1;
     try {
       sessionStorage.removeItem(tokenKey);
     } catch {
@@ -179,6 +198,124 @@
       delivered: "Livrée",
       returned: "Retournée",
     })[status] || status;
+  }
+
+  function emailEventLabel(eventType) {
+    return ({
+      order_confirmation: "Confirmation de commande",
+      order_status: "Mise à jour de commande",
+    })[eventType] || eventType;
+  }
+
+  function emailStatusLabel(emailStatus) {
+    return ({
+      pending: "En attente",
+      processing: "En cours d’envoi",
+      sent: "Envoyé",
+      failed: "Échec définitif",
+    })[emailStatus] || emailStatus;
+  }
+
+  function formatAdminDate(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? "—"
+      : new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(date);
+  }
+
+  async function loadAdminEmails(offset = 0) {
+    const requestID = ++emailRequest;
+    emailsStatus.textContent = "Chargement de l’historique…";
+    emailsStatus.dataset.kind = "info";
+    emailsPrevious.disabled = offset <= 0;
+    emailsNext.disabled = true;
+    try {
+      const page = await request(`/v1/admin/emails?limit=50&offset=${offset}`);
+      if (requestID !== emailRequest) return;
+      emailOffset = page.offset;
+      emailsList.replaceChildren();
+      emailDetail.replaceChildren();
+      emailDetail.hidden = true;
+      if (page.emails.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = "Aucun courriel enregistré dans l’outbox de cette boutique.";
+        emailsList.append(empty);
+      }
+      for (const email of page.emails) {
+        const card = document.createElement("article");
+        card.className = "card";
+        const heading = document.createElement("h3");
+        heading.textContent = `${emailEventLabel(email.event_type)} · ${email.order_number || "Commande inconnue"}`;
+        const summary = document.createElement("p");
+        summary.className = "muted";
+        summary.textContent = `${email.recipient} · ${emailStatusLabel(email.status)} · ${email.attempts} tentative(s) · créé ${formatAdminDate(email.created_at)}`;
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const view = document.createElement("button");
+        view.type = "button";
+        view.className = "secondary";
+        view.textContent = "Consulter le contenu";
+        view.addEventListener("click", () => showAdminEmailDetail(email.id));
+        actions.append(view);
+        card.append(heading, summary, actions);
+        emailsList.append(card);
+      }
+      emailsPrevious.disabled = emailOffset <= 0;
+      emailsNext.disabled = !page.has_more;
+      emailsStatus.textContent = page.emails.length
+        ? `${page.emails.length} courriel(s) affiché(s), à partir de la position ${emailOffset + 1}.`
+        : "Fin de l’historique.";
+    } catch (error) {
+      if (requestID !== emailRequest) return;
+      emailsList.replaceChildren();
+      emailsStatus.textContent = error.message;
+      emailsStatus.dataset.kind = "error";
+    }
+  }
+
+  async function showAdminEmailDetail(emailID) {
+    const requestID = ++emailDetailRequest;
+    emailDetail.hidden = false;
+    emailDetail.replaceChildren();
+    const loading = document.createElement("p");
+    loading.className = "muted";
+    loading.textContent = "Chargement du courriel…";
+    emailDetail.append(loading);
+    try {
+      const email = await request(`/v1/admin/emails/${encodeURIComponent(emailID)}`);
+      if (requestID !== emailDetailRequest) return;
+      emailDetail.replaceChildren();
+      const heading = document.createElement("h2");
+      heading.textContent = email.subject || emailEventLabel(email.event_type);
+      const metadata = document.createElement("p");
+      metadata.className = "muted";
+      metadata.textContent = `À : ${email.recipient} · ${emailStatusLabel(email.status)} · ${email.attempts} tentative(s) · créé ${formatAdminDate(email.created_at)}${email.sent_at ? ` · envoyé ${formatAdminDate(email.sent_at)}` : ""}`;
+      const order = document.createElement("p");
+      order.textContent = `Commande : ${email.order_number || "inconnue"} (${email.order_id})`;
+      const previewTitle = document.createElement("h3");
+      previewTitle.textContent = "Aperçu texte";
+      const body = document.createElement("pre");
+      body.style.whiteSpace = "pre-wrap";
+      body.style.overflowWrap = "anywhere";
+      body.textContent = email.text_body || JSON.stringify(email.payload, null, 2);
+      emailDetail.append(heading, metadata, order);
+      if (email.last_error) {
+        const failure = document.createElement("p");
+        failure.dataset.kind = "error";
+        failure.textContent = `Dernière erreur : ${email.last_error}`;
+        emailDetail.append(failure);
+      }
+      emailDetail.append(previewTitle, body);
+    } catch (error) {
+      if (requestID !== emailDetailRequest) return;
+      emailDetail.replaceChildren();
+      const failure = document.createElement("p");
+      failure.dataset.kind = "error";
+      failure.textContent = error.message;
+      emailDetail.append(failure);
+    }
   }
 
   function orderLifecycleLabel(eventType) {
@@ -1493,6 +1630,9 @@
       adminTabs.find((tab) => tab.dataset.adminTab === shortcut.dataset.adminOpenTab && !tab.hidden)?.focus();
     });
   }
+  document.querySelector("#refresh-emails").addEventListener("click", () => loadAdminEmails(emailOffset));
+  emailsPrevious.addEventListener("click", () => loadAdminEmails(Math.max(0, emailOffset - 50)));
+  emailsNext.addEventListener("click", () => loadAdminEmails(emailOffset + 50));
   window.addEventListener("popstate", activateAdminTabFromHash);
 
   productForm.addEventListener("submit", async (event) => {

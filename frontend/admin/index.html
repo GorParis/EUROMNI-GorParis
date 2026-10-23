@@ -135,6 +135,8 @@
           <button id="tab-commandes" type="button" role="tab" aria-controls="tab-panel-commandes" aria-selected="false" data-admin-tab="commandes" tabindex="-1">Commandes</button>
           <button id="tab-livraison" type="button" role="tab" aria-controls="tab-panel-livraison" aria-selected="false" data-admin-tab="livraison" tabindex="-1" hidden>Livraison</button>
           <button id="tab-modules" type="button" role="tab" aria-controls="tab-panel-modules" aria-selected="false" data-admin-tab="modules" tabindex="-1" hidden>Modules</button>
+          <button id="tab-emails" type="button" role="tab" aria-controls="tab-panel-emails" aria-selected="false" data-admin-tab="emails" tabindex="-1" hidden>Courriels</button>
+          <button id="tab-themes" type="button" role="tab" aria-controls="tab-panel-themes" aria-selected="false" data-admin-tab="themes" tabindex="-1">Thèmes</button>
           <button id="tab-equipe" type="button" role="tab" aria-controls="tab-panel-equipe" aria-selected="false" data-admin-tab="equipe" tabindex="-1" hidden>Équipe</button>
         </nav>
         <section id="tab-panel-boutique" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-boutique" data-admin-panel="boutique">
@@ -296,6 +298,31 @@
           </div>
           <section id="shipping-history-comparison" class="card" hidden aria-live="polite"></section>
         </section>
+        </section>
+        <section id="tab-panel-emails" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-emails" data-admin-panel="emails" hidden>
+          <section id="emails-panel" class="panel" hidden>
+            <h1>Consultation des courriels</h1>
+            <p class="muted">Historique de l’outbox : état de remise, tentatives et destinataire. Le contenu est un aperçu rendu avec le gabarit actuel; aucun courriel n’est renvoyé depuis cette page.</p>
+            <p id="emails-status" class="status" role="status" aria-live="polite"></p>
+            <div class="actions">
+              <button id="refresh-emails" class="secondary" type="button">Actualiser</button>
+              <button id="emails-previous" class="secondary" type="button" disabled>Plus récents</button>
+              <button id="emails-next" class="secondary" type="button" disabled>Plus anciens</button>
+            </div>
+            <div id="emails-list" class="product-list"></div>
+            <section id="email-detail" class="card" hidden></section>
+          </section>
+        </section>
+        <section id="tab-panel-themes" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-themes" data-admin-panel="themes" hidden>
+          <section class="panel">
+            <h1>Thèmes</h1>
+            <article class="card">
+              <h2>Chantier volontairement différé</h2>
+              <p><strong>La création et la personnalisation des thèmes seront parmi les derniers chantiers du projet.</strong></p>
+              <p class="muted">Nous terminerons d’abord les fonctions essentielles de la boutique — commandes, paiements, livraison, courriels et administration. Les thèmes seront conçus ensuite, sur une base fonctionnelle stabilisée, pour éviter de refaire le travail visuel à chaque évolution.</p>
+              <p class="muted">Aucun réglage de thème n’est disponible ici pour le moment.</p>
+            </article>
+          </section>
         </section>
         <section id="tab-panel-modules" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-modules" data-admin-panel="modules" hidden>
         <section id="module-settings-panel" class="panel" hidden>

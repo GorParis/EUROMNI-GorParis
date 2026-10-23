@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"euromni/internal/mailer"
 	"euromni/internal/seed"
 	"euromni/internal/store"
 	"io"
@@ -276,6 +277,17 @@ func withOrderWriteAuth(next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
+func withEmailReadAuth(next http.HandlerFunc) http.HandlerFunc {
+	return withStaffAuth(func(w http.ResponseWriter, r *http.Request) {
+		session, ok := adminSessionFromContext(r.Context())
+		if !ok || (session.Role != "owner" && session.Role != "admin") {
+			writePrivateJSON(w, http.StatusForbidden, map[string]any{"error": "email history read permission required"})
+			return
+		}
+		next(w, r)
+	})
+}
+
 func adminOrders(w http.ResponseWriter, r *http.Request) {
 	session, _ := adminSessionFromContext(r.Context())
 	reader, ok := currentProductReader().(store.OrderAdminReader)
@@ -324,6 +336,105 @@ func adminOrderDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writePrivateJSON(w, http.StatusOK, map[string]any{"data": order})
+}
+
+func adminEmails(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	reader, ok := currentProductReader().(store.EmailOutboxAdminReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "email history unavailable"})
+		return
+	}
+	limit, offset := 50, 0
+	var err error
+	if value := r.URL.Query().Get("limit"); value != "" {
+		limit, err = strconv.Atoi(value)
+		if err != nil || limit < 1 || limit > 100 {
+			writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "limit must be between 1 and 100"})
+			return
+		}
+	}
+	if value := r.URL.Query().Get("offset"); value != "" {
+		offset, err = strconv.Atoi(value)
+		if err != nil || offset < 0 || offset > 100000 {
+			writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "offset must be between 0 and 100000"})
+			return
+		}
+	}
+	emails, err := reader.ListAdminEmails(r.Context(), session.ShopID, limit, offset)
+	if err != nil {
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "email history could not be read"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+		"emails": emails, "limit": limit, "offset": offset, "has_more": len(emails) == limit,
+	}})
+}
+
+type adminEmailDetailResponse struct {
+	store.AdminEmailOutboxDetail
+	Subject  string `json:"subject"`
+	TextBody string `json:"text_body"`
+}
+
+func adminEmailDetail(w http.ResponseWriter, r *http.Request) {
+	session, _ := adminSessionFromContext(r.Context())
+	reader, ok := currentProductReader().(store.EmailOutboxAdminReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "email history unavailable"})
+		return
+	}
+	email, err := reader.GetAdminEmail(r.Context(), session.ShopID, r.PathValue("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "email not found"})
+		default:
+			writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "email could not be read"})
+		}
+		return
+	}
+	preview, err := previewAdminEmail(email)
+	if err != nil {
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "email preview could not be rendered"})
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": adminEmailDetailResponse{
+		AdminEmailOutboxDetail: *email,
+		Subject:                preview.Subject, TextBody: preview.TextBody,
+	}})
+}
+
+func previewAdminEmail(email *store.AdminEmailOutboxDetail) (mailer.Message, error) {
+	switch email.EventType {
+	case "order_confirmation":
+		var payload store.OrderConfirmationPayload
+		if err := decodeStoredEmailPayload(email.Payload, &payload); err != nil {
+			return mailer.Message{}, err
+		}
+		return mailer.RenderOrderConfirmation(payload, email.Recipient, "")
+	case "order_status":
+		var payload store.OrderStatusPayload
+		if err := decodeStoredEmailPayload(email.Payload, &payload); err != nil {
+			return mailer.Message{}, err
+		}
+		return mailer.RenderOrderStatus(payload, email.Recipient, "")
+	default:
+		return mailer.Message{}, errors.New("unsupported email event type")
+	}
+}
+
+func decodeStoredEmailPayload(payload []byte, target any) error {
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return errors.New("stored email payload contains trailing JSON")
+	}
+	return nil
 }
 
 func adminOrderStatus(w http.ResponseWriter, r *http.Request) {

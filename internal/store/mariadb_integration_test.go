@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -286,6 +287,11 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	}
 	if err := store.MarkEmailSent(ctx, mailMessage.ID); err != nil {
 		t.Fatalf("mark MariaDB order email event as sent: %v", err)
+	}
+	emailDetail, err := store.GetAdminEmail(ctx, seed.ShopID, mailMessage.ID)
+	if err != nil || emailDetail.OrderID != order.ID || emailDetail.Status != "sent" ||
+		!json.Valid(emailDetail.Payload) {
+		t.Fatalf("read MariaDB email history detail: detail=%+v error=%v", emailDetail, err)
 	}
 	adminOrder, err := store.GetAdminOrder(ctx, seed.ShopID, order.ID)
 	if err != nil {

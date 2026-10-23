@@ -93,6 +93,8 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/admin/staff/{id}", withOwnerAuth(adminStaffRemove))
 	mux.HandleFunc("GET /v1/admin/orders", withOrderReadAuth(adminOrders))
 	mux.HandleFunc("GET /v1/admin/orders/{id}", withOrderReadAuth(adminOrderDetail))
+	mux.HandleFunc("GET /v1/admin/emails", withEmailReadAuth(adminEmails))
+	mux.HandleFunc("GET /v1/admin/emails/{id}", withEmailReadAuth(adminEmailDetail))
 	mux.HandleFunc("POST /v1/admin/orders/{id}/payments/manual", withOrderWriteAuth(adminOrderManualPayment))
 	mux.HandleFunc("POST /v1/admin/orders/{id}/supplier-sync", withOrderWriteAuth(adminOrderSupplierSync))
 	mux.HandleFunc("POST /v1/admin/orders/{id}/lifecycle", withOrderWriteAuth(adminOrderLifecycle))

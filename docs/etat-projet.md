@@ -404,9 +404,9 @@ aucun encaissement ; aucun prestataire réel n’est intégré. Le détail des
 capacités vendeur et acheteur est décrit dans [le contrat API](api.md) et
 [la documentation de la vitrine](../frontend/README.md).
 
-## Cycle commun de traitement des commandes — travail en cours
+## Cycle commun de traitement des commandes — premier incrément livré localement
 
-Le prochain incrément étend le parcours d’une commande payée aux étapes
+Le premier incrément étend le parcours d’une commande payée aux étapes
 traitement, préparation, expédition et livraison. Les changements de statut
 sont séquencés, horodatés, affichés dans le détail admin et mettent en file une
 notification au client dans la même transaction. Le parcours mémoire local
@@ -418,6 +418,15 @@ peut être simulé ou confirmé manuellement, l’adaptateur fournisseur existan
 est un mock, et l’étape « livrée » est encore confirmée par l’équipe. Les
 webhooks réels de paiement/fournisseur/transporteur et une page de suivi client
 restent à intégrer.
+
+## Interface d’administration — pages Thèmes et Courriels
+
+La page « Thèmes » signale explicitement que la personnalisation graphique sera
+parmi les derniers chantiers, après stabilisation des fonctions commerciales.
+La page « Courriels » permet aux rôles owner/admin de consulter l’outbox, l’état
+et les tentatives de remise ainsi qu’un aperçu texte du contenu. Elle ne permet
+pas le renvoi de messages. L’aperçu utilise le gabarit courant, pas une copie
+MIME exacte de ce qui a été émis.
 
 ## Dernier point de reprise — sauvegarde MariaDB (19 octobre 2026)
 
