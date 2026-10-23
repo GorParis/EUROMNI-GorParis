@@ -31,6 +31,31 @@ pas une preuve que l'arbre de travail est propre.
   ponctuelle par âge de fichier, mais aucune durée ou fréquence automatique
   n'est définie. Ne pas l'activer en production avant décision sur ces contrôles
   et revue de sécurité.
+- Une copie WooCommerce exportée a été restaurée le 23 octobre 2026 par
+  Duplicator Lite 5.0.4 dans une sandbox Podman persistante distincte,
+  WordPress 6.9.2 / PHP 8.3 / MariaDB 11.8.8, à
+  `http://127.0.0.1:18083`. Le réseau `euromni-woo-sandbox` est interne,
+  les connexions sortantes ont été vérifiées bloquées, WP HTTP externe, cron
+  et mises à jour sont désactivés ; les volumes et le redémarrage persistent.
+  L’import a atteint l’écran final avec les validations au vert ; les fichiers
+  générés `installer.php`, `dup-installer/`, le journal de démarrage et l’archive
+  recopiée dans le document-root ont été supprimés manuellement. L’accès à
+  `/wp-admin/` est ouvert avec le compte administrateur local temporaire
+  `sandbox-review`, créé car les identifiants restaurés ne sont pas disponibles.
+  L’utilisateur doit changer ce mot de passe depuis son profil ; ne pas consigner
+  le secret. L’export source sous `/home/fedobastian/woo` est intact.
+  L’utilisateur a déclaré l’export assaini, mais il n’a pas été audité
+  indépendamment : conserver sa confidentialité, ne pas demander ou noter de
+  credentials. Voir les détails et les limites dans
+  [`etat-projet.md`](etat-projet.md) et
+  [`module-validation-progress.md`](module-validation-progress.md).
+- Cette installation de référence sert à étudier le comportement réel du
+  plugin Selfnamed et à orienter l’ingestion/traduction future de modules ;
+  elle ne représente ni une importation EUROMNI ni une traduction Wasm du plugin.
+  Maintenir les intégrations, paiements, e-mails et toute sortie réseau
+  désactivés. La prochaine étape après finalisation est une inspection
+  non-destructive de versions, hooks, flux catalogue/transport/commande et
+  dépendances réseau, puis un test ciblé avec mock.
 - Le back-office est organisé en six sections (Boutique, Catalogue, Commandes,
   Livraison, Modules et Équipe). Le parcours Chromium du 23 octobre a exercé les
   principales actions sur un CMS et une base PostgreSQL 16 jetables ; les

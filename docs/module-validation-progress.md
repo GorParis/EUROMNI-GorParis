@@ -229,6 +229,62 @@ credentials réels est reportée à une décision distincte et devra utiliser de
 credentials de test, des données synthétiques et une sortie réseau explicitement
 autorisée et limitée.
 
+## Copie locale WooCommerce de référence — 23 octobre 2026
+
+Pour compléter le pilote synthétique, une copie exportée d’une boutique
+WooCommerce de l’utilisateur a été restaurée dans une instance WordPress locale
+persistante via Duplicator Lite 5.0.4. Le ZIP de 439 684 531 octets a passé
+`unzip -tq`, et `installer.php` a passé `php -l` dans le conteneur avant
+l’installation. Duplicator a terminé l’extraction et la migration sur
+WordPress 6.9.2 / PHP 8.3 et MariaDB 11.8.8 ; les résultats affichés pour les
+fichiers, la base, le search/replace et les plugins sont au vert. L’URL source
+`https://comte-bastian.fr/shop` a été remplacée par `http://127.0.0.1:18083`.
+
+La sandbox `euromni-woo-sandbox` est séparée du CMS EUROMNI, placée sur un réseau
+Podman `internal`, avec accès web uniquement via `127.0.0.1:18083`, volumes
+persistants et redémarrage rootless configuré. Les connexions TCP sortantes ont
+été testées comme bloquées ; `WP_HTTP_BLOCK_EXTERNAL`, WP-Cron et les mises à
+jour automatiques sont désactivés. L’utilisateur a déclaré l’export assaini,
+sans audit indépendant de son contenu ; garder les données confidentielles et
+ne pas ajouter de credentials au dépôt ou aux notes.
+
+**Nettoyage de l’installateur :** après l’écran « Step 2 of 2: Test Site » et les
+validations au vert, les fichiers générés `installer.php`, `dup-installer/`,
+le journal de démarrage et l’archive copiée dans le document-root ont été
+retirés manuellement de la sandbox ; l’export source reste intact. L’accès à
+`/wp-admin/` est maintenant ouvert dans une session authentifiée avec le compte
+administrateur local temporaire `sandbox-review`, créé car les identifiants du
+compte restauré ne sont pas disponibles. L’utilisateur doit remplacer son mot
+de passe depuis son profil ; aucun mot de passe n’est consigné. Maintenir
+l’isolement réseau, les paiements, e-mails, cron et intégrations externes
+désactivés.
+
+### Valeur pour la validation des modules
+
+Cette boutique devient un oracle comportemental local pour confronter le plugin
+Selfnamed original au pilote mock précédent et aux hypothèses de traduction :
+inventaire réel des versions/plugins, flux de synchronisation produits, données
+de livraison et export de commande, hooks, appels API, idempotence et effets de
+bord. La suite recommandée est une inspection statique/lecture seule, puis des
+tests avec données synthétiques et mock local, en observant les requêtes sans
+autoriser de sortie réseau. Prioriser une capacité non financière et bornée
+(par exemple la lecture/synchronisation catalogue) avant de considérer
+l’export de commandes.
+
+La copie locale ne prouve pas l’import ou l’exécution EUROMNI : le pilote natif
+Selfnamed avec mock, le pilote Wasm WooCommerce de tri et la traduction du ZIP
+PrestaShop `ps_newproducts` sont trois voies distinctes. La traduction du plugin
+Selfnamed en Wasm reste à concevoir et ne doit pas être supposée générique.
+
+Un décompte local, sans lecture de titres ni de credentials, a trouvé 17 produits
+WooCommerce dont 16 portent le marqueur `_selfnamed_product_id`. Le plugin copié
+est en version `2.0.19` et requiert une clé API Bearer pour lire
+`GET https://ds-api.selfnamed.com/products`; il crée les nouveaux produits en
+brouillon et tente de télécharger séparément leurs images. Aucun appel distant
+n’a été fait : l’API n’est pas nécessaire pour commencer l’inspection des
+produits déjà restaurés, et l’isolement réseau doit rester actif pendant ces
+premiers essais.
+
 Les fixtures PrestaShop sont des snapshots des dépôts officiels GitHub, épinglés aux commits `359cd5c86c498964d9c38c97db9fcd13d73be3fe`, `d1bac20a8b5a4664759db5c6775be9b426ad4b62` et `72e9476406319cbb91ac383121ca9967dc61f277`. Elles valident l'analyse statique des fichiers PHP réels. Le ZIP source `ps_newproducts` passe maintenant par l’ingestion bornée décrite plus haut ; cela ne couvre pas le paquet de distribution PrestaShop Addons.
 
 La référence de compatibilité est la documentation développeur PrestaShop [`9.x`](https://devdocs.prestashop-project.org/9/modules/concepts/hooks/), qui décrit l’enregistrement, les familles `action` / `display` et les méthodes handler. Les fixtures montrent une exception (`paymentOptions`) qui reste sans sémantique déduite. Aucune documentation développeur publique `10.x` n’a été trouvée au 13 octobre 2026 ; PS10 n’est donc pas déclaré compatible.

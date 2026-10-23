@@ -318,6 +318,67 @@ un achat ou une expédition chez Selfnamed. Toute étape ultérieure avec des
 credentials réels exigera une décision distincte, des credentials de test et
 une politique d’accès réseau explicitement limitée.
 
+### Boutique WooCommerce de référence restaurée localement — 23 octobre 2026
+
+Une seconde voie de validation est maintenant disponible : une copie exportée
+de la boutique WooCommerce de l’utilisateur a été restaurée avec Duplicator
+Lite 5.0.4 dans une instance WordPress locale persistante. L’archive ZIP
+Duplicator de 439 684 531 octets et `installer.php` ont passé respectivement
+le contrôle d’intégrité ZIP et la vérification syntaxique PHP avant exécution.
+La copie a été déployée sur `http://127.0.0.1:18083` avec WordPress 6.9.2 /
+PHP 8.3 et MariaDB 11.8.8 ; Duplicator a rapporté les validations fichiers,
+migration SQL et recherche/remplacement comme bonnes. Le site source affichait
+`SERENIS` et `https://comte-bastian.fr/shop` ; l’URL cible a été remplacée par
+l’adresse localhost. Il s’agit d’une copie de test de la boutique WooCommerce,
+pas d’un déploiement EUROMNI ni d’un nouveau build Wasm.
+
+L’environnement est distinct de la stack CMS EUROMNI : réseau Podman interne
+`euromni-woo-sandbox`, aucun port de base publié, port web lié à
+`127.0.0.1:18083`, volumes WordPress/MariaDB persistants et politique
+`unless-stopped`. Le service rootless Podman et le linger de l’utilisateur
+sont activés pour le redémarrage après déconnexion/reboot. Les connexions TCP
+sortantes du conteneur ont été vérifiées comme bloquées ; WordPress bloque
+aussi son API HTTP externe, WP-Cron et les mises à jour automatiques sont
+désactivés. Les limites PHP locales sont réglées pour l’import de grandes
+archives. L’archive originale reste dans `/home/fedobastian/woo` et n’a pas
+été modifiée.
+
+**État à reprendre :** après la migration réussie, les fichiers générés
+`installer.php`, `dup-installer/`, le journal de démarrage et la copie de
+l’archive dans le document-root ont été supprimés manuellement de la sandbox ;
+l’archive originale sous `/home/fedobastian/woo` est intacte. Le compte WordPress
+restauré n’étant pas connu, un compte administrateur local temporaire
+`sandbox-review` a été créé et utilisé pour ouvrir le tableau de bord. La session
+est ouverte à `http://127.0.0.1:18083/wp-admin/` ; l’utilisateur doit remplacer
+le mot de passe temporaire depuis son profil avant de poursuivre. Aucun mot de
+passe n’est consigné. Les paiements, courriels, tâches planifiées et
+intégrations externes doivent rester désactivés jusqu’à définition d’un scénario
+local contrôlé. L’utilisateur a indiqué que l’export était assaini, mais le
+contenu n’a pas fait l’objet d’un audit indépendant : continuer à traiter les
+données restaurées comme confidentielles. Ne pas consigner ni demander de
+credentials.
+
+Cette copie fournit une référence réelle utile pour la prochaine étape
+d’ingestion de modules : inventorier les versions et extensions présentes,
+observer les flux produits, transport et commande de Selfnamed, identifier les
+hooks/API et dépendances externes, puis choisir un comportement non financier
+précis à reproduire ou à traduire. Elle peut aider à confronter l’analyse
+statique et les fixtures aux comportements observables du plugin original.
+Elle ne constitue pas une preuve d’ingestion, de transpilation ou d’exécution
+Wasm du plugin Selfnamed par EUROMNI ; cette traduction n’est pas encore prise
+en charge. L’accès externe restant bloqué, le plugin ne pourra pas joindre
+Selfnamed depuis cette sandbox sans évolution délibérée de la politique réseau.
+
+Un contrôle local limité aux décomptes a trouvé 17 produits WooCommerce, dont
+16 portent le marqueur de synchronisation du plugin Selfnamed ; aucun titre,
+contenu de produit ou secret n’a été lu pour ce contrôle. La copie contient
+donc déjà de la matière pour inspecter et discuter le mapping produits, sans
+connexion à l’API. Le plugin installé est en version `2.0.19` ; son code appelle
+`GET https://ds-api.selfnamed.com/products` avec un bearer token et crée les
+nouveaux produits en brouillon. L’import d’images fait des requêtes séparées
+aux URLs d’image. Aucun appel API réel n’a été effectué et la sortie réseau
+reste bloquée : ne pas l’ouvrir simplement pour contourner la connexion Google.
+
 ## Adaptation native CMS — synchronisation Selfnamed simulée
 
 Le CMS dispose maintenant d’un premier flux natif d’envoi fournisseur, distinct
