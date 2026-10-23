@@ -46,6 +46,27 @@ Requête :
 - taille max : 16 KiB
 - montants : **string** (`"89.0000"`), jamais un float JSON
 
+## Prévisualisation catalogue Selfnamed (prototype)
+
+`catalog.supplier.product.preview` accepte un champ `product_json` qui contient
+le JSON d’un produit Selfnamed sous forme de chaîne. Il exige `id`, `name`,
+`price`, `volume`, `weight` et `isInStock`. L’entrée fournisseur est limitée à
+8 KiB ; `id` et `price` doivent être des nombres JSON (pas des chaînes),
+`id` est un entier positif d’au plus 20 chiffres et `price` accepte au plus
+12 chiffres entiers et 4 décimales. Les poids/volumes négatifs ou hors bornes
+sont refusés. Les champs image sont ignorés et aucun téléchargement n’est effectué.
+La réponse expose l’identifiant fournisseur, le brouillon, le nom, la
+description, le prix décimal normalisé, le statut de stock sans quantité, le
+poids en grammes, le volume et les tags. La devise, la locale et l’unité du
+volume restent `null` et sont listées dans `unresolved`.
+
+Cet appel ne lit ni n’écrit aucune table : il ne fait qu’une projection bornée
+côté hôte vers une prévisualisation. Le guest Wasm transmet l’entrée à
+`euromni.call`; il ne contient pas de traduction PHP du plugin Selfnamed. La
+capability `catalog` reste requise par l’allowlist, mais aucun accès SQL,
+réseau ou filesystem n’est accordé par cet appel. Les images, catégories,
+publication persistante et synchronisation réelle restent hors périmètre.
+
 ## Liaison Wasmtime
 
 Un module chargé par le runtime est compilé, puis lancé via un export sans
@@ -151,7 +172,8 @@ Codes : `invalid`, `too_large`, `denied`, `not_found`, `unimplemented`, `interna
 
 - Pas de SQL, pas de DSN, pas d’HTTP ABI public (le contrat n’est pas une API REST anonyme).
 - `shop_id` uniquement depuis le contexte hôte ; mauvais shop → `not_found` (pas d’oracle d’existence).
-- Capability `catalog` obligatoire pour `catalog.product.get`.
+- Capability `catalog` obligatoire pour les calls catalogue, dont
+  `catalog.product.get` et `catalog.supplier.product.preview`.
 - UUID uniquement (rejet des payloads type injection).
 - Requêtes Postgres paramétrées (`$1`, `$2`) ; `status = 'active'` seulement (pas de brouillons).
 - Timeout hôte 2 s ; champs JSON inconnus refusés.
@@ -162,6 +184,7 @@ Codes : `invalid`, `too_large`, `denied`, `not_found`, `unimplemented`, `interna
 | Capability | Appels hôte | Tables |
 |------------|-------------|--------|
 | `catalog` | `catalog.product.list/get/upsert`, `catalog.category.list`, `catalog.variant.get`, `catalog.inventory.adjust` | `products`, `product_translations`, `product_categories`, `categories`, `category_translations`, `variants`, `prices`, `inventory_items`, `media`, `product_media` |
+| `catalog` | `catalog.supplier.product.preview` | *(aucune table : projection non persistée)* |
 | `cart` | `cart.get`, `cart.add_line`, `cart.update_line`, `cart.clear` | `carts`, `cart_lines` (+ lecture `variants`, `prices`) |
 | `order` | `order.list/get/place/set_status`, `order.shipment.upsert` | `orders`, `order_lines`, `payments`, `shipments`, `inventory_items`, `domain_events` |
 | `customer` | `customer.get/upsert`, `customer.address.list`, `customer.consent.set`, `session.get` | `customers`, `addresses`, `customer_consents`, `sessions` |

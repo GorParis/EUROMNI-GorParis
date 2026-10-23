@@ -5,12 +5,13 @@ from urllib.parse import parse_qs, urlparse
 
 
 TEST_TOKEN = "EUROMNI_LOCAL_FAKE_TOKEN_NOT_A_CREDENTIAL"
-with open("/app/catalog-product.json", encoding="utf-8") as fixture_file:
-    catalog_product = json.load(fixture_file)
+with open("/app/catalog-products.json", encoding="utf-8") as fixture_file:
+    catalog_products = json.load(fixture_file)
 state = {
     "product_lookups": 0,
     "product_lookup_ids": {},
     "catalog_product_lookups": 0,
+    "catalog_error_lookups": 0,
     "order_posts": 0,
     "payload_valid": False,
 }
@@ -43,7 +44,7 @@ class Handler(BaseHTTPRequestHandler):
             state["catalog_product_lookups"] += 1
             self.send_json(
                 200,
-                [catalog_product],
+                catalog_products,
                 {
                     "X-Pagination-Current-Page": "1",
                     "X-Pagination-Page-Count": "1",
@@ -51,6 +52,11 @@ class Handler(BaseHTTPRequestHandler):
                     "X-Pagination-Per-Page": "10",
                 },
             )
+            return
+
+        if path == "/unauthorized/products":
+            state["catalog_error_lookups"] += 1
+            self.send_json(401, {"message": "Unauthorized"})
             return
 
         if path.startswith("/products/"):
@@ -73,6 +79,7 @@ class Handler(BaseHTTPRequestHandler):
                     "product_lookups": state["product_lookups"],
                     "product_lookup_ids": state["product_lookup_ids"],
                     "catalog_product_lookups": state["catalog_product_lookups"],
+                    "catalog_error_lookups": state["catalog_error_lookups"],
                     "order_posts": state["order_posts"],
                     "payload_valid": state["payload_valid"],
                 },

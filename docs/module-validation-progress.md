@@ -232,22 +232,53 @@ autorisée et limitée.
 
 ### Caractérisation du mapping catalogue Selfnamed
 
-La fixture synthétique [`catalog-product.json`](../pipeline/selfnamed-pilot/catalog-product.json)
-alimente maintenant aussi le mock catalogue du pilote. Le test oracle Go
+La matrice de fixtures synthétiques [`catalog-products.json`](../pipeline/selfnamed-pilot/catalog-products.json)
+alimente maintenant aussi le mock catalogue du pilote. Elle couvre le cas
+nominal, le hors stock avec poids de 1 001 g et tags, puis un prix décimal
+minimal avec description vide. Le test oracle Go
 `TestSelfnamedCatalogProductMappingCharacterization` fige les champs observables
 depuis la source du plugin : création en brouillon, identifiant fournisseur,
 nom, description, prix recopié, gestion de stock désactivée, statut en stock,
-volume et conversion du poids `176 g` en `0.176 kg`. Il vérifie aussi le cas
-hors stock. Le pilote WordPress/WooCommerce rejoue cette fixture dans le plugin
-amont et contrôle les mêmes résultats ainsi que l’absence de doublon après
-réimport.
+volume et conversion des poids en kilogrammes. Le prix `17.40` ressort comme
+`17.4` et `0.10` comme `0.1` : le mock JSON et WooCommerce éliminent les zéros
+décimaux terminaux. Le pilote WordPress/WooCommerce contrôle les résultats,
+les tags, l’absence de doublon après réimport et le refus HTTP 401. Le flux
+commande/livraison du pilote existant passe également.
 
 Cette tranche caractérise le comportement ; elle n’est ni un mapper de production
 EUROMNI ni un build Wasm. Le pilote épingle désormais la même version Selfnamed
 `2.0.19` que la copie persistante, et vérifie que l’archive téléchargée déclare
-bien cette version. Aucun champ d’image n’est fourni dans la fixture pour éviter
-toute requête de téléchargement. La prochaine étape est de décider et tester
-une représentation IR explicite avant toute implémentation Wasm.
+bien cette version. Trois cas sont couverts : cas nominal, rupture de stock
+avec poids non entier en kg et tags, et prix décimal minimal avec description
+vide. Un refus HTTP 401 est aussi simulé ; aucune image n’est fournie, donc
+aucune requête de téléchargement ne peut partir. Les tests vérifiés sont
+`go test ./internal/pipeline -count=1` et
+`./pipeline/selfnamed-pilot/run.sh`.
+
+### Première prévisualisation Wasm catalogue Selfnamed
+
+Le call expérimental `catalog.supplier.product.preview` reçoit le JSON produit
+par le trigger IR, puis construit côté hôte un DTO de prévisualisation sans
+lecture ni écriture de table. La capability `catalog` est allowlistée, mais ce
+call n’a aucun accès réseau, filesystem ou catalogue persistant. L’entrée
+fournisseur est bornée à 8 KiB ; les images et champs hors périmètre sont
+ignorés. Le prix est normalisé comme dans la caractérisation WooCommerce
+(`17.40` → `17.4`, sans supprimer les zéros d’un entier). La réponse présente
+le produit comme brouillon et le poids en grammes ; devise, locale et unité du
+volume sont encore inconnues et apparaissent dans `unresolved`.
+
+`TestSelfnamedProductPreviewWasmRunsWithoutPersistence` compile un IR dynamique,
+vérifie que l’import Wasm est limité à `euromni.call`, publie puis charge le
+module installé dans Wasmtime et compare la sortie avec l’objet attendu ; le
+nombre de produits en base reste identique. Les tests d’hôte couvrent les
+entrées invalides, la limite de taille et l’absence de capability.
+
+Cette preuve valide une frontière ABI Wasm → hôte et un aperçu non persistant,
+pas la traduction de PHP ni l’équivalence complète du plugin Selfnamed. La
+caractérisation du plugin natif et le mapper hôte sont deux implémentations
+distinctes. Devise, locale et unité du volume doivent encore être décidées ;
+images/téléchargements, catégories, mise à jour de produits existants et
+publication active restent hors périmètre.
 
 ## Copie locale WooCommerce de référence — 23 octobre 2026
 

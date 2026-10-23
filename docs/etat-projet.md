@@ -321,14 +321,19 @@ un achat ou une expédition chez Selfnamed. Toute étape ultérieure avec des
 credentials réels exigera une décision distincte, des credentials de test et
 une politique d’accès réseau explicitement limitée.
 
-La caractérisation catalogue utilise une fixture synthétique sans image et
+La caractérisation catalogue utilise trois fixtures synthétiques sans image et
 vérifie dans la version alignée la création en brouillon, l’identifiant
 Selfnamed, le nom, la description, le prix, le stock non géré, le statut en
-stock, le volume et la conversion de 176 g vers 0,176 kg. Le cas hors stock et
-le réimport sans doublon sont également vérifiés. Le test oracle Go et le
-parcours d’intégration natif WordPress/WooCommerce passent ; aucun appel API
-réel n’est effectué. Ce résultat reste une caractérisation native, pas une
-traduction Wasm. Voir le détail reproductible dans
+stock, les tags, le volume et les conversions de poids. Le cas hors stock, le
+prix décimal, le refus HTTP 401 et le réimport sans doublon sont également
+vérifiés. Le test oracle Go et le parcours d’intégration natif
+WordPress/WooCommerce passent ; aucun appel API réel n’est effectué. Ce résultat
+reste une caractérisation native, pas une traduction Wasm. Un prototype Wasm
+distinct exécute maintenant un appel ABI qui transmet une fixture synthétique
+à un mapper de prévisualisation côté hôte ; il n’écrit pas le catalogue et ne
+traduit ni n’exécute le PHP du plugin. Le modèle catalogue EUROMNI ne proposant
+pas encore de statut brouillon dans son chemin d’écriture, toute publication
+persistante reste interdite pour cette étape. Voir le détail reproductible dans
 [`module-validation-progress.md`](module-validation-progress.md#caractérisation-du-mapping-catalogue-selfnamed).
 
 ### Boutique WooCommerce de référence restaurée localement — 23 octobre 2026
@@ -377,10 +382,11 @@ observer les flux produits, transport et commande de Selfnamed, identifier les
 hooks/API et dépendances externes, puis choisir un comportement non financier
 précis à reproduire ou à traduire. Elle peut aider à confronter l’analyse
 statique et les fixtures aux comportements observables du plugin original.
-Elle ne constitue pas une preuve d’ingestion, de transpilation ou d’exécution
-Wasm du plugin Selfnamed par EUROMNI ; cette traduction n’est pas encore prise
-en charge. L’accès externe restant bloqué, le plugin ne pourra pas joindre
-Selfnamed depuis cette sandbox sans évolution délibérée de la politique réseau.
+Elle ne constitue pas une preuve d’ingestion, de transpilation ou de traduction
+du plugin Selfnamed par EUROMNI ; seul un prototype Wasm de prévisualisation
+indépendant est testé avec des données synthétiques. L’accès externe restant
+bloqué, le plugin ne pourra pas joindre Selfnamed depuis cette sandbox sans
+évolution délibérée de la politique réseau.
 
 Un contrôle local limité aux décomptes a trouvé 17 produits WooCommerce, dont
 16 portent le marqueur de synchronisation du plugin Selfnamed ; aucun titre,

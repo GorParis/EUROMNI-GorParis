@@ -309,6 +309,8 @@ func operationInputSchema(call string) (map[string]string, bool) {
 		return map[string]string{}, true
 	case "catalog.product.get":
 		return map[string]string{"product_id": "uuid"}, true
+	case "catalog.supplier.product.preview":
+		return map[string]string{"product_json": "string"}, true
 	case "catalog.product.newest":
 		return map[string]string{}, true
 	case "catalog.product.sort":

@@ -15,36 +15,41 @@ update_option( 'selfnamed_order_sync_mode', 'manual' );
 
 $product_importer = new Selfnamed\Model\Product();
 pilot_assert( $product_importer->create_all_products( 1, 10 ), 'Selfnamed mock catalog import failed.' );
-$imported_products = wc_get_products(
+pilot_assert_catalog_product( 842002, 'Synthetic Catalog Balm', '28.82', '0.176', '176', 'instock' );
+pilot_assert_catalog_product( 842003, 'Synthetic Out-of-Stock Balm', '17.4', '1.001', '88', 'outofstock' );
+pilot_assert_catalog_product( 842004, 'Synthetic Decimal-Price Balm', '0.1', '1', '1', 'instock' );
+
+$tagged_product = get_posts(
 	array(
-		'limit'        => -1,
-		'meta_key'     => '_selfnamed_product_id',
-		'meta_value'   => 842002,
-		'meta_compare' => '=',
+		'post_type'   => 'product',
+		'post_status' => 'draft',
+		'numberposts' => 1,
+		'meta_key'    => '_selfnamed_product_id',
+		'meta_value'  => 842003,
 	)
 );
-pilot_assert( 1 === count( $imported_products ), 'Expected exactly one imported synthetic product.' );
-$imported_product = $imported_products[0];
-$imported_post    = get_post( $imported_product->get_id() );
-pilot_assert( 'draft' === $imported_post->post_status, 'Imported product was not kept in draft.' );
-pilot_assert( 'Synthetic Catalog Balm' === $imported_product->get_name(), 'Imported product name did not match.' );
-pilot_assert( 'Synthetic description used to characterize product mapping.' === $imported_product->get_description(), 'Imported product description did not match.' );
-pilot_assert( '28.82' === $imported_product->get_regular_price(), 'Imported regular price did not match.' );
-pilot_assert( '0.176' === $imported_product->get_weight(), 'Imported weight was not converted from grams to kilograms.' );
-pilot_assert( 'instock' === $imported_product->get_stock_status(), 'Imported stock status did not match.' );
-pilot_assert( false === $imported_product->get_manage_stock(), 'Imported product unexpectedly manages stock quantity.' );
-pilot_assert( '176' === get_post_meta( $imported_product->get_id(), '_volume', true ), 'Imported volume metadata did not match.' );
+pilot_assert(
+	1 === count( $tagged_product ) &&
+	array( 'edge-case', 'synthetic' ) === wp_get_object_terms( $tagged_product[0]->ID, 'product_tag', array( 'fields' => 'slugs' ) ),
+	'Imported product tags were not persisted.'
+);
 
 pilot_assert( $product_importer->create_all_products( 1, 10 ), 'Repeated Selfnamed mock catalog import failed.' );
-$reimported_products = wc_get_products(
-	array(
-		'limit'        => -1,
-		'meta_key'     => '_selfnamed_product_id',
-		'meta_value'   => 842002,
-		'meta_compare' => '=',
-	)
-);
-pilot_assert( 1 === count( $reimported_products ), 'Repeated catalog import created a duplicate product.' );
+foreach ( array( 842002, 842003, 842004 ) as $selfnamed_id ) {
+	$reimported_products = wc_get_products(
+		array(
+			'limit'        => -1,
+			'meta_key'     => '_selfnamed_product_id',
+			'meta_value'   => $selfnamed_id,
+			'meta_compare' => '=',
+		)
+	);
+	pilot_assert( 1 === count( $reimported_products ), sprintf( 'Repeated import created a duplicate for product %d.', $selfnamed_id ) );
+}
+
+update_option( 'selfnamed_api_url', 'http://mock-api:8080/unauthorized' );
+pilot_assert( false === $product_importer->create_all_products( 1, 10 ), 'Unauthorized catalog API was reported as a successful import.' );
+update_option( 'selfnamed_api_url', 'http://mock-api:8080' );
 
 update_option(
 	'_selfnamed_billing_information',
@@ -125,11 +130,36 @@ pilot_assert(
 		$assertions['product_lookup_ids']['842001'] ?? 0
 	)
 );
-pilot_assert(
-	2 === $assertions['catalog_product_lookups'],
-	sprintf( 'Expected two catalog lookups; got %d.', $assertions['catalog_product_lookups'] )
-);
+pilot_assert( 2 === $assertions['catalog_product_lookups'], 'Expected the initial import and re-import catalog requests.' );
+pilot_assert( 1 === $assertions['catalog_error_lookups'], 'Expected one simulated unauthorized catalog request.' );
 pilot_assert( 1 === $assertions['order_posts'], 'Expected exactly one order submission despite the repeated sync.' );
 pilot_assert( true === $assertions['payload_valid'], 'The synthetic buyer, product, or shipping data did not match the expected payload.' );
 
-WP_CLI::success( 'Isolated Selfnamed catalog mapping, order, and shipping flows passed; fake credential only, no external API.' );
+WP_CLI::success( 'Selfnamed 2.0.19 fixture matrix, failure path, idempotent re-import, and isolated order flow passed; fake credential only.' );
+
+function pilot_assert_catalog_product( int $selfnamed_id, string $name, string $price, string $weight, string $volume, string $stock_status ): void {
+	$products = wc_get_products(
+		array(
+			'limit'        => -1,
+			'meta_key'     => '_selfnamed_product_id',
+			'meta_value'   => $selfnamed_id,
+			'meta_compare' => '=',
+		)
+	);
+	pilot_assert( 1 === count( $products ), sprintf( 'Expected one WooCommerce product for Selfnamed ID %d.', $selfnamed_id ) );
+	$product = $products[0];
+	$post    = get_post( $product->get_id() );
+	pilot_assert( 'draft' === $post->post_status, sprintf( 'Product %d was not kept in draft.', $selfnamed_id ) );
+	pilot_assert( $name === $product->get_name(), sprintf( 'Product %d name mismatch.', $selfnamed_id ) );
+	pilot_assert(
+		$price === $product->get_regular_price(),
+		sprintf( 'Product %d regular price = %s, want %s.', $selfnamed_id, $product->get_regular_price(), $price )
+	);
+	pilot_assert(
+		$weight === $product->get_weight(),
+		sprintf( 'Product %d weight = %s, want %s.', $selfnamed_id, $product->get_weight(), $weight )
+	);
+	pilot_assert( $stock_status === $product->get_stock_status(), sprintf( 'Product %d stock status mismatch.', $selfnamed_id ) );
+	pilot_assert( false === $product->get_manage_stock(), sprintf( 'Product %d unexpectedly manages stock quantity.', $selfnamed_id ) );
+	pilot_assert( $volume === get_post_meta( $product->get_id(), '_volume', true ), sprintf( 'Product %d volume metadata mismatch.', $selfnamed_id ) );
+}

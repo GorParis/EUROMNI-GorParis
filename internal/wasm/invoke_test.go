@@ -215,6 +215,7 @@ func TestCatalogProductGetSeed(t *testing.T) {
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatal(err)
 	}
+
 	if !resp.OK {
 		t.Fatalf("not ok: %s", raw)
 	}
@@ -236,6 +237,7 @@ func TestCatalogCategoryListSeed(t *testing.T) {
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatal(err)
 	}
+
 	if !resp.OK {
 		t.Fatalf("not ok: %s", raw)
 	}
@@ -329,3 +331,122 @@ func (failingProducts) ListProducts(context.Context, string) ([]store.ProductVie
 type errSecret string
 
 func (e errSecret) Error() string { return string(e) }
+
+func TestSelfnamedCatalogProductPreview(t *testing.T) {
+	h := &Host{}
+	tc := mustCtx(t, CapCatalog)
+	productJSON := `{"id":842002,"name":"Synthetic Catalog Balm","description":"Synthetic description used to characterize product mapping.","price":28.82,"volume":176,"weight":176,"isInStock":true,"images":[],"image":"","tags":[]}`
+	encodedProduct, err := json.Marshal(productJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := h.Invoke(context.Background(), tc, []byte(`{
+		"abi":"euromni.abi.v1",
+		"call":"catalog.supplier.product.preview",
+		"input":{"product_json":`+string(encodedProduct)+`}
+	}`))
+	var response abi.Response
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.OK {
+		t.Fatalf("preview failed: %s", raw)
+	}
+	encoded, err := json.Marshal(response.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var preview supplierProductPreview
+	if err := json.Unmarshal(encoded, &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Provider != "selfnamed" ||
+		preview.ExternalID != "842002" ||
+		preview.PublicationStatus != "draft" ||
+		preview.Name != "Synthetic Catalog Balm" ||
+		preview.Price.Amount != "28.82" ||
+		preview.Price.Currency != nil ||
+		preview.Locale != nil ||
+		preview.Weight.Grams != 176 ||
+		preview.Weight.Unit != nil ||
+		preview.Volume.Value != 176 ||
+		preview.Volume.Unit != nil ||
+		preview.Inventory.Status != "instock" ||
+		preview.Inventory.Track ||
+		len(preview.Unresolved) != 3 {
+		t.Fatalf("preview = %+v, missing expected normalized or unresolved fields", preview)
+	}
+}
+
+func TestSelfnamedCatalogProductPreviewRejectsInvalidInput(t *testing.T) {
+	h := &Host{}
+	tc := mustCtx(t, CapCatalog)
+	tests := []struct {
+		name    string
+		product string
+	}{
+		{name: "invalid JSON", product: `{"id":`},
+		{name: "string ID", product: `{"id":"1","name":"Test","price":1,"volume":0,"weight":0,"isInStock":true}`},
+		{name: "string price", product: `{"id":1,"name":"Test","price":"1","volume":0,"weight":0,"isInStock":true}`},
+		{name: "missing stock status", product: `{"id":1,"name":"Test","price":1,"volume":0,"weight":0}`},
+		{name: "invalid price", product: `{"id":1,"name":"Test","price":-1,"volume":0,"weight":0,"isInStock":true}`},
+		{name: "unsupported decimal exponent", product: `{"id":1,"name":"Test","price":1e2,"volume":0,"weight":0,"isInStock":true}`},
+		{name: "negative weight", product: `{"id":1,"name":"Test","price":1,"volume":0,"weight":-1,"isInStock":true}`},
+		{name: "oversized nested input", product: strings.Repeat(" ", maxSupplierProductJSONBytes+1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request, err := json.Marshal(map[string]string{"product_json": test.product})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(struct {
+				ABI   string          `json:"abi"`
+				Call  string          `json:"call"`
+				Input json.RawMessage `json:"input"`
+			}{ABI: abi.Version, Call: "catalog.supplier.product.preview", Input: request})
+			if err != nil {
+				t.Fatal(err)
+			}
+			responseBytes := h.Invoke(context.Background(), tc, raw)
+			var response abi.Response
+			if err := json.Unmarshal(responseBytes, &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.OK || response.Error == nil || response.Error.Code != abi.CodeInvalid {
+				t.Fatalf("invalid supplier input response = %s, want invalid", responseBytes)
+			}
+		})
+	}
+}
+
+func TestSelfnamedCatalogProductPreviewRequiresCatalogCapability(t *testing.T) {
+	h := &Host{}
+	tc := mustCtx(t)
+	raw := h.Invoke(context.Background(), tc, []byte(`{
+		"abi":"euromni.abi.v1",
+		"call":"catalog.supplier.product.preview",
+		"input":{"product_json":"{}"}
+	}`))
+	if !bytes.Contains(raw, []byte(`"denied"`)) {
+		t.Fatalf("preview without catalog capability was not denied: %s", raw)
+	}
+}
+
+func TestNormalizeSupplierDecimal(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: "100", want: "100"},
+		{input: "17.40", want: "17.4"},
+		{input: "0.10", want: "0.1"},
+		{input: "0.0000", want: "0"},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			if got := normalizeSupplierDecimal(test.input); got != test.want {
+				t.Fatalf("normalizeSupplierDecimal(%q) = %q, want %q", test.input, got, test.want)
+			}
+		})
+	}
+}

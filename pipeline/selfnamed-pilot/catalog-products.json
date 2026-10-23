@@ -1,0 +1,38 @@
+[
+  {
+    "id": 842002,
+    "name": "Synthetic Catalog Balm",
+    "description": "Synthetic description used to characterize product mapping.",
+    "price": 28.82,
+    "volume": 176,
+    "weight": 176,
+    "isInStock": true,
+    "images": [],
+    "image": "",
+    "tags": []
+  },
+  {
+    "id": 842003,
+    "name": "Synthetic Out-of-Stock Balm",
+    "description": "Synthetic unavailable stock case.",
+    "price": 17.40,
+    "volume": 88,
+    "weight": 1001,
+    "isInStock": false,
+    "images": [],
+    "image": "",
+    "tags": ["synthetic", "edge-case"]
+  },
+  {
+    "id": 842004,
+    "name": "Synthetic Decimal-Price Balm",
+    "description": "",
+    "price": 0.10,
+    "volume": 1,
+    "weight": 1000,
+    "isInStock": true,
+    "images": [],
+    "image": "",
+    "tags": []
+  }
+]
