@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"time"
 )
@@ -17,6 +18,7 @@ type memoryOrder struct {
 	payment           *memoryPayment
 	shipmentStatus    string
 	tracking          string
+	lifecycleEvents   []OrderLifecycleEvent
 	shippingZoneCode  string
 	shippingZoneName  string
 }
@@ -115,6 +117,9 @@ func (m *Memory) ApplyDevelopmentPaymentResult(ctx context.Context, shopID strin
 	payment.reference = result.Reference
 	payment.attempt.Status = paymentStatus
 	order.view.Status = orderStatus
+	if orderStatus == "paid" {
+		appendMemoryOrderLifecycleEvent(order, "paid", "payment", "")
+	}
 	if orderStatus == "cancelled" {
 		m.restockMemoryOrder(order)
 	}
@@ -206,12 +211,16 @@ func (m *Memory) ConfirmManualOrderPayment(ctx context.Context, shopID, orderID,
 		status: "captured", reference: providerReference,
 	}
 	order.view.Status = "paid"
+	appendMemoryOrderLifecycleEvent(order, "paid", "payment", "")
 	return nil
 }
 
-func (m *Memory) FulfillAdminOrder(ctx context.Context, shopID, orderID, tracking string) error {
+func (m *Memory) AdvanceAdminOrderLifecycle(ctx context.Context, shopID, orderID, eventType, tracking, source string) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if !validOrderLifecycleEvent(eventType) || !validOrderLifecycleSource(source) {
+		return ErrOrderTransition
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -219,13 +228,69 @@ func (m *Memory) FulfillAdminOrder(ctx context.Context, shopID, orderID, trackin
 	if !ok || order.shopID != shopID {
 		return ErrNotFound
 	}
-	if order.view.Status != "paid" || order.view.ShippingCarrierCode == "" {
+	for _, event := range order.lifecycleEvents {
+		if event.EventType == eventType {
+			return nil
+		}
+	}
+	switch eventType {
+	case "processing":
+		if order.view.Status != "paid" {
+			return ErrOrderTransition
+		}
+		order.view.Status = "fulfilling"
+	case "prepared":
+		if order.view.Status != "fulfilling" || order.view.ShippingCarrierCode == "" {
+			return ErrOrderTransition
+		}
+		if order.shipmentStatus != "" && order.shipmentStatus != "pending" {
+			return ErrOrderTransition
+		}
+		order.shipmentStatus = "ready"
+	case "shipped":
+		if order.view.Status != "fulfilling" || order.shipmentStatus != "ready" {
+			return ErrOrderTransition
+		}
+		order.view.Status = "fulfilled"
+		order.shipmentStatus = "shipped"
+		order.tracking = tracking
+	case "delivered":
+		if order.view.Status != "fulfilled" || order.shipmentStatus != "shipped" {
+			return ErrOrderTransition
+		}
+		order.shipmentStatus = "delivered"
+	default:
 		return ErrOrderTransition
 	}
-	order.view.Status = "fulfilled"
-	order.shipmentStatus = "shipped"
-	order.tracking = tracking
+	appendMemoryOrderLifecycleEvent(order, eventType, source, tracking)
 	return nil
+}
+
+func (m *Memory) FulfillAdminOrder(ctx context.Context, shopID, orderID, tracking string) error {
+	order, err := m.GetAdminOrder(ctx, shopID, orderID)
+	if err != nil {
+		return err
+	}
+	if order.Status != "paid" && order.Status != "fulfilling" {
+		return ErrOrderTransition
+	}
+	if err := m.AdvanceAdminOrderLifecycle(ctx, shopID, orderID, "processing", "", "staff"); err != nil {
+		if !errors.Is(err, ErrOrderTransition) {
+			return err
+		}
+	}
+	if err := m.AdvanceAdminOrderLifecycle(ctx, shopID, orderID, "prepared", "", "staff"); err != nil {
+		if !errors.Is(err, ErrOrderTransition) {
+			return err
+		}
+	}
+	return m.AdvanceAdminOrderLifecycle(ctx, shopID, orderID, "shipped", tracking, "staff")
+}
+
+func appendMemoryOrderLifecycleEvent(order *memoryOrder, eventType, source, tracking string) {
+	order.lifecycleEvents = append(order.lifecycleEvents, OrderLifecycleEvent{
+		EventType: eventType, Source: source, Tracking: tracking, OccurredAt: time.Now().UTC(),
+	})
 }
 
 func (m *Memory) restockMemoryOrder(order *memoryOrder) {
@@ -263,6 +328,7 @@ func memoryAdminOrderView(order *memoryOrder) AdminOrderView {
 		ShipmentStatus:          order.shipmentStatus, Tracking: order.tracking, GrandTotal: view.GrandTotal,
 		Email: order.email, Name: order.name, ShippingAddress: order.address,
 		CreatedAt: order.createdAt, Items: items,
+		LifecycleEvents: append([]OrderLifecycleEvent(nil), order.lifecycleEvents...),
 	}
 }
 

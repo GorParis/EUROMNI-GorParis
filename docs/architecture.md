@@ -82,12 +82,14 @@ Le contrat d’ABI est versionné (`euromni.abi.v1`). Mapping host calls → tab
 
 ### Service de courriel transactionnel
 
-La première tranche enregistre la confirmation de commande dans une outbox
-atomique au checkout ; un worker hôte la remet via SMTP configurable. Mailpit
-sert de transport local de développement. Les identifiants et l’accès réseau ne
-sont jamais exposés aux modules Wasm. La remise est au moins une fois ; la
-rétention, l’administration des échecs, la supervision et la production d’un
-MTA propre restent à cadrer. Voir [`email-service.md`](email-service.md).
+Le checkout et chaque transition de commande enregistrent leurs événements
+dans une outbox transactionnelle ; un worker hôte les remet via SMTP
+configurable. Le cycle partagé couvre paiement reçu, traitement, préparation,
+expédition et livraison. Mailpit sert de transport local de développement.
+Les identifiants et l’accès réseau ne sont jamais exposés aux modules Wasm.
+La remise est au moins une fois ; la rétention, l’administration des échecs,
+la supervision et la production d’un MTA propre restent à cadrer. Voir
+[`email-service.md`](email-service.md).
 
 ## API headless (REST + GraphQL)
 

@@ -69,20 +69,23 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 	if err != nil || message == nil {
 		return false, err
 	}
-	if message.EventType != "order_confirmation" {
+	var email Message
+	switch message.EventType {
+	case "order_confirmation":
+		var payload store.OrderConfirmationPayload
+		if err := decodeEmailPayload(message.Payload, &payload); err != nil {
+			return true, w.failPermanently(ctx, message, fmt.Errorf("decode order confirmation payload: %w", err))
+		}
+		email, err = RenderOrderConfirmation(payload, message.Recipient, message.IdempotencyKey)
+	case "order_status":
+		var payload store.OrderStatusPayload
+		if err := decodeEmailPayload(message.Payload, &payload); err != nil {
+			return true, w.failPermanently(ctx, message, fmt.Errorf("decode order status payload: %w", err))
+		}
+		email, err = RenderOrderStatus(payload, message.Recipient, message.IdempotencyKey)
+	default:
 		return true, w.failPermanently(ctx, message, fmt.Errorf("unsupported mail event type %q", message.EventType))
 	}
-	var payload store.OrderConfirmationPayload
-	decoder := json.NewDecoder(bytes.NewReader(message.Payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&payload); err != nil {
-		return true, w.failPermanently(ctx, message, fmt.Errorf("decode order confirmation payload: %w", err))
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return true, w.failPermanently(ctx, message, errors.New("order confirmation payload contains trailing JSON"))
-	}
-	email, err := RenderOrderConfirmation(payload, message.Recipient, message.IdempotencyKey)
 	if err != nil {
 		return true, w.failPermanently(ctx, message, err)
 	}
@@ -103,6 +106,19 @@ func (w *Worker) DeliverOne(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("mark delivered email as sent: %w", err)
 	}
 	return true, nil
+}
+
+func decodeEmailPayload(payload []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return errors.New("email payload contains trailing JSON")
+	}
+	return nil
 }
 
 func (w *Worker) failPermanently(ctx context.Context, message *store.EmailOutboxMessage, cause error) error {

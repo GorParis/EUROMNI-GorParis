@@ -23,6 +23,9 @@ services:
     working_dir: /workspace
     environment:
       DATABASE_URL: postgres://euromni:${EUROMNI_DB_PASSWORD:?Set EUROMNI_DB_PASSWORD or configure .env}@postgres:5432/euromni?sslmode=disable
+      EUROMNI_ENVIRONMENT: development
+      EUROMNI_PAYMENT_PROVIDER: development-fake
+      EUROMNI_SUPPLIER_PROVIDER: selfnamed-mock
       EUROMNI_ARTIFACT_DIR: /var/lib/euromni/artifacts
       CGO_ENABLED: "1"
       GOCACHE: /tmp/go-build-cache

@@ -617,6 +617,44 @@ func TestDevelopmentPaymentEndpointAppliesOnlyServerGeneratedResults(t *testing.
 	if fulfilled.Code != http.StatusNoContent {
 		t.Fatalf("fulfill after accepted development payment status = %d, want 204; body=%s", fulfilled.Code, fulfilled.Body)
 	}
+	demoCartHash := sha256.Sum256([]byte("local order lifecycle demo"))
+	if err := memory.CreateCart(ctx, seed.ShopID, demoCartHash[:]); err != nil {
+		t.Fatalf("create local demo cart: %v", err)
+	}
+	if _, err := memory.AddCartLine(ctx, seed.ShopID, demoCartHash[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add local demo cart line: %v", err)
+	}
+	demoOrder, err := memory.CheckoutCart(ctx, seed.ShopID, demoCartHash[:], store.CheckoutDetails{
+		Email: "local-demo@example.com", Name: "Local demo",
+		ShippingCarrierCode: "colissimo",
+		ShippingAddress: store.ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	})
+	if err != nil {
+		t.Fatalf("checkout local demo order: %v", err)
+	}
+	t.Setenv("EUROMNI_ENVIRONMENT", "production")
+	demoPath := "/v1/admin/orders/" + demoOrder.ID + "/lifecycle/demo"
+	productionDemo := performAdminRequest(mux, http.MethodPost, demoPath, auth.token, `{}`)
+	if productionDemo.Code != http.StatusNotFound {
+		t.Fatalf("production local demo status = %d, want 404", productionDemo.Code)
+	}
+	t.Setenv("EUROMNI_ENVIRONMENT", "development")
+	localDemo := performAdminRequest(mux, http.MethodPost, demoPath, auth.token, `{}`)
+	if localDemo.Code != http.StatusNoContent {
+		t.Fatalf("local order demo status = %d, want 204; body=%s", localDemo.Code, localDemo.Body)
+	}
+	demoOrderView, err := memory.GetAdminOrder(ctx, seed.ShopID, demoOrder.ID)
+	if err != nil || demoOrderView.Status != "fulfilled" || demoOrderView.ShipmentStatus != "delivered" ||
+		len(demoOrderView.LifecycleEvents) != 6 {
+		t.Fatalf("local demo order lifecycle = %+v, error = %v", demoOrderView, err)
+	}
+	for _, event := range demoOrderView.LifecycleEvents[2:] {
+		if event.Source != "local_demo" {
+			t.Errorf("local demo event source = %q, want local_demo", event.Source)
+		}
+	}
 	secondCartHash := sha256.Sum256([]byte("declined development payment endpoint"))
 	if err := memory.CreateCart(ctx, seed.ShopID, secondCartHash[:]); err != nil {
 		t.Fatalf("create declined payment cart: %v", err)
@@ -646,8 +684,8 @@ func TestDevelopmentPaymentEndpointAppliesOnlyServerGeneratedResults(t *testing.
 		t.Fatalf("fulfill after declined payment status = %d, want 409; body=%s", cannotShip.Code, cannotShip.Body)
 	}
 	product, err := memory.GetProduct(ctx, seed.ShopID, seed.ProductID)
-	if err != nil || product.Variants[0].Inventory.Quantity != 23 {
-		t.Fatalf("stock after declined payment = %+v, error = %v; want 23", product, err)
+	if err != nil || product.Variants[0].Inventory.Quantity != 22 {
+		t.Fatalf("stock after accepted, demo, and declined payments = %+v, error = %v; want 22", product, err)
 	}
 }
 

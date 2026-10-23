@@ -57,6 +57,37 @@ func TestMemoryDevelopmentPaymentLifecycle(t *testing.T) {
 	if err != nil || adminOrder.Status != "fulfilled" || adminOrder.ShipmentStatus != "shipped" {
 		t.Fatalf("fulfilled order = %+v, error = %v", adminOrder, err)
 	}
+	if len(adminOrder.LifecycleEvents) != 5 {
+		t.Fatalf("lifecycle events after shipping = %+v, want placed, paid, processing, prepared, shipped", adminOrder.LifecycleEvents)
+	}
+	if err := memory.AdvanceAdminOrderLifecycle(ctx, seed.ShopID, order.ID, "delivered", "", "carrier"); err != nil {
+		t.Fatalf("record carrier delivery: %v", err)
+	}
+	if err := memory.AdvanceAdminOrderLifecycle(ctx, seed.ShopID, order.ID, "delivered", "", "carrier"); err != nil {
+		t.Fatalf("replay carrier delivery: %v", err)
+	}
+	adminOrder, err = memory.GetAdminOrder(ctx, seed.ShopID, order.ID)
+	if err != nil || adminOrder.ShipmentStatus != "delivered" || len(adminOrder.LifecycleEvents) != 6 {
+		t.Fatalf("delivered order lifecycle = %+v, error = %v", adminOrder, err)
+	}
+}
+
+func TestMemoryOrderLifecycleRejectsOutOfOrderSteps(t *testing.T) {
+	ctx := context.Background()
+	memory := NewMemory()
+	order := createMemoryPaymentOrder(t, memory, "paid")
+	if err := memory.AdvanceAdminOrderLifecycle(ctx, seed.ShopID, order.ID, "prepared", "", "staff"); !errors.Is(err, ErrOrderTransition) {
+		t.Fatalf("prepare before payment/processing error = %v, want ErrOrderTransition", err)
+	}
+	if err := memory.ConfirmManualOrderPayment(ctx, seed.ShopID, order.ID, ""); err != nil {
+		t.Fatalf("confirm manual payment: %v", err)
+	}
+	if err := memory.AdvanceAdminOrderLifecycle(ctx, seed.ShopID, order.ID, "processing", "", "staff"); err != nil {
+		t.Fatalf("start processing: %v", err)
+	}
+	if err := memory.AdvanceAdminOrderLifecycle(ctx, seed.ShopID, order.ID, "shipped", "TRACK", "staff"); !errors.Is(err, ErrOrderTransition) {
+		t.Fatalf("ship before preparation error = %v, want ErrOrderTransition", err)
+	}
 }
 
 func TestMemoryDeclinedAndAbandonedPaymentsRestoreStockOnce(t *testing.T) {

@@ -820,6 +820,16 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if fulfilledOrder.Status != "fulfilled" || fulfilledOrder.ShipmentStatus != "shipped" || fulfilledOrder.Tracking != "TRACK-1" {
 		t.Fatalf("fulfilled order snapshot = %+v", fulfilledOrder)
 	}
+	if len(fulfilledOrder.LifecycleEvents) != 5 {
+		t.Fatalf("fulfilled order lifecycle events = %+v, want five events", fulfilledOrder.LifecycleEvents)
+	}
+	if err := db.AdvanceAdminOrderLifecycle(ctx, seed.ShopID, fulfillmentOrder.ID, "delivered", "", "carrier"); err != nil {
+		t.Fatalf("record carrier delivery: %v", err)
+	}
+	deliveredOrder, err := db.GetAdminOrder(ctx, seed.ShopID, fulfillmentOrder.ID)
+	if err != nil || deliveredOrder.ShipmentStatus != "delivered" || len(deliveredOrder.LifecycleEvents) != 6 {
+		t.Fatalf("delivered order snapshot = %+v, error = %v", deliveredOrder, err)
+	}
 }
 
 func TestPostgresShippingConfiguration(t *testing.T) {

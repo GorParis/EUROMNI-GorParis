@@ -138,6 +138,11 @@ func (s *Store) ApplyDevelopmentPaymentResult(ctx context.Context, shopID string
 	`, shopID, orderStatus, result.OrderID); err != nil {
 		return err
 	}
+	if orderStatus == "paid" {
+		if err := recordOrderLifecycleEvent(ctx, tx, s.Dialect, shopID, result.OrderID, "paid", "payment", ""); err != nil {
+			return err
+		}
+	}
 	if orderStatus == "cancelled" {
 		if err := restockCancelledOrder(ctx, tx, s.Dialect, result.OrderID); err != nil {
 			return err

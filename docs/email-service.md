@@ -4,10 +4,34 @@
 
 Le checkout SQL enregistre un événement `order_confirmation` dans
 `email_outbox`, dans la même transaction que la commande et la consommation du
-panier. Un rollback du checkout annule donc aussi le courriel. L’événement
-contient un snapshot minimal du destinataire et du récapitulatif de commande ;
-aucune adresse de livraison, donnée de paiement ou donnée de carte n’est
-incluse.
+panier. Un rollback du checkout annule donc aussi le courriel. Le premier
+message confirme la commande et précise que le paiement est en attente. Après
+confirmation du paiement, puis aux étapes traitement, préparation, expédition
+et livraison, les transitions et notifications sont enregistrées atomiquement.
+Les messages de statut contiennent un snapshot minimal du numéro de commande,
+du nom, de la langue et du suivi éventuel ; aucune adresse de livraison ni
+donnée de paiement ou de carte n’est incluse.
+
+Le parcours partagé est persisté dans `order_lifecycle_events` :
+
+| Événement | État métier |
+|---|---|
+| `paid` | Commande reçue et payée |
+| `processing` | En cours de traitement |
+| `prepared` | Préparée (`shipments.status=ready`) |
+| `shipped` | Expédiée (`orders.status=fulfilled`) |
+| `delivered` | Livrée (`shipments.status=delivered`) |
+
+Le back-office fait avancer une étape à la fois et affiche les dates. Chaque
+transition produit une notification via l’outbox, traitée par le même worker.
+Le parcours local utilise les mêmes transitions. En environnement
+`development`, le bouton « Simuler le parcours complet (local) » peut aussi
+créer un paiement fictif approuvé et parcourir les étapes restantes. La
+confirmation de livraison est encore une action de l’équipe en dehors de cette
+simulation : aucun webhook
+transporteur réel n’est configuré. De même, le connecteur fournisseur actuel
+est un simulateur de développement, pas une intégration de dropshipping en
+production.
 
 Le processus séparé `cmd/mail-worker` réclame les messages avec un bail,
 produit une version texte et une version HTML localisées en français ou anglais,
@@ -46,8 +70,10 @@ worker utilise le SMTP privé du réseau Compose (`mailpit:1025`), sans
 authentification ni TLS ; cette configuration n’est acceptée qu’en
 `development`. L’interface Mailpit n’est publiée que sur loopback. Configurer
 un transporteur dans la boutique de test, puis passer une commande dans la
-vitrine pour observer sa confirmation. Ne pas lancer ce scénario avec le nom de
-projet de la stack persistante.
+vitrine pour observer sa confirmation. Une fois le paiement de test accepté,
+utiliser les étapes du panneau Commandes pour déclencher la progression et
+vérifier les notifications suivantes dans Mailpit. Ne pas lancer ce scénario
+avec le nom de projet de la stack persistante.
 
 ## Transport SMTP
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -51,13 +52,14 @@ type loginRequest struct {
 }
 
 type staffSessionPayload struct {
-	Token     string `json:"token"`
-	ShopID    string `json:"shop_id"`
-	UserID    string `json:"user_id"`
-	Name      string `json:"name"`
-	Email     string `json:"email"`
-	Role      string `json:"role"`
-	ExpiresAt string `json:"expires_at"`
+	Token           string `json:"token"`
+	ShopID          string `json:"shop_id"`
+	UserID          string `json:"user_id"`
+	Name            string `json:"name"`
+	Email           string `json:"email"`
+	Role            string `json:"role"`
+	ExpiresAt       string `json:"expires_at"`
+	DevelopmentMode bool   `json:"development_mode"`
 }
 
 type defaultStaffAuthenticator struct{}
@@ -125,13 +127,14 @@ func adminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writePrivateJSON(w, http.StatusOK, map[string]any{"data": staffSessionPayload{
-		Token:     session.Token,
-		ShopID:    session.ShopID,
-		UserID:    session.UserID,
-		Name:      session.Name,
-		Email:     session.Email,
-		Role:      session.Role,
-		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
+		Token:           session.Token,
+		ShopID:          session.ShopID,
+		UserID:          session.UserID,
+		Name:            session.Name,
+		Email:           session.Email,
+		Role:            session.Role,
+		ExpiresAt:       session.ExpiresAt.UTC().Format(time.RFC3339),
+		DevelopmentMode: strings.TrimSpace(os.Getenv("EUROMNI_ENVIRONMENT")) == "development",
 	}})
 }
 
@@ -142,11 +145,12 @@ func adminMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writePrivateJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-		"shop_id": session.ShopID,
-		"user_id": session.UserID,
-		"email":   session.Email,
-		"name":    session.Name,
-		"role":    session.Role,
+		"shop_id":          session.ShopID,
+		"user_id":          session.UserID,
+		"email":            session.Email,
+		"name":             session.Name,
+		"role":             session.Role,
+		"development_mode": strings.TrimSpace(os.Getenv("EUROMNI_ENVIRONMENT")) == "development",
 	}})
 }
 
@@ -398,6 +402,41 @@ func adminOrderFulfill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := writer.FulfillAdminOrder(r.Context(), session.ShopID, r.PathValue("id"), input.Tracking); err != nil {
+		writeOrderAdminError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func adminOrderLifecycle(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		EventType string `json:"event_type"`
+		Tracking  string `json:"tracking"`
+	}
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	input.EventType = strings.TrimSpace(input.EventType)
+	input.Tracking = strings.TrimSpace(input.Tracking)
+	if input.EventType != "processing" && input.EventType != "prepared" &&
+		input.EventType != "shipped" && input.EventType != "delivered" {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "unsupported order lifecycle event"})
+		return
+	}
+	if len(input.Tracking) > 512 {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "tracking reference must be at most 512 bytes"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	writer, ok := currentProductReader().(store.OrderAdminReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "order administration unavailable"})
+		return
+	}
+	if err := writer.AdvanceAdminOrderLifecycle(
+		r.Context(), session.ShopID, r.PathValue("id"), input.EventType, input.Tracking, "staff",
+	); err != nil {
 		writeOrderAdminError(w, err)
 		return
 	}

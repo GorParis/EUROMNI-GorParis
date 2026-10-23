@@ -149,6 +149,31 @@ func (s *Store) GetAdminOrder(ctx context.Context, shopID, orderID string) (*Adm
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	rows, err = s.SQL.QueryContext(ctx, `
+		SELECT event_type, source, COALESCE(tracking, ''), occurred_at
+		FROM order_lifecycle_events
+		WHERE shop_id = $1 AND order_id = $2
+		ORDER BY occurred_at, id
+	`, shopID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	order.LifecycleEvents = make([]OrderLifecycleEvent, 0)
+	for rows.Next() {
+		var event OrderLifecycleEvent
+		if err := rows.Scan(&event.EventType, &event.Source, &event.Tracking, &event.OccurredAt); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		order.LifecycleEvents = append(order.LifecycleEvents, event)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	if syncStatus, err := s.GetSupplierOrderSyncStatus(ctx, shopID, orderID, "selfnamed"); err == nil {
 		order.SupplierOrderSync = syncStatus
 	} else if !errors.Is(err, ErrNotFound) {
@@ -203,51 +228,31 @@ func (s *Store) ConfirmManualOrderPayment(ctx context.Context, shopID, orderID, 
 	`, shopID, orderID); err != nil {
 		return err
 	}
+	if err := recordOrderLifecycleEvent(ctx, tx, s.Dialect, shopID, orderID, "paid", "payment", ""); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (s *Store) FulfillAdminOrder(ctx context.Context, shopID, orderID, tracking string) error {
-	if s == nil || s.SQL == nil {
-		return errors.New("store not configured")
-	}
-	tx, err := s.SQL.BeginTx(ctx, nil)
+	order, err := s.GetAdminOrder(ctx, shopID, orderID)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
-
-	var status, carrier string
-	err = tx.QueryRowContext(ctx, `
-		SELECT status::text, COALESCE(shipping_carrier_name, '')
-		FROM orders
-		WHERE shop_id = $1 AND id = $2
-		FOR UPDATE
-	`, shopID, orderID).Scan(&status, &carrier)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if status != "paid" {
+	if order.Status != "paid" && order.Status != "fulfilling" {
 		return ErrOrderTransition
 	}
-	if carrier == "" {
-		return ErrOrderTransition
+	if err := s.AdvanceAdminOrderLifecycle(ctx, shopID, orderID, "processing", "", "staff"); err != nil {
+		if !errors.Is(err, ErrOrderTransition) {
+			return err
+		}
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO shipments (order_id, status, carrier, tracking, shipped_at)
-		VALUES ($1, 'shipped', $2, NULLIF($3, ''), now())
-	`, orderID, carrier, tracking); err != nil {
-		return err
+	if err := s.AdvanceAdminOrderLifecycle(ctx, shopID, orderID, "prepared", "", "staff"); err != nil {
+		if !errors.Is(err, ErrOrderTransition) {
+			return err
+		}
 	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE orders SET status = 'fulfilled', updated_at = now()
-		WHERE shop_id = $1 AND id = $2
-	`, shopID, orderID); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.AdvanceAdminOrderLifecycle(ctx, shopID, orderID, "shipped", tracking, "staff")
 }
 
 func (s *Store) CancelAdminOrder(ctx context.Context, shopID, orderID string) error {

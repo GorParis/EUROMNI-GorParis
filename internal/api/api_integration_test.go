@@ -457,19 +457,51 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 	if manualPaymentResponse.Code != http.StatusNoContent {
 		t.Fatalf("admin manual payment status/body = %d/%s; want 204", manualPaymentResponse.Code, manualPaymentResponse.Body)
 	}
-	fulfillmentResponse := performAPIRequest(mux, http.MethodPost,
-		"/v1/admin/orders/"+manualFlowOrder.ID+"/fulfill", staffAuthorization,
-		`{"tracking":"TRACK-API-1"}`)
-	if fulfillmentResponse.Code != http.StatusNoContent {
-		t.Fatalf("admin fulfillment status/body = %d/%s; want 204", fulfillmentResponse.Code, fulfillmentResponse.Body)
+	lifecycleURL := "/v1/admin/orders/" + manualFlowOrder.ID + "/lifecycle"
+	preparedTooEarly := performAPIRequest(mux, http.MethodPost, lifecycleURL, staffAuthorization,
+		`{"event_type":"prepared"}`)
+	if preparedTooEarly.Code != http.StatusConflict {
+		t.Fatalf("preparation before processing status/body = %d/%s; want 409", preparedTooEarly.Code, preparedTooEarly.Body)
+	}
+	for _, step := range []string{"processing", "prepared", "shipped", "delivered"} {
+		body := `{"event_type":"` + step + `"}`
+		if step == "shipped" {
+			body = `{"event_type":"shipped","tracking":"TRACK-API-1"}`
+		}
+		response := performAPIRequest(mux, http.MethodPost, lifecycleURL, staffAuthorization, body)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("admin lifecycle %s status/body = %d/%s; want 204", step, response.Code, response.Body)
+		}
+	}
+	replayedDelivery := performAPIRequest(mux, http.MethodPost, lifecycleURL, staffAuthorization,
+		`{"event_type":"delivered"}`)
+	if replayedDelivery.Code != http.StatusNoContent {
+		t.Fatalf("replayed delivery status/body = %d/%s; want idempotent 204", replayedDelivery.Code, replayedDelivery.Body)
+	}
+	var lifecycleEventCount, statusEmailCount int
+	if err := db.SQL.QueryRowContext(context.Background(), `
+		SELECT count(*) FROM order_lifecycle_events WHERE order_id = $1
+	`, manualFlowOrder.ID).Scan(&lifecycleEventCount); err != nil {
+		t.Fatalf("count order lifecycle events: %v", err)
+	}
+	if err := db.SQL.QueryRowContext(context.Background(), `
+		SELECT count(*) FROM email_outbox WHERE order_id = $1 AND event_type = 'order_status'
+	`, manualFlowOrder.ID).Scan(&statusEmailCount); err != nil {
+		t.Fatalf("count order status emails: %v", err)
+	}
+	if lifecycleEventCount != 6 || statusEmailCount != 5 {
+		t.Fatalf("lifecycle event/status email counts = %d/%d, want 6/5", lifecycleEventCount, statusEmailCount)
 	}
 	fulfilledDetail := performAPIRequest(mux, http.MethodGet,
 		"/v1/admin/orders/"+manualFlowOrder.ID, staffAuthorization, "")
 	if fulfilledDetail.Code != http.StatusOK ||
 		!strings.Contains(fulfilledDetail.Body.String(), `"status":"fulfilled"`) ||
-		!strings.Contains(fulfilledDetail.Body.String(), `"shipment_status":"shipped"`) ||
-		!strings.Contains(fulfilledDetail.Body.String(), `"tracking":"TRACK-API-1"`) {
-		t.Fatalf("fulfilled admin order status/body = %d/%s", fulfilledDetail.Code, fulfilledDetail.Body)
+		!strings.Contains(fulfilledDetail.Body.String(), `"shipment_status":"delivered"`) ||
+		!strings.Contains(fulfilledDetail.Body.String(), `"tracking":"TRACK-API-1"`) ||
+		!strings.Contains(fulfilledDetail.Body.String(), `"event_type":"processing"`) ||
+		!strings.Contains(fulfilledDetail.Body.String(), `"event_type":"prepared"`) ||
+		!strings.Contains(fulfilledDetail.Body.String(), `"event_type":"delivered"`) {
+		t.Fatalf("completed admin order lifecycle status/body = %d/%s", fulfilledDetail.Code, fulfilledDetail.Body)
 	}
 	cancelOrder := performAPIRequest(mux, http.MethodPatch, "/v1/admin/orders/"+createdOrder.Data.ID+"/status",
 		staffAuthorization, `{"status":"cancelled"}`)

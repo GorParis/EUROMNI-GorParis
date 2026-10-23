@@ -55,6 +55,46 @@ func TestRenderOrderConfirmationEscapesCustomerContent(t *testing.T) {
 	}
 }
 
+func TestRenderOrderStatusEscapesCustomerAndTrackingContent(t *testing.T) {
+	message, err := RenderOrderStatus(store.OrderStatusPayload{
+		OrderNumber: "EU-456", CustomerName: "<script>Client</script>", Locale: "fr-FR",
+		Status: "shipped", Tracking: "<img src=x>",
+	}, "client@example.test", "order-status:EU-456:shipped")
+	if err != nil {
+		t.Fatalf("render order status notification: %v", err)
+	}
+	if !strings.Contains(message.Subject, "Votre commande a été expédiée EU-456") ||
+		!strings.Contains(message.TextBody, "Numéro de suivi: <img src=x>") {
+		t.Fatalf("French order status subject/body = %q/%q", message.Subject, message.TextBody)
+	}
+	if strings.Contains(message.HTMLBody, "<script>") || strings.Contains(message.HTMLBody, "<img src=x>") ||
+		!strings.Contains(message.HTMLBody, "&lt;script&gt;") || !strings.Contains(message.HTMLBody, "&lt;img") {
+		t.Fatalf("HTML status email did not escape customer/tracking content: %s", message.HTMLBody)
+	}
+}
+
+func TestRenderOrderStatusSupportsEveryLifecycleStage(t *testing.T) {
+	for status, expected := range map[string]string{
+		"paid":       "Paiement reçu EU-123",
+		"processing": "Votre commande est en cours de traitement EU-123",
+		"prepared":   "Votre commande est préparée EU-123",
+		"shipped":    "Votre commande a été expédiée EU-123",
+		"delivered":  "Votre commande a été livrée EU-123",
+	} {
+		message, err := RenderOrderStatus(store.OrderStatusPayload{
+			OrderNumber: "EU-123", Locale: "fr-FR", Status: status,
+		}, "client@example.test", "event-"+status)
+		if err != nil || message.Subject != expected {
+			t.Errorf("render %s notification = subject %q, error %v; want %q", status, message.Subject, err, expected)
+		}
+	}
+	if _, err := RenderOrderStatus(store.OrderStatusPayload{
+		OrderNumber: "EU-123", Locale: "fr-FR", Status: "cancelled",
+	}, "client@example.test", "event-cancelled"); err == nil {
+		t.Fatal("unsupported lifecycle status was rendered as a customer notification")
+	}
+}
+
 func TestSMTPSenderSendsMultipartMessageToLocalServer(t *testing.T) {
 	address, received := startFakeSMTP(t)
 	from, err := parseAddress("Atelier <orders@example.test>")
@@ -143,6 +183,24 @@ func TestWorkerRetriesAndMarksSuccessfulDelivery(t *testing.T) {
 	claimed, err = worker.DeliverOne(context.Background())
 	if !claimed || err != nil || !queue.sent || sender.message.To != "client@example.test" {
 		t.Fatalf("successful delivery = claimed %v, error %v, queue %+v, message %+v", claimed, err, queue, sender.message)
+	}
+}
+
+func TestWorkerDeliversOrderStatusNotification(t *testing.T) {
+	queue := &fakeQueue{message: &store.EmailOutboxMessage{
+		ID: "outbox-status-1", EventType: "order_status",
+		IdempotencyKey: "order-status:order-1:delivered", Recipient: "client@example.test",
+		Payload: []byte(`{"order_number":"EU-789","customer_name":"Client","locale":"fr-FR","status":"delivered"}`),
+	}}
+	sender := &fakeSender{}
+	worker, err := NewWorker(queue, sender, time.Second, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := worker.DeliverOne(context.Background())
+	if !claimed || err != nil || !queue.sent ||
+		!strings.Contains(sender.message.Subject, "Votre commande a été livrée") {
+		t.Fatalf("order status delivery = claimed %v, error %v, queue %+v, message %+v", claimed, err, queue, sender.message)
 	}
 }
 

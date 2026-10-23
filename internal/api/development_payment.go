@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
+	"strings"
 
 	"euromni/internal/seed"
 	"euromni/internal/store"
@@ -96,6 +98,70 @@ func developmentPayment(w http.ResponseWriter, r *http.Request) {
 		"supplier_order_sync_status": supplierStatus,
 	}
 	writePrivateJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+func adminOrderLifecycleDemo(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(os.Getenv("EUROMNI_ENVIRONMENT")) != "development" {
+		writePrivateJSON(w, http.StatusNotFound, map[string]any{"error": "local order demo is unavailable"})
+		return
+	}
+	orderID := r.PathValue("id")
+	if !orderIDPattern.MatchString(orderID) {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid order id"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	reader, ok := currentProductReader().(store.OrderAdminReader)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "order administration unavailable"})
+		return
+	}
+	order, err := reader.GetAdminOrder(r.Context(), session.ShopID, orderID)
+	if err != nil {
+		writeOrderAdminError(w, err)
+		return
+	}
+	if order.Status == "pending" {
+		if developmentPaymentProcessor == nil {
+			writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "development payment provider unavailable"})
+			return
+		}
+		paymentWriter, ok := currentProductReader().(store.PaymentLifecycleWriter)
+		if !ok {
+			writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "payment service unavailable"})
+			return
+		}
+		attempt, err := paymentWriter.CreateDevelopmentPaymentAttempt(r.Context(), session.ShopID, orderID)
+		if err != nil {
+			writeDevelopmentPaymentError(w, err)
+			return
+		}
+		result, err := developmentPaymentProcessor.Process(r.Context(), *attempt, "approved")
+		if err != nil {
+			writePrivateJSON(w, http.StatusBadGateway, map[string]any{"error": "development payment provider failed"})
+			return
+		}
+		if err := paymentWriter.ApplyDevelopmentPaymentResult(r.Context(), session.ShopID, result); err != nil {
+			writeDevelopmentPaymentError(w, err)
+			return
+		}
+		if _, _, err := syncSelfnamedOrder(r.Context(), session.ShopID, orderID); err != nil {
+			log.Printf("sync local demo supplier order %s: %v", orderID, err)
+		}
+	} else if order.Status != "paid" && order.Status != "fulfilling" && order.Status != "fulfilled" {
+		writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "order cannot enter the local demo from its current state"})
+		return
+	}
+	tracking := "DEMO-" + order.Number
+	for _, eventType := range []string{"processing", "prepared", "shipped", "delivered"} {
+		if err := reader.AdvanceAdminOrderLifecycle(
+			r.Context(), session.ShopID, orderID, eventType, tracking, "local_demo",
+		); err != nil {
+			writeOrderAdminError(w, err)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeDevelopmentPaymentError(w http.ResponseWriter, err error) {

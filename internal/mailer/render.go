@@ -47,6 +47,18 @@ type orderTemplateItem struct {
 	LineTotal string
 }
 
+type orderStatusTemplateData struct {
+	Language      string
+	Title         string
+	Greeting      string
+	Intro         string
+	OrderLabel    string
+	OrderNumber   string
+	Tracking      string
+	TrackingLabel string
+	Thanks        string
+}
+
 var orderHTMLTemplate = template.Must(template.New("order-confirmation").Parse(`<!doctype html>
 <html lang="{{.Language}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>{{.Title}}</title></head><body style="margin:0;background:#f4f5f7;font-family:Arial,sans-serif;color:#18212f">
@@ -70,6 +82,25 @@ var orderTextTemplate = texttemplate.Must(texttemplate.New("order-confirmation-t
 {{.SubtotalLabel}}: {{.Subtotal}}
 {{.ShippingLabel}}: {{.ShippingTotal}}
 {{.GrandLabel}}: {{.GrandTotal}}
+
+{{.Thanks}}
+`))
+
+var orderStatusHTMLTemplate = template.Must(template.New("order-status").Parse(`<!doctype html>
+<html lang="{{.Language}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>{{.Title}}</title></head><body style="margin:0;background:#f4f5f7;font-family:Arial,sans-serif;color:#18212f">
+<main style="max-width:640px;margin:24px auto;padding:28px;background:#fff;border-radius:12px">
+<h1 style="font-size:24px">{{.Title}}</h1><p>{{.Greeting}}</p><p>{{.Intro}}</p>
+<p><strong>{{.OrderLabel}}:</strong> {{.OrderNumber}}</p>
+{{if .Tracking}}<p><strong>{{.TrackingLabel}}:</strong> {{.Tracking}}</p>{{end}}
+<p>{{.Thanks}}</p></main></body></html>`))
+
+var orderStatusTextTemplate = texttemplate.Must(texttemplate.New("order-status-text").Parse(`{{.Title}}
+
+{{.Greeting}}
+{{.Intro}}
+{{.OrderLabel}}: {{.OrderNumber}}
+{{if .Tracking}}{{.TrackingLabel}}: {{.Tracking}}{{end}}
 
 {{.Thanks}}
 `))
@@ -139,6 +170,65 @@ func RenderOrderConfirmation(payload store.OrderConfirmationPayload, recipient, 
 	if french {
 		subject = "Confirmation de commande " + payload.OrderNumber
 	}
+	return Message{
+		To: recipient, Subject: subject, TextBody: textBody.String(),
+		HTMLBody: htmlBody.String(), Idempotency: idempotency,
+	}, nil
+}
+
+func RenderOrderStatus(payload store.OrderStatusPayload, recipient, idempotency string) (Message, error) {
+	recipient = strings.TrimSpace(recipient)
+	if recipient == "" || payload.OrderNumber == "" {
+		return Message{}, errors.New("incomplete order status notification")
+	}
+	french := strings.HasPrefix(strings.ToLower(payload.Locale), "fr")
+	data := orderStatusTemplateData{
+		Language: "en", Greeting: "Hello " + payload.CustomerName + ",",
+		OrderLabel: "Order", OrderNumber: payload.OrderNumber,
+		Tracking: payload.Tracking, TrackingLabel: "Tracking reference",
+		Thanks: "Thank you for shopping with us.",
+	}
+	switch payload.Status {
+	case "paid":
+		data.Title, data.Intro = "Payment received", "Your order has been received and paid."
+	case "processing":
+		data.Title, data.Intro = "Your order is being processed", "We are preparing your order."
+	case "prepared":
+		data.Title, data.Intro = "Your order is prepared", "Your order is ready to be handed to the carrier."
+	case "shipped":
+		data.Title, data.Intro = "Your order has shipped", "Your order has been handed to the carrier."
+	case "delivered":
+		data.Title, data.Intro = "Your order has been delivered", "The carrier has confirmed delivery of your order."
+	default:
+		return Message{}, errors.New("unsupported order status notification")
+	}
+	if french {
+		data.Language = "fr"
+		data.Greeting = "Bonjour " + payload.CustomerName + ","
+		data.OrderLabel = "Commande"
+		data.TrackingLabel = "Numéro de suivi"
+		data.Thanks = "Merci pour votre confiance."
+		switch payload.Status {
+		case "paid":
+			data.Title, data.Intro = "Paiement reçu", "Votre commande est bien reçue et payée."
+		case "processing":
+			data.Title, data.Intro = "Votre commande est en cours de traitement", "Nous préparons votre commande."
+		case "prepared":
+			data.Title, data.Intro = "Votre commande est préparée", "Votre commande est prête à être remise au transporteur."
+		case "shipped":
+			data.Title, data.Intro = "Votre commande a été expédiée", "Votre commande a été remise au transporteur."
+		case "delivered":
+			data.Title, data.Intro = "Votre commande a été livrée", "Le transporteur a confirmé la livraison de votre commande."
+		}
+	}
+	var htmlBody, textBody bytes.Buffer
+	if err := orderStatusHTMLTemplate.Execute(&htmlBody, data); err != nil {
+		return Message{}, fmt.Errorf("render order status HTML: %w", err)
+	}
+	if err := orderStatusTextTemplate.Execute(&textBody, data); err != nil {
+		return Message{}, fmt.Errorf("render order status text: %w", err)
+	}
+	subject := data.Title + " " + payload.OrderNumber
 	return Message{
 		To: recipient, Subject: subject, TextBody: textBody.String(),
 		HTMLBody: htmlBody.String(), Idempotency: idempotency,

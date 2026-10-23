@@ -323,6 +323,16 @@ func TestMariaDBMigrationAndCommerceFlow(t *testing.T) {
 	if adminOrder.Status != "fulfilled" || adminOrder.ShipmentStatus != "shipped" || adminOrder.Tracking != "MDB-TRACK-1" {
 		t.Fatalf("unexpected fulfilled MariaDB order: %#v", adminOrder)
 	}
+	if len(adminOrder.LifecycleEvents) != 5 {
+		t.Fatalf("MariaDB lifecycle events = %+v, want five events", adminOrder.LifecycleEvents)
+	}
+	if err := store.AdvanceAdminOrderLifecycle(ctx, seed.ShopID, order.ID, "delivered", "", "carrier"); err != nil {
+		t.Fatalf("record MariaDB carrier delivery: %v", err)
+	}
+	adminOrder, err = store.GetAdminOrder(ctx, seed.ShopID, order.ID)
+	if err != nil || adminOrder.ShipmentStatus != "delivered" || len(adminOrder.LifecycleEvents) != 6 {
+		t.Fatalf("delivered MariaDB order = %#v, error = %v", adminOrder, err)
+	}
 
 	for _, test := range []struct {
 		outcome       string

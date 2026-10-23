@@ -101,6 +101,7 @@ type OrderAdminReader interface {
 	GetAdminOrder(ctx context.Context, shopID, orderID string) (*AdminOrderView, error)
 	CancelAdminOrder(ctx context.Context, shopID, orderID string) error
 	ConfirmManualOrderPayment(ctx context.Context, shopID, orderID, providerReference string) error
+	AdvanceAdminOrderLifecycle(ctx context.Context, shopID, orderID, eventType, tracking, source string) error
 	FulfillAdminOrder(ctx context.Context, shopID, orderID, tracking string) error
 }
 
@@ -189,6 +190,22 @@ type AdminOrderView struct {
 	CreatedAt               time.Time                      `json:"created_at"`
 	Items                   []OrderLineView                `json:"items"`
 	SupplierOrderSync       *SupplierOrderSyncStatus       `json:"supplier_order_sync,omitempty"`
+	LifecycleEvents         []OrderLifecycleEvent          `json:"lifecycle_events"`
+}
+
+type OrderLifecycleEvent struct {
+	EventType  string    `json:"event_type"`
+	Source     string    `json:"source"`
+	Tracking   string    `json:"tracking,omitempty"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+type OrderStatusPayload struct {
+	OrderNumber  string `json:"order_number"`
+	CustomerName string `json:"customer_name"`
+	Locale       string `json:"locale"`
+	Status       string `json:"status"`
+	Tracking     string `json:"tracking,omitempty"`
 }
 
 type checkoutLine struct {
@@ -557,6 +574,9 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	`, shopID, orderID, "order-confirmation:"+orderID, details.Email, string(confirmationPayload)); err != nil {
 		return nil, err
 	}
+	if err := recordOrderLifecycleEvent(ctx, tx, s.Dialect, shopID, orderID, "order_placed", "checkout", ""); err != nil {
+		return nil, err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM cart_lines WHERE cart_id::text = $1`, cartID); err != nil {
 		return nil, err
 	}
@@ -788,6 +808,9 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 		address: details.ShippingAddress, createdAt: time.Now(),
 		variantQuantities: reservedQuantities, shippingZoneCode: "france-ue",
 		shippingZoneName: "France et Union européenne",
+		lifecycleEvents: []OrderLifecycleEvent{{
+			EventType: "order_placed", Source: "checkout", OccurredAt: time.Now(),
+		}},
 	}
 	return order, nil
 }

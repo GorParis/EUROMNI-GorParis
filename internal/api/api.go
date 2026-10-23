@@ -95,6 +95,8 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/orders/{id}", withOrderReadAuth(adminOrderDetail))
 	mux.HandleFunc("POST /v1/admin/orders/{id}/payments/manual", withOrderWriteAuth(adminOrderManualPayment))
 	mux.HandleFunc("POST /v1/admin/orders/{id}/supplier-sync", withOrderWriteAuth(adminOrderSupplierSync))
+	mux.HandleFunc("POST /v1/admin/orders/{id}/lifecycle", withOrderWriteAuth(adminOrderLifecycle))
+	mux.HandleFunc("POST /v1/admin/orders/{id}/lifecycle/demo", withOrderWriteAuth(adminOrderLifecycleDemo))
 	mux.HandleFunc("POST /v1/admin/orders/{id}/fulfill", withOrderWriteAuth(adminOrderFulfill))
 	mux.HandleFunc("PATCH /v1/admin/orders/{id}/status", withOrderWriteAuth(adminOrderStatus))
 	mux.HandleFunc("GET /v1/admin/shipping", withStaffAuth(adminShippingConfig))

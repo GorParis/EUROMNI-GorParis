@@ -389,8 +389,8 @@ concevoir. Voir [`email-service.md`](email-service.md).
 
 ## État actuel du socle
 
-Le dernier incrément poussé sur `main` est `e5682d4` (`Implement development
-payment lifecycle`). Il ajoute le cycle de paiement fictif décrit ci-dessus.
+Le dernier incrément poussé sur `main` est `605a246` (`Add transactional order
+confirmation email`). Il ajoute l’outbox transactionnelle et le worker SMTP.
 Le pilote précédent `2a9665f` (`Add bundled Wasm shipping pricing pilot`)
 ajoute une livraison gratuite opt-in dès 100 unités, revalidée par l’hôte et
 conservée dans la commande ; il ne constitue pas un système générique
@@ -403,6 +403,21 @@ du traitement manuel des commandes et paiements. Le faux paiement ne réalise
 aucun encaissement ; aucun prestataire réel n’est intégré. Le détail des
 capacités vendeur et acheteur est décrit dans [le contrat API](api.md) et
 [la documentation de la vitrine](../frontend/README.md).
+
+## Cycle commun de traitement des commandes — travail en cours
+
+Le prochain incrément étend le parcours d’une commande payée aux étapes
+traitement, préparation, expédition et livraison. Les changements de statut
+sont séquencés, horodatés, affichés dans le détail admin et mettent en file une
+notification au client dans la même transaction. Le parcours mémoire local
+utilise les mêmes transitions que SQL. PostgreSQL et MariaDB ont des migrations
+dédiées.
+
+Ce socle ne constitue pas encore une automatisation de production : le paiement
+peut être simulé ou confirmé manuellement, l’adaptateur fournisseur existant
+est un mock, et l’étape « livrée » est encore confirmée par l’équipe. Les
+webhooks réels de paiement/fournisseur/transporteur et une page de suivi client
+restent à intégrer.
 
 ## Dernier point de reprise — sauvegarde MariaDB (19 octobre 2026)
 
