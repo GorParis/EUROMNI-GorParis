@@ -5,25 +5,52 @@ from urllib.parse import parse_qs, urlparse
 
 
 TEST_TOKEN = "EUROMNI_LOCAL_FAKE_TOKEN_NOT_A_CREDENTIAL"
-state = {"product_lookups": 0, "order_posts": 0, "payload_valid": False}
+with open("/app/catalog-product.json", encoding="utf-8") as fixture_file:
+    catalog_product = json.load(fixture_file)
+state = {
+    "product_lookups": 0,
+    "product_lookup_ids": {},
+    "catalog_product_lookups": 0,
+    "order_posts": 0,
+    "payload_valid": False,
+}
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
-    def send_json(self, status, payload):
+    def send_json(self, status, payload, headers=None):
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        path = urlparse(self.path).path.rstrip("/") or "/"
         if path == "/health":
             self.send_json(200, {"status": "ok"})
+            return
+
+        if path == "/products":
+            if self.headers.get("Authorization") != f"Bearer {TEST_TOKEN}":
+                self.send_json(401, {"message": "Unauthorized"})
+                return
+            state["catalog_product_lookups"] += 1
+            self.send_json(
+                200,
+                [catalog_product],
+                {
+                    "X-Pagination-Current-Page": "1",
+                    "X-Pagination-Page-Count": "1",
+                    "X-Pagination-Total-Count": "1",
+                    "X-Pagination-Per-Page": "10",
+                },
+            )
             return
 
         if path.startswith("/products/"):
@@ -31,7 +58,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(401, {"message": "Unauthorized"})
                 return
             state["product_lookups"] += 1
-            self.send_json(200, {"id": 842001, "weight": 120, "volume": 320})
+            product_id = path.rsplit("/", 1)[-1]
+            state["product_lookup_ids"][product_id] = state["product_lookup_ids"].get(product_id, 0) + 1
+            if product_id == "842002":
+                self.send_json(200, {"id": 842002, "weight": 176, "volume": 176})
+            else:
+                self.send_json(200, {"id": 842001, "weight": 120, "volume": 320})
             return
 
         if path == "/assertions":
@@ -39,6 +71,8 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "product_lookups": state["product_lookups"],
+                    "product_lookup_ids": state["product_lookup_ids"],
+                    "catalog_product_lookups": state["catalog_product_lookups"],
                     "order_posts": state["order_posts"],
                     "payload_valid": state["payload_valid"],
                 },

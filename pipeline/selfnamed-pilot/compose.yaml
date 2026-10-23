@@ -66,6 +66,7 @@ services:
     command: ["python", "-B", "/app/mock_api.py"]
     volumes:
       - ./mock_api.py:/app/mock_api.py:ro,z
+      - ./catalog-product.json:/app/catalog-product.json:ro,z
     read_only: true
     cap_drop:
       - ALL

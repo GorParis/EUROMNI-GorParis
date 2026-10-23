@@ -7,6 +7,7 @@ PILOT_DIR="$(mktemp -d "$ROOT_DIR/.tmp/selfnamed-pilot.XXXXXX")"
 PROJECT="euromni-selfnamed-pilot-$$"
 COMPOSE_FILE="$ROOT_DIR/pipeline/selfnamed-pilot/compose.yaml"
 PLUGIN_DIR="$PILOT_DIR/plugins"
+SELFNAMED_VERSION="2.0.19"
 STARTED=0
 
 cleanup() {
@@ -36,17 +37,22 @@ curl --fail --location --silent --show-error \
   https://downloads.wordpress.org/plugin/woocommerce.10.9.0.zip \
   --output "$PILOT_DIR/woocommerce.zip"
 curl --fail --location --silent --show-error \
-  https://downloads.wordpress.org/plugin/selfnamed-cosmetics-on-demand.2.1.0.zip \
+  "https://downloads.wordpress.org/plugin/selfnamed-cosmetics-on-demand.${SELFNAMED_VERSION}.zip" \
   --output "$PILOT_DIR/selfnamed.zip"
 
 printf '%s  %s\n' \
   d19a480cd2d936165c26a487a52723c527091fd0410353f45e06477434c3dccc \
   "$PILOT_DIR/woocommerce.zip" \
-  f6bc806ec3f33e67edc085b46703e02666e431fe3ff351056928691bd91e7e5c \
+  6e464f7130f905d35686c1ded1faeadc010da784c8a18222b354b7f9be87809f \
   "$PILOT_DIR/selfnamed.zip" | sha256sum --check --status
 
 unzip -q "$PILOT_DIR/woocommerce.zip" -d "$PLUGIN_DIR"
 unzip -q "$PILOT_DIR/selfnamed.zip" -d "$PLUGIN_DIR"
+if ! grep -q "^ \* Version: ${SELFNAMED_VERSION}$" \
+  "$PLUGIN_DIR/selfnamed-cosmetics-on-demand/selfnamed-cosmetics-on-demand.php"; then
+  printf 'Downloaded Selfnamed plugin does not declare version %s.\n' "$SELFNAMED_VERSION" >&2
+  exit 1
+fi
 
 export PILOT_DIR
 podman compose -p "$PROJECT" -f "$COMPOSE_FILE" pull

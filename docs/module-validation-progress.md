@@ -199,8 +199,9 @@ n’a été créée.
 ## Pilote natif isolé transport/commande : Selfnamed WooCommerce
 
 Le plugin officiel « Selfnamed: Cosmetics on demand » est publié en version
-`2.1.0`, sous GPLv3 ou ultérieure (archive SHA-256
-`f6bc806ec3f33e67edc085b46703e02666e431fe3ff351056928691bd91e7e5c`;
+`2.1.0`, sous GPLv3 ou ultérieure. Pour que le pilote corresponde à la boutique
+locale, le test utilise la version `2.0.19` (archive SHA-256
+`6e464f7130f905d35686c1ded1faeadc010da784c8a18222b354b7f9be87809f`;
 [fiche WordPress.org](https://wordpress.org/plugins/selfnamed-cosmetics-on-demand/),
 [readme](https://plugins.svn.wordpress.org/selfnamed-cosmetics-on-demand/trunk/readme.txt)).
 Son API est configurée par une option WordPress ; l’essai garde le code du
@@ -228,6 +229,25 @@ expédition ou synchronisation Selfnamed. Toute expérience ultérieure avec des
 credentials réels est reportée à une décision distincte et devra utiliser des
 credentials de test, des données synthétiques et une sortie réseau explicitement
 autorisée et limitée.
+
+### Caractérisation du mapping catalogue Selfnamed
+
+La fixture synthétique [`catalog-product.json`](../pipeline/selfnamed-pilot/catalog-product.json)
+alimente maintenant aussi le mock catalogue du pilote. Le test oracle Go
+`TestSelfnamedCatalogProductMappingCharacterization` fige les champs observables
+depuis la source du plugin : création en brouillon, identifiant fournisseur,
+nom, description, prix recopié, gestion de stock désactivée, statut en stock,
+volume et conversion du poids `176 g` en `0.176 kg`. Il vérifie aussi le cas
+hors stock. Le pilote WordPress/WooCommerce rejoue cette fixture dans le plugin
+amont et contrôle les mêmes résultats ainsi que l’absence de doublon après
+réimport.
+
+Cette tranche caractérise le comportement ; elle n’est ni un mapper de production
+EUROMNI ni un build Wasm. Le pilote épingle désormais la même version Selfnamed
+`2.0.19` que la copie persistante, et vérifie que l’archive téléchargée déclare
+bien cette version. Aucun champ d’image n’est fourni dans la fixture pour éviter
+toute requête de téléchargement. La prochaine étape est de décider et tester
+une représentation IR explicite avant toute implémentation Wasm.
 
 ## Copie locale WooCommerce de référence — 23 octobre 2026
 

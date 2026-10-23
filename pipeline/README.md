@@ -265,7 +265,8 @@ go test -tags=integration ./internal/pipeline -run TestRealPrestaShopNewProducts
 ## Pilote natif Selfnamed hors pipeline
 
 [`pipeline/selfnamed-pilot/run.sh`](selfnamed-pilot/run.sh) lance le plugin
-Selfnamed `2.1.0` original dans WordPress/WooCommerce avec un mock API local.
+Selfnamed `2.0.19` original dans WordPress/WooCommerce avec un mock API local,
+aligné sur la version de la copie WooCommerce de référence.
 Ce test de développement exécute le PHP tiers dans les conteneurs éphémères,
 mais hors du CMS et du pipeline EUROMNI : il ne valide ni import, ni lowering,
 ni exécution Wasm.
@@ -275,9 +276,12 @@ aucun port n’est publié. Avant le lancement, l’hôte télécharge les archi
 officielles (SHA-256 vérifié) et récupère au besoin les images exactes par
 digest ; ces accès ne sont pas faits par les conteneurs. Les sources sont
 montées en lecture seule. Les données
-utilisent un acheteur synthétique, l’API reçoit uniquement un bearer token
-fictif et la stack n’a aucun credential Selfnamed. Le mock confirme les appels
-produit/commande et le groupe de livraison ; les courriels sont désactivés.
+utilisent une fixture produit et un acheteur synthétiques, l’API reçoit
+uniquement un bearer token fictif et la stack n’a aucun credential Selfnamed.
+Le pilote contrôle le mapping catalogue vers un produit brouillon (prix, poids,
+volume et stock), le réimport sans doublon, puis les appels de commande et le
+groupe de livraison ; les courriels sont désactivés. Le test oracle Go de la
+fixture est `TestSelfnamedCatalogProductMappingCharacterization`.
 La base et les sources temporaires sont supprimées au nettoyage. Aucun trafic
 vers le service réel, aucune commande réelle et aucune expédition ne sont
 testés. L’accès avec credentials réels reste une étape séparée, à autoriser

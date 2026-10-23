@@ -300,8 +300,11 @@ traitement. Ce n’est pas un processeur de paiement et il ne doit pas être
 interprété comme un test d’encaissement.
 
 Décision prise : commencer par le plugin original dans une stack éphémère
-WordPress/WooCommerce distincte d’EUROMNI, avec la version 2.1.0 téléchargée
-depuis WordPress.org et vérifiée par SHA-256. Le lanceur
+WordPress/WooCommerce distincte d’EUROMNI. Le pilote, initialement exécuté avec
+la version 2.1.0, est maintenant aligné sur la version 2.0.19 relevée dans la
+boutique restaurée. Son archive officielle WordPress.org est vérifiée par
+SHA-256 (`6e464f7130f905d35686c1ded1faeadc010da784c8a18222b354b7f9be87809f`)
+et le lanceur contrôle aussi la version déclarée dans le plugin. Le lanceur
 [`pipeline/selfnamed-pilot/run.sh`](../pipeline/selfnamed-pilot/run.sh) épingle
 les images de base, n’expose aucun port, exige un réseau Podman interne et
 remplace l’API Selfnamed par un mock local. Il n’utilise qu’un bearer token
@@ -317,6 +320,16 @@ l’ingestion, la traduction ou l’exécution Wasm par EUROMNI ; il ne simule p
 un achat ou une expédition chez Selfnamed. Toute étape ultérieure avec des
 credentials réels exigera une décision distincte, des credentials de test et
 une politique d’accès réseau explicitement limitée.
+
+La caractérisation catalogue utilise une fixture synthétique sans image et
+vérifie dans la version alignée la création en brouillon, l’identifiant
+Selfnamed, le nom, la description, le prix, le stock non géré, le statut en
+stock, le volume et la conversion de 176 g vers 0,176 kg. Le cas hors stock et
+le réimport sans doublon sont également vérifiés. Le test oracle Go et le
+parcours d’intégration natif WordPress/WooCommerce passent ; aucun appel API
+réel n’est effectué. Ce résultat reste une caractérisation native, pas une
+traduction Wasm. Voir le détail reproductible dans
+[`module-validation-progress.md`](module-validation-progress.md#caractérisation-du-mapping-catalogue-selfnamed).
 
 ### Boutique WooCommerce de référence restaurée localement — 23 octobre 2026
 
