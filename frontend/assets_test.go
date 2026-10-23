@@ -103,9 +103,22 @@ func TestEmbeddedFrontendContainsShippingCheckoutFlow(t *testing.T) {
 		"Gestion des modules",
 		"Fenêtre de publication (jours)",
 		"Nombre maximal de produits",
+		"admin-navigation",
+		`data-admin-tab="boutique"`,
+		`data-admin-tab="catalogue"`,
+		`data-admin-tab="commandes"`,
+		`data-admin-tab="livraison"`,
+		`data-admin-tab="modules"`,
+		`data-admin-tab="equipe"`,
+		"Préparer un essai boutique",
 	} {
 		if !strings.Contains(string(adminPage), feature) {
 			t.Errorf("admin page is missing module settings feature %q", feature)
+		}
+	}
+	for _, feature := range []string{"activateAdminTab", "data-admin-open-tab", "popstate"} {
+		if !strings.Contains(string(admin), feature) {
+			t.Errorf("admin script is missing section navigation feature %q", feature)
 		}
 	}
 	if strings.Contains(string(admin), "prompt(") {

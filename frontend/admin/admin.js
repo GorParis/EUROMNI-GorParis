@@ -2,6 +2,8 @@
   const tokenKey = "euromni.staff.token";
   const loginPanel = document.querySelector("#login-panel");
   const dashboard = document.querySelector("#dashboard");
+  const adminTabs = [...document.querySelectorAll("[data-admin-tab]")];
+  const adminTabPanels = [...document.querySelectorAll("[data-admin-panel]")];
   const status = document.querySelector("#status");
   const logoutButton = document.querySelector("#logout");
   const productForm = document.querySelector("#product-form");
@@ -75,6 +77,32 @@
     return payload.data;
   }
 
+  function activateAdminTab(name, updateHistory = true) {
+    const selectedTab = adminTabs.find((tab) => tab.dataset.adminTab === name && !tab.hidden) ||
+      adminTabs.find((tab) => !tab.hidden);
+    if (!selectedTab) return;
+
+    for (const tab of adminTabs) {
+      const selected = tab === selectedTab;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+    }
+    for (const panel of adminTabPanels) {
+      panel.hidden = panel.dataset.adminPanel !== selectedTab.dataset.adminTab;
+    }
+
+    const hash = `#${selectedTab.dataset.adminTab}`;
+    if (updateHistory && window.location.hash !== hash) {
+      window.history.pushState(null, "", hash);
+    } else if (!updateHistory && window.location.hash !== hash) {
+      window.history.replaceState(null, "", hash);
+    }
+  }
+
+  function activateAdminTabFromHash() {
+    if (!dashboard.hidden) activateAdminTab(window.location.hash.slice(1), false);
+  }
+
   function showDashboard(identity) {
     if (currentIdentity?.shop_id !== identity.shop_id) {
       shippingHistoryTargets = null;
@@ -88,13 +116,22 @@
     loginPanel.hidden = true;
     dashboard.hidden = false;
     logoutButton.hidden = false;
-    document.querySelector("#staff-panel").hidden = identity.role !== "owner";
-    document.querySelector("#orders-panel").hidden =
-      !["owner", "admin", "support"].includes(identity.role);
-    shippingPanel.hidden = !["owner", "admin"].includes(identity.role);
-    moduleSettingsPanel.hidden = !["owner", "admin"].includes(identity.role);
+    const isOwner = identity.role === "owner";
+    const canManageShipping = ["owner", "admin"].includes(identity.role);
+    const canViewOrders = ["owner", "admin", "support"].includes(identity.role);
+    document.querySelector("#staff-panel").hidden = !isOwner;
+    document.querySelector("#orders-panel").hidden = !canViewOrders;
+    shippingPanel.hidden = !canManageShipping;
+    moduleSettingsPanel.hidden = !canManageShipping;
+    document.querySelector("#tab-equipe").hidden = !isOwner;
+    document.querySelector("#tab-commandes").hidden = !canViewOrders;
+    document.querySelector("#tab-livraison").hidden = !canManageShipping;
+    document.querySelector("#tab-modules").hidden = !canManageShipping;
+    document.querySelector('[data-admin-open-tab="commandes"]').closest("li").hidden = !canViewOrders;
+    document.querySelector('[data-admin-open-tab="livraison"]').closest("li").hidden = !canManageShipping;
     document.querySelector("#identity").textContent =
       `${identity.name || identity.email} · ${identity.email} · rôle ${identity.role}`;
+    activateAdminTab(window.location.hash.slice(1), false);
   }
 
   function clearSession() {
@@ -1347,6 +1384,30 @@
       loginForm.elements.password.value = "";
     }
   });
+
+  for (const tab of adminTabs) {
+    tab.addEventListener("click", () => activateAdminTab(tab.dataset.adminTab));
+    tab.addEventListener("keydown", (event) => {
+      const availableTabs = adminTabs.filter((item) => !item.hidden);
+      const index = availableTabs.indexOf(tab);
+      let nextIndex;
+      if (event.key === "ArrowRight") nextIndex = (index + 1) % availableTabs.length;
+      else if (event.key === "ArrowLeft") nextIndex = (index - 1 + availableTabs.length) % availableTabs.length;
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = availableTabs.length - 1;
+      else return;
+      event.preventDefault();
+      availableTabs[nextIndex].focus();
+      activateAdminTab(availableTabs[nextIndex].dataset.adminTab);
+    });
+  }
+  for (const shortcut of document.querySelectorAll("[data-admin-open-tab]")) {
+    shortcut.addEventListener("click", () => {
+      activateAdminTab(shortcut.dataset.adminOpenTab);
+      adminTabs.find((tab) => tab.dataset.adminTab === shortcut.dataset.adminOpenTab && !tab.hidden)?.focus();
+    });
+  }
+  window.addEventListener("popstate", activateAdminTabFromHash);
 
   productForm.addEventListener("submit", async (event) => {
     event.preventDefault();

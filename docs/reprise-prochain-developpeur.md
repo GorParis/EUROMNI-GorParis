@@ -31,6 +31,12 @@ pas une preuve que l'arbre de travail est propre.
   ponctuelle par âge de fichier, mais aucune durée ou fréquence automatique
   n'est définie. Ne pas l'activer en production avant décision sur ces contrôles
   et revue de sécurité.
+- Le back-office est organisé en six sections (Boutique, Catalogue, Commandes,
+  Livraison, Modules et Équipe). Le parcours Chromium du 23 octobre a exercé les
+  principales actions sur un CMS et une base PostgreSQL 16 jetables ; les
+  résultats et la portée du runner existant sont consignés dans
+  [`etat-projet.md`](etat-projet.md). L’instance jetable est arrêtée. Le runner
+  Playwright versionné ne couvre pas encore toutes les actions administratives.
 - `.vscode/` est un dossier non suivi préexistant : ne pas l'ajouter au commit
   sans accord explicite.
 
@@ -71,6 +77,13 @@ pas une preuve que l'arbre de travail est propre.
   et les archives/checksums Linux et Windows publiés.
 - `go test ./internal/quarantine ./cmd/quarantine-reconciler` : réussi après
   l'ajout de la purge ponctuelle (21 octobre 2026).
+- Pour l’administration réorganisée : `go test ./frontend`,
+  `node --check frontend/admin/admin.js`,
+  `node --check scripts/local-pilot/playwright/run.mjs` et `git diff --check`
+  réussissent. Chromium confirme la navigation par section, le motif et la
+  création d’un fournisseur, la promotion d’un build, l’accès à la vitrine et
+  la déconnexion. La campagne d’actions a utilisé une base de test jetable,
+  supprimée après le test ; elle n’est pas encore un scénario complet du runner.
 
 ## Prochaines actions recommandées
 
@@ -88,8 +101,12 @@ pas une preuve que l'arbre de travail est propre.
    coordonnée avant le déploiement.
 4. Rejouer `go test ./...`, `go vet ./...`, les tests d'intégration pertinents,
    et vérifier la matrice CI Windows/Linux après chaque changement.
-5. Ne pas commencer la traduction PHP générale. QP-04/05 (contrats des
-   adaptateurs et de l'IR) sont des prérequis avant l'élargissement métier.
+5. Si des régressions UI deviennent fréquentes, étendre le runner Playwright
+   avec des scénarios isolés pour les actions administratives actuellement
+   vérifiées manuellement ; garder toute base de test séparée de la base locale
+   persistante.
+6. Ne pas commencer la traduction PHP générale. QP-04/05 (contrats des
+    adaptateurs et de l'IR) sont des prérequis avant l'élargissement métier.
 
 ## Message de reprise à copier dans une nouvelle conversation
 

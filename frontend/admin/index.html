@@ -62,6 +62,21 @@
       button.danger { background: #9f1239; }
       button:disabled { opacity: 0.6; cursor: wait; }
       .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      .admin-navigation {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        gap: 0.5rem;
+        overflow-x: auto;
+        margin-bottom: 1.25rem;
+        padding: 0.75rem;
+        border: 1px solid #e7e2d8;
+        border-radius: 0.7rem;
+        background: #fffefa;
+      }
+      .admin-navigation button { flex: 0 0 auto; }
+      .admin-navigation button[aria-selected="true"] { background: #57534e; }
       .order-action-form {
         flex-basis: 100%;
         display: grid;
@@ -114,31 +129,31 @@
       <section id="dashboard" hidden>
         <p id="identity" class="muted"></p>
         <p id="status" class="status" role="status" aria-live="polite"></p>
+        <nav id="admin-navigation" class="admin-navigation" role="tablist" aria-label="Sections du back-office">
+          <button id="tab-boutique" type="button" role="tab" aria-controls="tab-panel-boutique" aria-selected="true" data-admin-tab="boutique">Boutique</button>
+          <button id="tab-catalogue" type="button" role="tab" aria-controls="tab-panel-catalogue" aria-selected="false" data-admin-tab="catalogue" tabindex="-1">Catalogue</button>
+          <button id="tab-commandes" type="button" role="tab" aria-controls="tab-panel-commandes" aria-selected="false" data-admin-tab="commandes" tabindex="-1">Commandes</button>
+          <button id="tab-livraison" type="button" role="tab" aria-controls="tab-panel-livraison" aria-selected="false" data-admin-tab="livraison" tabindex="-1" hidden>Livraison</button>
+          <button id="tab-modules" type="button" role="tab" aria-controls="tab-panel-modules" aria-selected="false" data-admin-tab="modules" tabindex="-1" hidden>Modules</button>
+          <button id="tab-equipe" type="button" role="tab" aria-controls="tab-panel-equipe" aria-selected="false" data-admin-tab="equipe" tabindex="-1" hidden>Équipe</button>
+        </nav>
+        <section id="tab-panel-boutique" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-boutique" data-admin-panel="boutique">
+          <section class="panel">
+            <h1>Préparer un essai boutique</h1>
+            <p class="muted">Configurez le catalogue et la livraison, ouvrez la vitrine pour passer une commande, puis retrouvez-la dans les commandes.</p>
+            <ol>
+              <li><button class="secondary" type="button" data-admin-open-tab="catalogue">Vérifier les produits du catalogue</button></li>
+              <li><button class="secondary" type="button" data-admin-open-tab="livraison">Vérifier les tarifs de livraison</button></li>
+              <li><a href="/storefront/" target="_blank" rel="noopener">Ouvrir la vitrine</a> et tester le parcours panier/commande.</li>
+              <li><button class="secondary" type="button" data-admin-open-tab="commandes">Consulter les commandes de test</button></li>
+            </ol>
+          </section>
+        </section>
+        <section id="tab-panel-catalogue" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-catalogue" data-admin-panel="catalogue" hidden>
         <section class="panel">
           <h1>Produits</h1>
           <p class="muted">Les variantes, prix, options et stocks sont remplacés par les valeurs enregistrées dans le formulaire.</p>
           <div id="products" class="product-list"></div>
-        </section>
-        <section id="module-settings-panel" class="panel" hidden>
-          <h2>Gestion des modules</h2>
-          <p class="muted">Registre et installations de cette boutique. Les actions de cycle de vie sont limitées aux builds validés et réservées aux rôles owner et admin.</p>
-          <p id="module-inventory-status" class="status" role="status" aria-live="polite"></p>
-          <div id="module-inventory" class="product-list"></div>
-          <h3>Réglages — PrestaShop Nouveaux produits</h3>
-          <p class="muted">Le PHP source n’est pas exécuté : le widget utilise le build Wasm validé, avec la provenance et les capacités affichées dans l’inventaire.</p>
-          <p id="module-settings-status" class="status" role="status" aria-live="polite"></p>
-          <form id="new-products-settings-form" hidden>
-            <div class="form-grid">
-              <label>Fenêtre de publication (jours)
-                <input name="days" type="number" min="0" max="3650" step="1" required />
-                <span class="muted">0 désactive le module ; maximum 3 650 jours.</span>
-              </label>
-              <label>Nombre maximal de produits
-                <input name="limit" type="number" min="1" max="100" step="1" required />
-              </label>
-            </div>
-            <button type="submit">Enregistrer les réglages</button>
-          </form>
         </section>
         <section class="panel">
           <h2 id="product-form-title">Créer un produit</h2>
@@ -215,7 +230,7 @@
           <form id="supplier-form">
             <input name="id" type="hidden" />
             <div class="form-grid">
-              <label>Code<input name="code" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" required /></label>
+              <label>Code<input name="code" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" required /></label>
               <label>Nom<input name="name" maxlength="200" required /></label>
               <label class="category-option"><input name="active" type="checkbox" checked /> Actif</label>
             </div>
@@ -243,6 +258,69 @@
             </div>
           </form>
         </section>
+        </section>
+        <section id="tab-panel-commandes" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-commandes" data-admin-panel="commandes" hidden>
+        <section id="orders-panel" class="panel" hidden>
+          <h2>Commandes</h2>
+          <p class="muted">Un membre owner ou admin peut confirmer uniquement un paiement réellement reçu hors ligne : aucune carte n’est débitée ici. Après vérification du règlement, il peut marquer la commande expédiée et indiquer éventuellement son numéro de suivi.</p>
+          <div id="orders" class="product-list"></div>
+          <div id="order-detail" class="card" hidden></div>
+        </section>
+        </section>
+        <section id="tab-panel-livraison" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-livraison" data-admin-panel="livraison" hidden>
+        <section id="shipping-panel" class="panel" hidden>
+          <h2>Transporteurs et livraisons</h2>
+          <p class="muted">Un transporteur peut proposer plusieurs services. Chaque tarif appartient à un service et une zone; une nouvelle sauvegarde crée une nouvelle version du tarif.</p>
+          <h3>Transporteurs</h3>
+          <div id="shipping-carriers" class="product-list"></div>
+          <button id="add-shipping-carrier" class="secondary" type="button">Ajouter un transporteur</button>
+          <h3>Services de livraison</h3>
+          <div id="shipping-services" class="product-list"></div>
+          <button id="add-shipping-service" class="secondary" type="button">Ajouter un service</button>
+          <h3>Zones de livraison</h3>
+          <div id="shipping-zones" class="product-list"></div>
+          <button id="add-shipping-zone" class="secondary" type="button">Ajouter une zone</button>
+          <h3>Tarifs par service et zone</h3>
+          <div id="shipping-rates" class="product-list"></div>
+          <button id="add-shipping-rate" class="secondary" type="button">Ajouter un tarif</button>
+          <div class="actions" style="margin-top: 1rem">
+            <button id="save-shipping" type="button">Enregistrer la configuration transport</button>
+          </div>
+          <h3>Historique des tarifs</h3>
+          <p class="muted">Les anciennes versions sont conservées. Une restauration publie une nouvelle version et ne modifie pas les commandes déjà passées.</p>
+          <div id="shipping-history-filters" class="actions"></div>
+          <div id="shipping-history" class="product-list"></div>
+          <div id="shipping-history-pagination" class="actions" hidden>
+            <button id="shipping-history-previous" class="secondary" type="button">Versions plus récentes</button>
+            <button id="shipping-history-next" class="secondary" type="button">Versions plus anciennes</button>
+          </div>
+          <section id="shipping-history-comparison" class="card" hidden aria-live="polite"></section>
+        </section>
+        </section>
+        <section id="tab-panel-modules" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-modules" data-admin-panel="modules" hidden>
+        <section id="module-settings-panel" class="panel" hidden>
+          <h2>Gestion des modules</h2>
+          <p class="muted">Registre et installations de cette boutique. Les actions de cycle de vie sont limitées aux builds validés et réservées aux rôles owner et admin.</p>
+          <p id="module-inventory-status" class="status" role="status" aria-live="polite"></p>
+          <div id="module-inventory" class="product-list"></div>
+          <h3>Réglages — PrestaShop Nouveaux produits</h3>
+          <p class="muted">Le PHP source n’est pas exécuté : le widget utilise le build Wasm validé, avec la provenance et les capacités affichées dans l’inventaire.</p>
+          <p id="module-settings-status" class="status" role="status" aria-live="polite"></p>
+          <form id="new-products-settings-form" hidden>
+            <div class="form-grid">
+              <label>Fenêtre de publication (jours)
+                <input name="days" type="number" min="0" max="3650" step="1" required />
+                <span class="muted">0 désactive le module ; maximum 3 650 jours.</span>
+              </label>
+              <label>Nombre maximal de produits
+                <input name="limit" type="number" min="1" max="100" step="1" required />
+              </label>
+            </div>
+            <button type="submit">Enregistrer les réglages</button>
+          </form>
+        </section>
+        </section>
+        <section id="tab-panel-equipe" class="admin-tab-panel" role="tabpanel" aria-labelledby="tab-equipe" data-admin-panel="equipe" hidden>
         <section id="staff-panel" class="panel" hidden>
           <h2>Membres staff</h2>
           <p class="muted">Réservé au propriétaire. Ajouter ou modifier un membre réinitialise son mot de passe si un nouveau mot de passe est renseigné.</p>
@@ -271,39 +349,6 @@
             </div>
           </form>
         </section>
-        <section id="orders-panel" class="panel" hidden>
-          <h2>Commandes</h2>
-          <p class="muted">Un membre owner ou admin peut confirmer uniquement un paiement réellement reçu hors ligne : aucune carte n’est débitée ici. Après vérification du règlement, il peut marquer la commande expédiée et indiquer éventuellement son numéro de suivi.</p>
-          <div id="orders" class="product-list"></div>
-          <div id="order-detail" class="card" hidden></div>
-        </section>
-        <section id="shipping-panel" class="panel" hidden>
-          <h2>Transporteurs et livraisons</h2>
-          <p class="muted">Un transporteur peut proposer plusieurs services. Chaque tarif appartient à un service et une zone; une nouvelle sauvegarde crée une nouvelle version du tarif.</p>
-          <h3>Transporteurs</h3>
-          <div id="shipping-carriers" class="product-list"></div>
-          <button id="add-shipping-carrier" class="secondary" type="button">Ajouter un transporteur</button>
-          <h3>Services de livraison</h3>
-          <div id="shipping-services" class="product-list"></div>
-          <button id="add-shipping-service" class="secondary" type="button">Ajouter un service</button>
-          <h3>Zones de livraison</h3>
-          <div id="shipping-zones" class="product-list"></div>
-          <button id="add-shipping-zone" class="secondary" type="button">Ajouter une zone</button>
-          <h3>Tarifs par service et zone</h3>
-          <div id="shipping-rates" class="product-list"></div>
-          <button id="add-shipping-rate" class="secondary" type="button">Ajouter un tarif</button>
-          <div class="actions" style="margin-top: 1rem">
-            <button id="save-shipping" type="button">Enregistrer la configuration transport</button>
-          </div>
-          <h3>Historique des tarifs</h3>
-          <p class="muted">Les anciennes versions sont conservées. Une restauration publie une nouvelle version et ne modifie pas les commandes déjà passées.</p>
-          <div id="shipping-history-filters" class="actions"></div>
-          <div id="shipping-history" class="product-list"></div>
-          <div id="shipping-history-pagination" class="actions" hidden>
-            <button id="shipping-history-previous" class="secondary" type="button">Versions plus récentes</button>
-            <button id="shipping-history-next" class="secondary" type="button">Versions plus anciennes</button>
-          </div>
-          <section id="shipping-history-comparison" class="card" hidden aria-live="polite"></section>
         </section>
         </section>
     </main>

@@ -88,8 +88,13 @@ try {
     await page.getByRole("textbox", { name: "Mot de passe" }).first().fill(credentials.password);
     await page.getByRole("button", { name: "Se connecter" }).click();
     await page.getByRole("button", { name: "Se déconnecter" }).waitFor({ timeout: 10000 });
-    assert.match(await page.locator("body").innerText(), /Gestion des modules/, "authenticated dashboard should load");
-    console.log("PASS admin login and dashboard");
+    await page.getByRole("heading", { name: "Préparer un essai boutique" }).waitFor();
+    await page.getByRole("tab", { name: "Catalogue" }).click();
+    assert.equal(new URL(page.url()).hash, "#catalogue", "catalog tab should be directly addressable");
+    await page.getByRole("tabpanel", { name: "Catalogue" }).waitFor();
+    await page.getByRole("tab", { name: "Boutique" }).click();
+    await page.getByRole("heading", { name: "Préparer un essai boutique" }).waitFor();
+    console.log("PASS admin login, dashboard, and section navigation");
   } else {
     await page.getByRole("heading", { name: "Connexion staff" }).waitFor();
     console.log("PASS admin login page (authentication skipped)");

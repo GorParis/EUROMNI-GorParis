@@ -1,5 +1,37 @@
 # État du projet EUROMNI
 
+## Administration réorganisée et parcours Playwright — 23 octobre 2026
+
+Le back-office est maintenant réparti en six sections — Boutique, Catalogue,
+Commandes, Livraison, Modules et Équipe — avec raccourcis pour préparer un
+parcours de boutique, navigation par fragment d’URL, retour navigateur et
+clavier. Les sections continuent de respecter les permissions existantes.
+La validation HTML du code fournisseur a également été corrigée.
+
+Le parcours a été vérifié dans Chromium sur un CMS local relié à une base
+PostgreSQL 16 temporaire : navigation, formulaires et actions de catalogue et
+d’équipe, réglages et cycle de vie de module, livraison et actions de commande,
+lien vers la vitrine et déconnexion. La promotion d’un build a réussi après
+publication d’un candidat supplémentaire. L’inventaire n’expose que les builds
+courants ou épinglés par une boutique ; les builds historiques non référencés
+ne sont donc pas des candidats à promouvoir. Ce comportement est attendu, pas
+un défaut d’inventaire.
+
+La validation du motif fournisseur et sa création ont réussi dans Chromium.
+`go test ./frontend`, `node --check frontend/admin/admin.js`,
+`node --check scripts/local-pilot/playwright/run.mjs` et `git diff --check`
+passent. Le parcours détaillé a été conduit dans le navigateur ; le runner
+Playwright versionné vérifie la santé, la connexion, la navigation et la vitrine,
+mais ne couvre pas encore toutes les actions administratives.
+
+La base et le CMS jetables ont été arrêtés et les identifiants temporaires
+supprimés. La base persistante n’a pas été utilisée et le service tiers déjà
+présent sur le port `55439` n’a pas été touché. Ces changements restent locaux,
+sans commit. Les modifications préexistantes dans `cmd/quarantine-reconciler`,
+`internal/store` et `.vscode/` ont été préservées.
+Les consignes durables des agents sont maintenant dans `AGENTS.md` et
+`.github/copilot-instructions.md`.
+
 ## Mise à jour CI — avertissements Actions (21 octobre 2026)
 
 Les workflows produit ont été mis à jour pour supprimer les avertissements

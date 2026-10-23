@@ -56,4 +56,13 @@ du CMS, puis confirmer l’expédition avec un numéro de suivi facultatif. Cett
 confirmation manuelle ne débite aucune carte et ne remplace pas l’intégration
 d’un prestataire de paiement.
 
+Le back-office est organisé en sections : **Boutique** guide le parcours d’essai
+et ouvre la vitrine, **Catalogue** regroupe produits et références,
+**Commandes** affiche les commandes, **Livraison** configure transporteurs et
+tarifs, **Modules** gère les builds et réglages, et **Équipe** gère les membres.
+Les sections restent soumises aux rôles existants et sont accessibles par
+fragment d’URL, par exemple `/admin/#commandes`. Pour tester un achat, suivre
+les raccourcis de l’onglet Boutique : vérifier le catalogue et la livraison,
+passer la commande dans la vitrine, puis la retrouver dans Commandes.
+
 Consomme uniquement les APIs du cœur EUROMNI (REST / GraphQL). Pas de thème PHP.
