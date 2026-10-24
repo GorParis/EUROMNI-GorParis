@@ -45,6 +45,7 @@ Le module minimal doit démontrer :
 19. politique provisoire : grâce 7 jours, cadence normale 24 heures, retry 5 minutes ; valeurs configurables et à réviser avant production
 20. contrat de package distribuable : validation stricte du manifeste, de l’IR JSON canonique et du Wasm, avec vérification des hashes, versions approuvées, capabilities, signatures ABI et imports/exports ; l’intégrité ne prouve pas l’authenticité du producteur
 21. publication sécurisée par le même validateur de package avant écriture dans le FileStore ; un Wasm avec import supplémentaire est rejeté avant tout stockage
+22. primitives expérimentales Ed25519 : enveloppe détachée liée aux digests des trois blobs ; clé de confiance fournie hors package ; vérification avant validation structurelle ; aucune intégration à un service, à l'import, à la publication ni à la promotion
 
 ## Campagne non financière — 19 octobre 2026
 
@@ -352,12 +353,13 @@ générale du plugin ni une décision sur son mode de distribution.
    puis démontrer deux builds identiques et l’exécution de l’artefact publié.
 6. Contrat du build distribuable cadré : trois blobs transport-indépendants
    (`manifest.json`, `module.ir.json`, `module.wasm`), validateur strict et
-   validation pré-publication. Proposition d'authenticité : signature Ed25519
-   détachée sur les trois digests, clé publique identifiée par son empreinte et
-   approuvée hors package. Cette proposition reste à approuver et implémenter ;
-   provisionnement/rotation/révocation, limites de transfert et politique
-   d'approbation restent ouvertes. Le choix entre catalogue central et
-   traitement local est différé.
+   validation pré-publication. Le prototype d'authenticité Ed25519 est
+   implémenté : signature détachée sur les trois digests, clé publique
+   identifiée par empreinte et approuvée hors package. Le périmètre a été
+   approuvé pour ce prototype ; provisionnement/rotation/révocation, limites
+   de transfert et politique de production restent ouverts. Aucun service de
+   signature ou flux de réception n'est connecté. Le choix entre catalogue
+   central et traitement local est différé.
 
 Devise, locale et unité de volume restent non résolues : ne pas les inventer
 pour faire passer l’oracle. La cible est une transformation métier contrôlée et

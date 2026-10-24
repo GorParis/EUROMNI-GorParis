@@ -24,14 +24,15 @@ pas une preuve que l'arbre de travail est propre.
   signatures et limites mémoire). Les parcours existants de publication et
   d'installation passent par ce validateur avant `artifact.Store.Put`. Aucun
   workflow de réception/distribution n'est encore branché.
-- Les hashes prouvent l'intégrité, pas l'identité de l'éditeur. Une proposition
-  non approuvée décrit une signature Ed25519 détachée sur les digests exacts
-  des trois blobs, vérifiée par une liste de clés publiques de confiance
-  fournie hors package. Elle est documentée dans `pipeline/README.md`, mais
-  n'est pas implémentée. Le périmètre/provisionnement/rotation/révocation des
-  clés, les limites de transfert et la politique d'approbation avant promotion
-  restent à décider ; aucun choix n'est fait entre catalogue central et builds
-  privés locaux.
+- Les hashes prouvent l'intégrité, pas l'identité de l'éditeur. Le prototype
+  Ed25519 approuvé signe les digests exacts des trois blobs via une enveloppe
+  détachée ; `ValidateSignedBuildPackage` exige une clé publique explicitement
+  fournie hors package. La clé privée vient du signataire et n'est jamais
+  stockée par ces helpers. Cette primitive n'est reliée ni à l'import ZIP, ni
+  à la publication, ni à la promotion ; elle ne constitue pas une politique de
+  production. Provisionnement/rotation/révocation des clés, limites de
+  transfert et politique d'approbation restent ouverts ; aucun choix n'est
+  fait entre catalogue central et builds privés locaux.
 - QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
   Selfnamed lié à son IR et le validateur de package ; le chemin de publication
   rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP
@@ -159,37 +160,39 @@ pas une preuve que l'arbre de travail est propre.
 
 ## Prochaines actions recommandées
 
-1. Faire approuver ou ajuster la proposition Ed25519 de
-    `pipeline/README.md` : périmètre/provisionnement des clés de confiance,
-    rotation/révocation, validité, signataires autorisés et approbation avant
-    promotion. Ne pas commencer l'intégration de signature tant que la politique
-    n'est pas validée.
-2. Avant de construire un récepteur, décider les limites de taille/transfert et
-    l'endroit où la liste de clés de confiance est administrée.
+1. Qualifier la primitive Ed25519 avec tests complets, CI Linux/Windows et
+    revue ciblée de l'implémentation avant tout usage opérationnel.
+2. Décider le périmètre d'une politique de production : provisionnement,
+    rotation/révocation et administration des clés de confiance, signataires,
+    durée de validité, approbation avant promotion et limites de transfert.
+    L'approbation du prototype ne vaut pas approbation de cette politique.
+3. Avant de construire un récepteur, décider les limites de taille/transfert
+    et l'endroit où la liste de clés de confiance est administrée.
     `ValidateBuildPackage` protège les publications internes, mais l'import ZIP
-    de quarantaine n'accepte pas encore le package Wasm distribuable.
-3. Garder le contrat de package neutre quant au mode de livraison jusqu'à une
+    de quarantaine n'accepte pas encore le package Wasm distribuable ; le
+    vérificateur de signature n'est pas relié à un flux d'import ou de promotion.
+4. Garder le contrat de package neutre quant au mode de livraison jusqu'à une
     décision explicite entre catalogue central et traitement local ; ne pas
     présenter un hash seul comme une preuve d'authenticité.
-4. Obtenir une revue de sécurité indépendante du validateur ZIP, de l'endpoint
+5. Obtenir une revue de sécurité indépendante du validateur ZIP, de l'endpoint
    d'upload et du stockage en quarantaine ; traiter les findings avant toute
    activation hors environnement de test. Le contrôle local du 21 octobre était
    ciblé et ne remplace pas cette revue.
-5. Décider la durée et la fréquence de rétention, puis planifier
+6. Décider la durée et la fréquence de rétention, puis planifier
    `cmd/quarantine-reconciler` avec `EUROMNI_QUARANTINE_DIR` et une option
    `-older-than` explicite (par exemple `720h` pour 30 jours). La commande ne
    crée pas le répertoire cible et ne définit pas de politique par défaut.
    Garder la quarantaine isolée des artefacts publiés.
-6. Évaluer l'absence de limitation de débit, l'usage du stockage local et le
+7. Évaluer l'absence de limitation de débit, l'usage du stockage local et le
    scénario multi-instance ; documenter les limites ou choisir une solution
    coordonnée avant le déploiement.
-7. Rejouer `go test ./...`, `go vet ./...`, les tests d'intégration pertinents,
+8. Rejouer `go test ./...`, `go vet ./...`, les tests d'intégration pertinents,
    et vérifier la matrice CI Windows/Linux après chaque changement.
-8. Si des régressions UI deviennent fréquentes, étendre le runner Playwright
+9. Si des régressions UI deviennent fréquentes, étendre le runner Playwright
    avec des scénarios isolés pour les actions administratives actuellement
    vérifiées manuellement ; garder toute base de test séparée de la base locale
    persistante.
-9. Ne pas commencer la traduction PHP générale. QP-04/05 (contrats des
+10. Ne pas commencer la traduction PHP générale. QP-04/05 (contrats des
      adaptateurs et de l'IR) sont des prérequis avant l'élargissement métier.
 
 ## Message de reprise à copier dans une nouvelle conversation

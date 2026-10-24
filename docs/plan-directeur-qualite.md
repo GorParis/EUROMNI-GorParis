@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.22 |
+| Version | 3.23 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-24 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -47,8 +47,9 @@ et le stockage local d’artefacts par SHA-256 existent. La génération reste
 limitée à l’IR supportée ; le build Rust `no_std` du prototype Selfnamed est
 lié à son IR approuvé et reproductible, sans constituer une traduction PHP
 générale. Le package transport-indépendant (manifeste, IR canonique, Wasm) a
-un validateur strict, mais aucune signature producteur ni politique de
-distribution. Les cibles runtime Windows/amd64 et Linux/amd64 ont été testées
+un validateur strict et un prototype de signature détachée, sans branchement
+aux flux de réception ou de promotion ni politique de production. Les cibles
+runtime Windows/amd64 et Linux/amd64 ont été testées
 dans le workflow natif de distribution ; les architectures et systèmes de
 fichiers non testés restent exclus. L'ingestion HTTP QP-03 existe en opt-in et
 dépose uniquement des ZIP validés en quarantaine privée ; elle ne compile,
@@ -56,11 +57,11 @@ n'extrait ni n'exécute le PHP.
 Voir [`portability.md`](portability.md) pour les limites et preuves ; QP-01
 reste ouvert sur le processus de build/promotion métier.
 
-Une signature Ed25519 détachée des trois digests, vérifiée contre des clés
-publiques de confiance injectées hors package, est proposée comme modèle
-d’authenticité. Cette proposition n’est ni approuvée ni implémentée ; la gestion
-des clés, les responsabilités de signature et la politique d’approbation
-restent à décider.
+Un prototype Ed25519 détaché des trois digests est implémenté : la clé publique
+de confiance est injectée hors package par l’appelant. Ce périmètre a été
+approuvé pour le prototype le 24 octobre 2026 ; ce n’est pas une politique de
+production. La gestion durable des clés, les responsabilités de signature et
+la politique d’approbation restent à décider.
 
 Avant toute reprise de code, vérifier l’état réel de l’arbre de travail et
 l’historique Git. Les notes de version précédentes ne permettent pas de déduire
@@ -76,7 +77,7 @@ la documentation du projet.
 | ID | Priorité | Action / dépendance | Critère d’acceptation | Preuve attendue | Statut |
 |---|---|---|---|---|---|
 | QP-01 | P0 | Prouver une toolchain qui produit un artefact Wasm portable compatible avec `euromni.call`, sans imports système implicites. Dépend du contrat ABI actuel. | Build reproductible depuis un worker épinglé ; module n’importe que l’ABI autorisée et s’exécute sur la matrice Wasmtime approuvée. Aucun compilateur/LLVM local requis en production. | Spike Rust `no_std` 1.99.1/Cargo `--frozen` : imports, exports, exécution Wasmtime et égalité SHA-256 de deux builds propres ; CI Go/Rust Linux/Windows verte (run 39580872372), distribution Linux/Windows avec intégrations, smoke tests et artefacts publiés (run 39581659670). Les incréments Selfnamed `9f99694` et `912545b` ajoutent le mapping guest et la génération liée à l’IR ; cette preuve ciblée ne qualifie pas la traduction métier générale ni un worker de production. | En cours |
-| QP-02 | P0 | Définir le manifeste/versionnement d’artefact et son lien atomique avec `modules` et `shop_modules`. | Hash source, hash Wasm, plateforme/version, versions d’adaptateur/IR/compilateur, ABI et capabilities sont traçables ; un échec ne remplace pas la version active. | Builds immuables, pointeur courant et pin par installation migrés en PostgreSQL/MariaDB ; publication et promotion transactionnelles couvertes par intégration PostgreSQL, migration et parcours MariaDB dédiés réussis. Manifeste strict, allowlist des versions approuvées, promotion dans le CMS de test et exécution du build promu vérifiés. `ValidateBuildPackage` ajoute le contrôle canonique du triplet manifeste/IR/Wasm, des imports/exports et signatures ABI avant `artifact.Store.Put` dans les parcours de publication internes ; aucun flux de réception de package distribuable n’est encore branché. La signature du producteur n’est pas couverte. | Terminé |
+| QP-02 | P0 | Définir le manifeste/versionnement d’artefact et son lien atomique avec `modules` et `shop_modules`. | Hash source, hash Wasm, plateforme/version, versions d’adaptateur/IR/compilateur, ABI et capabilities sont traçables ; un échec ne remplace pas la version active. | Builds immuables, pointeur courant et pin par installation migrés en PostgreSQL/MariaDB ; publication et promotion transactionnelles couvertes par intégration PostgreSQL, migration et parcours MariaDB dédiés réussis. Manifeste strict, allowlist des versions approuvées, promotion dans le CMS de test et exécution du build promu vérifiés. `ValidateBuildPackage` vérifie le triplet manifeste/IR/Wasm avant stockage. Le prototype Ed25519 lie les octets par leurs digests et vérifie une clé explicitement fournie hors package ; ni réception distribuable ni politique de production ne sont branchées. | Terminé |
 | QP-03 | P0 | Concevoir et implémenter une ingestion admin authentifiée avec quarantaine isolée. Le premier incrément accepte un ZIP brut (pas multipart), le valide sans extraction ni exécution, le stocke sous empreinte dans un répertoire privé configurable et ne le publie pas comme build. | Authentification admin, charge plafonnée, nombre d’entrées et taille décompressée totale bornés ; doublons, traversal, chemins absolus/Windows, liens/types spéciaux, archive corrompue/bombe et extensions non autorisées rejetés. Échec de validation sans écriture en quarantaine ; aucune exécution de PHP ; aucun endpoint anonyme. | Tests API, stockage et `PurgeBefore` réussis localement, y compris Go 1.25. `gosec` G201/G202 : 0 finding SQL ; `govulncheck` après pgx v5.9.2/x-text v0.41.0 : 0 vulnérabilité atteignable. Go CI #60 a réussi sur Linux/Windows avant le relèvement Go 1.25. Standalone #8 tentative 2 a réussi sur Linux/Windows mais cible `6610399`, avant la mise à jour des actions. Un nouveau Go CI doit qualifier Go 1.25 sur Windows ; un nouveau dispatch standalone sur le commit courant doit valider le paquetage. Gosec complet garde 22 alertes à trier (conversions/path/exec/fixtures) ; timeouts HTTP du CMS ajoutés après G114. Revue de sécurité indépendante, rate-limit, rétention et multi-instance restent ouverts. | En cours |
 | QP-04 | P1 | Créer les adaptateurs statiques WooCommerce et PrestaShop et leur matrice de versions/hooks supportés. | Un jeu de fixtures autorisé par plateforme produit des diagnostics déterministes et identifie les appels de données/effets de bord. | Fixtures, version source, résultats d’analyse golden et rapports de limites. | À faire |
 | QP-05 | P1 | Définir l’IR métier et sa validation avant toute génération. | Chaque opération IR déclare types, capability, erreurs et comportement ; capacités inconnues ou accès système impossibles à générer. | Schémas versionnés, tests de validation et cas rejetés. | À faire |
@@ -286,3 +287,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.20 | 2026-10-24 | QP-01/02/06/07 : build Selfnamed `no_std` lié à l’IR et reproductible, puis contrat transport-indépendant manifeste/IR canonique/Wasm avec validation structurelle ABI/imports/exports/mémoire. `go test ./...`, `go vet ./...`, test de reproductibilité `-tags=wasmtoolchain` et intégration PostgreSQL 16/Wasmtime isolée passent localement sous Linux/amd64. Les hashes démontrent l’intégrité, pas l’authenticité ; aucune signature, politique de confiance ni distribution n’est encore définie. La traduction PHP générale et le worker de production ne sont pas qualifiés. | En attente du responsable qualité |
 | 3.21 | 2026-10-24 | QP-02/07 : `ValidateBuildPackage` est maintenant exécuté par les parcours de publication avant `artifact.Store.Put`; un module avec import Wasm additionnel est refusé sans stockage. `go test ./...`, `go vet ./...`, test de reproductibilité `-tags=wasmtoolchain`, intégrations PostgreSQL 16/Wasmtime ciblées et `git diff --check` passent localement sous Linux/amd64. Le run CI Go #76 du commit `60178f5` passe sur Linux/Windows, tests/vet et guest Rust ; le run #77 du commit `fe4e90b` passe également. Réception de package, authenticité et distribution restent hors périmètre. | En attente du responsable qualité |
 | 3.22 | 2026-10-24 | Cadrage de confiance sans choix de transport : proposition non approuvée de signature Ed25519 détachée sur les digests exacts du manifeste, de l’IR et du Wasm ; clés publiques identifiées par empreinte et approuvées hors package ; vérification distincte de la validation structurelle et de la promotion. Rotation, révocation, provisionnement, rôle des signataires, approbation métier, limites de transfert et décision catalogue central/import local restent ouverts. Aucun code de signature ajouté. | En attente du responsable qualité |
+| 3.23 | 2026-10-24 | Prototype Ed25519 détaché implémenté après approbation explicite du périmètre : message domain-separated contenant les trois SHA-256, enveloppe JSON canonique plafonnée à 4 KiB, ID de clé par empreinte, clé de confiance injectée hors package, pas d’horodatage/expiration ; tests d’altération, signature non fiable/malformée et package structurellement invalide. Aucun service de signature ni branchement import/publication/promotion ; gestion des clés et politique de production restent ouvertes. | En attente du responsable qualité |
