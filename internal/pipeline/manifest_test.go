@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"euromni/internal/buildmeta"
+
 	"github.com/bytecodealliance/wasmtime-go/v36"
 )
 
@@ -95,5 +97,131 @@ func TestCompiledWasmBindsExactIRInCustomSection(t *testing.T) {
 	defer engine.Close()
 	if _, err := wasmtime.NewModule(engine, first); err != nil {
 		t.Fatalf("Wasmtime rejected the provenance custom section: %v", err)
+	}
+}
+
+func TestValidateBuildPackageChecksManifestIRAndArtifact(t *testing.T) {
+	ir := testCatalogIR()
+	wasmBytes, err := CompileIRToWasm(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := NewBuildManifest(ir, wasmBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	irJSON, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateBuildPackage(manifestJSON, irJSON, wasmBytes); err != nil {
+		t.Fatalf("ValidateBuildPackage() rejected matching inputs: %v", err)
+	}
+
+	modifiedWasm := append([]byte(nil), wasmBytes...)
+	modifiedWasm[len(modifiedWasm)-1] ^= 1
+	if _, err := ValidateBuildPackage(manifestJSON, irJSON, modifiedWasm); err == nil {
+		t.Fatal("ValidateBuildPackage() accepted a Wasm hash mismatch")
+	}
+	if _, err := ValidateBuildPackage(manifestJSON, append([]byte(" "), irJSON...), wasmBytes); err == nil {
+		t.Fatal("ValidateBuildPackage() accepted non-canonical IR JSON")
+	}
+	unknownManifest := append([]byte(nil), manifestJSON[:len(manifestJSON)-1]...)
+	unknownManifest = append(unknownManifest, []byte(`,"unreviewed":true}`)...)
+	if _, err := ValidateBuildPackage(unknownManifest, irJSON, wasmBytes); err == nil {
+		t.Fatal("ValidateBuildPackage() accepted an unknown manifest field")
+	}
+	unknownIR := append([]byte(nil), irJSON[:len(irJSON)-1]...)
+	unknownIR = append(unknownIR, []byte(`,"unreviewed":true}`)...)
+	if _, err := ValidateBuildPackage(manifestJSON, unknownIR, wasmBytes); err == nil {
+		t.Fatal("ValidateBuildPackage() accepted an unknown IR field")
+	}
+}
+
+func TestValidateBuildPackageAcceptsDynamicGuestSignature(t *testing.T) {
+	ir := testDynamicCatalogIR()
+	wasmBytes, err := CompileIRToWasm(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := NewBuildManifest(ir, wasmBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	irJSON, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateBuildPackage(manifestJSON, irJSON, wasmBytes); err != nil {
+		t.Fatalf("ValidateBuildPackage() rejected a valid dynamic guest: %v", err)
+	}
+}
+
+func TestValidateBuildPackageRejectsIncompatibleGuestSignature(t *testing.T) {
+	ir := testCatalogIR()
+	irBytes, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wasmBytes, err := wasmtime.Wat2Wasm(`(module
+  (import "euromni" "call" (func $call (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 17)
+  (func (export "run") (result i64) (i64.const 0))
+)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	irHash := sha256.Sum256(irBytes)
+	wasmBytes = appendWASMCustomSection(wasmBytes, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:])))
+	wasmBytes = appendWASMCustomSection(wasmBytes, wasmCompilerSection, []byte(buildmeta.CurrentWASMCompiler))
+	manifest, err := NewBuildManifest(ir, wasmBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateBuildPackage(manifestJSON, irBytes, wasmBytes); err == nil {
+		t.Fatal("ValidateBuildPackage() accepted an incompatible run signature")
+	}
+}
+
+func TestValidateBuildPackageRejectsAdditionalWasmImport(t *testing.T) {
+	ir := testCatalogIR()
+	irBytes, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wasmBytes, err := wasmtime.Wat2Wasm(`(module
+  (import "euromni" "call" (func $call (param i32 i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "proc_exit" (func (param i32)))
+  (memory (export "memory") 17)
+  (func (export "run") (result i32) (i32.const 0))
+)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	irHash := sha256.Sum256(irBytes)
+	wasmBytes = appendWASMCustomSection(wasmBytes, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:])))
+	wasmBytes = appendWASMCustomSection(wasmBytes, wasmCompilerSection, []byte(buildmeta.CurrentWASMCompiler))
+	manifest, err := NewBuildManifest(ir, wasmBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateBuildPackage(manifestJSON, irBytes, wasmBytes); err == nil {
+		t.Fatal("ValidateBuildPackage() accepted an additional WASI import")
 	}
 }

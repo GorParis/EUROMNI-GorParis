@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	selfnamedPreviewGuestCompiler   = buildmeta.SelfnamedPreviewCompiler
-	selfnamedPreviewCompilerSection = "euromni.compiler"
+	selfnamedPreviewGuestCompiler = buildmeta.SelfnamedPreviewCompiler
 )
 
 // CompileSelfnamedPreviewIRToWasm builds the approved Selfnamed guest and binds its exact IR hash.
@@ -80,7 +79,7 @@ func CompileSelfnamedPreviewIRToWasm(ir ModuleIR) ([]byte, error) {
 	}
 	irHash := sha256.Sum256(irBytes)
 	wasmBytes = appendWASMCustomSection(wasmBytes, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:])))
-	wasmBytes = appendWASMCustomSection(wasmBytes, selfnamedPreviewCompilerSection, []byte(selfnamedPreviewGuestCompiler))
+	wasmBytes = appendWASMCustomSection(wasmBytes, wasmCompilerSection, []byte(selfnamedPreviewGuestCompiler))
 	if err := validateSelfnamedPreviewGuestWasm(wasmBytes); err != nil {
 		return nil, err
 	}

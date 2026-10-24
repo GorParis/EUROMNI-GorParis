@@ -75,6 +75,42 @@ hash PHP ; `NewPackageProvenance` calcule et vérifie les deux digests.
 `NewBuildManifest` lie provenance, hash de l’IR, ABI, capabilities dérivées et
 hash/taille du Wasm.
 
+### Contrat portable de build distribuable
+
+La représentation d’un build est indépendante de tout transport et de tout
+fournisseur :
+
+- `manifest.json` : manifeste `euromni.build.v1` strict ;
+- `module.ir.json` : IR canonique `euromni.ir.v3` ;
+- `module.wasm` : artefact Wasm binaire adressé par SHA-256.
+
+Le package ne contient pas les sources PHP ni l’archive amont ; le manifeste
+conserve leurs empreintes et références de provenance. L’IR et le manifeste
+peuvent être distribués avec le Wasm depuis un catalogue central ou transmis à
+la suite d’un build local. Aucun format ZIP, endpoint de téléchargement ou
+catalogue n’est imposé par ce contrat.
+
+`ValidateBuildPackage` refuse les champs JSON inconnus, les documents IR non
+canoniques, tout écart entre manifeste/IR/Wasm et tout compilateur, ABI, IR ou
+adaptateur non approuvé. Il compile structurellement le Wasm avec Wasmtime et
+exige le seul import `euromni.call` avec sa signature ABI, les seuls exports
+`memory` et `run`, la signature `run` dictée par l’IR et une mémoire linéaire
+32 bits dont la mémoire initiale respecte 64 MiB et dont le maximum déclaré,
+s’il existe, ne dépasse pas cette limite. Le store Wasmtime impose aussi un
+plafond d’exécution de 64 MiB, y compris pour un module sans maximum déclaré.
+Le Wasm porte les sections custom exactes
+`euromni.ir.sha256` et `euromni.compiler` ; le manifeste inclut source, archive,
+plateforme, versions d’adaptateur/IR/compilateur/ABI, capabilities dérivées,
+hash du Wasm et taille. La compatibilité de runtime est actuellement une
+égalité stricte de version ABI, pas une plage de versions implicite.
+
+Ce contrôle prouve la cohérence et l’intégrité par hash, pas l’identité du
+producteur : ni le manifeste ni le Wasm ne sont signés. Avant toute distribution
+de builds provenant d’un tiers, une politique de confiance/signature, les
+limites du transfert et la validation avant promotion devront être définies.
+L’activation d’un hash reste distincte de sa distribution et requiert la
+promotion explicite existante.
+
 `PublishModuleBuild` écrit d’abord le Wasm dans le stockage content-addressed,
 puis met à jour en une seule instruction SQL `modules.wasm_sha256` et
 `modules.build_manifest` (`jsonb`). Si l’écriture DB échoue, le Wasm reste

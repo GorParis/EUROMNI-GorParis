@@ -43,6 +43,7 @@ Le module minimal doit démontrer :
 17. réconciliation : hashes référencés lus dans PostgreSQL ; seuls les objets absents du registre et plus anciens que le délai de grâce peuvent être supprimés
 18. ordonnanceur autonome ajouté sous `cmd/artifact-reconciler` : passage immédiat puis périodique, arrêt SIGINT/SIGTERM, retry après erreurs transitoires
 19. politique provisoire : grâce 7 jours, cadence normale 24 heures, retry 5 minutes ; valeurs configurables et à réviser avant production
+20. contrat de package distribuable : validation stricte du manifeste, de l’IR JSON canonique et du Wasm, avec vérification des hashes, versions approuvées, capabilities, signatures ABI et imports/exports ; l’intégrité ne prouve pas l’authenticité du producteur
 
 ## Campagne non financière — 19 octobre 2026
 
@@ -349,9 +350,12 @@ générale du plugin ni une décision sur son mode de distribution.
    compilateur au Wasm, choisir le compilateur du manifeste selon l’artefact,
    puis démontrer deux builds identiques et l’exécution de l’artefact publié.
 6. Prochaine étape : définir le contrat du build distribuable (provenance,
-   versions compatibles, capacités, hash et validation). Ce contrat pourra
-   servir aussi bien à un catalogue central de builds qu’à des imports privés ;
-   le choix entre distribution centrale et traitement local est différé.
+   versions compatibles, capacités, hash et validation). Le prototype définit
+   désormais trois blobs transport-indépendants (`manifest.json`,
+   `module.ir.json`, `module.wasm`) et une validation stricte de cohérence/
+   compatibilité. L’authenticité/signature, les limites de transfert et le
+   mécanisme de distribution restent à définir ; le choix entre catalogue
+   central et traitement local est différé.
 
 Devise, locale et unité de volume restent non résolues : ne pas les inventer
 pour faire passer l’oracle. La cible est une transformation métier contrôlée et

@@ -28,10 +28,11 @@ const (
 )
 
 const (
-	irMemoryPages     = 17
-	irOutputOffset    = abi.MaxCallBytes
-	irOutputCapacity  = 1 << 20
-	wasmIRHashSection = "euromni.ir.sha256"
+	irMemoryPages       = 17
+	irOutputOffset      = abi.MaxCallBytes
+	irOutputCapacity    = 1 << 20
+	wasmIRHashSection   = "euromni.ir.sha256"
+	wasmCompilerSection = "euromni.compiler"
 )
 
 type ModuleIR struct {
@@ -471,6 +472,7 @@ func CompileIRToWasm(ir ModuleIR) ([]byte, error) {
 	}
 	irHash := sha256.Sum256(irBytes)
 	wasmBytes = appendWASMCustomSection(wasmBytes, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:])))
+	wasmBytes = appendWASMCustomSection(wasmBytes, wasmCompilerSection, []byte(buildmeta.CurrentWASMCompiler))
 	return wasmBytes, nil
 }
 
@@ -488,6 +490,7 @@ func wasmHasCustomSection(wasmBytes []byte, wantedName string, wantedContents []
 	if len(wasmBytes) < 8 || !bytes.Equal(wasmBytes[:8], []byte{0, 'a', 's', 'm', 1, 0, 0, 0}) {
 		return false
 	}
+	found := false
 	for offset := 8; offset < len(wasmBytes); {
 		sectionID := wasmBytes[offset]
 		offset++
@@ -506,15 +509,18 @@ func wasmHasCustomSection(wasmBytes []byte, wantedName string, wantedContents []
 		}
 		nameLength, count := binary.Uvarint(section)
 		if count <= 0 || nameLength > uint64(len(section)-count) {
-			continue
+			return false
 		}
 		nameStart := count
 		nameEnd := nameStart + int(nameLength)
-		if string(section[nameStart:nameEnd]) == wantedName && bytes.Equal(section[nameEnd:], wantedContents) {
-			return true
+		if string(section[nameStart:nameEnd]) == wantedName {
+			if found || !bytes.Equal(section[nameEnd:], wantedContents) {
+				return false
+			}
+			found = true
 		}
 	}
-	return false
+	return found
 }
 
 func operationHasDynamicInput(operation IROperation) bool {

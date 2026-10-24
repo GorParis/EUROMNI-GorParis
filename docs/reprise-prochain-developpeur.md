@@ -16,9 +16,24 @@ pas une preuve que l'arbre de travail est propre.
   vérification du manifeste, publication candidate sans installation, pin
   inchangé, promotion explicite et exécution Wasmtime. Cela ne qualifie ni
   PrestaShop réel ni la traduction PHP générale.
-- QP-03 est le travail actif : premier endpoint d'ingestion admin d'un ZIP brut,
-  validation en mémoire, puis dépôt dans une quarantaine privée distincte des
-  builds. Aucun contenu PHP n'est extrait ou exécuté.
+- Le contrat prototype d'un build distribuable comprend trois composants
+  séparés (`manifest.json`, `module.ir.json` canonique et `module.wasm`) ; il
+  reste indépendant d'une archive, d'un endpoint ou d'un fournisseur. Le helper
+  `pipeline.ValidateBuildPackage` vérifie leur cohérence, les versions
+  approuvées et l'interface Wasm (import `euromni.call`, exports `memory`/`run`,
+  signatures et limites mémoire). Il est couvert par les tests mais n'est pas
+  encore branché à un workflow de réception/distribution.
+- Les hashes prouvent l'intégrité, pas l'identité de l'éditeur. Signature,
+  politique de confiance, limites de transfert et critères de validation avant
+  promotion restent à décider avant toute distribution de builds tiers.
+  Aucun choix n'est fait entre catalogue central et builds privés locaux.
+- QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
+  Selfnamed lié à son IR et le validateur de package ; aucune traduction PHP
+  générale ni toolchain/worker de production n'est qualifié. QP-04/05 restent
+  des prérequis à tout élargissement métier.
+- QP-03 demeure un chantier distinct : l'endpoint admin accepte un ZIP brut,
+  le valide en mémoire, puis le dépose en quarantaine privée séparée des builds.
+  Aucun contenu PHP n'est extrait ou exécuté.
 - L'endpoint `POST /v1/admin/modules/imports` accepte `application/zip`,
   requiert un Bearer owner/admin, une archive valide avec manifeste, et répond
   `503` si `EUROMNI_QUARANTINE_DIR` n'est pas configuré.
@@ -64,9 +79,22 @@ pas une preuve que l'arbre de travail est propre.
   Playwright versionné ne couvre pas encore toutes les actions administratives.
 - `.vscode/` est un dossier non suivi préexistant : ne pas l'ajouter au commit
   sans accord explicite.
+- Au début de la reprise du 24 octobre 2026, des changements locaux préexistants
+  dans `cmd/quarantine-reconciler/main.go` (newline final) et
+  `internal/store/store.go` (séparation d'import) ont été laissés hors du
+  commit du package ; `.vscode/` est également resté hors commit. Vérifier leur
+  état Git courant avant toute action, sans les réinitialiser ni les ajouter.
 
 ## Vérifications déjà exécutées
 
+- Pour le contrat de package et le build lié à l'IR : `go test ./...`,
+  `go vet ./...`, le test
+  `go test -tags=wasmtoolchain ./internal/pipeline -run
+  '^TestCompileSelfnamedPreviewIRToWasmIsReproducibleAndBoundToIR$' -count=1`,
+  l'intégration PostgreSQL 16/Wasmtime isolée
+  `go test -tags=integration -count=1 ./internal/pipeline -run
+  '^TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS$'` et
+  `git diff --check` ont réussi sous Linux/amd64.
 - `go test ./...` : réussi après les changements QP-03.
 - `go vet ./...` : réussi.
 - `git diff --check` : réussi.
@@ -112,26 +140,36 @@ pas une preuve que l'arbre de travail est propre.
 
 ## Prochaines actions recommandées
 
-1. Obtenir une revue de sécurité indépendante du validateur ZIP, de l'endpoint
-  d'upload et du stockage en quarantaine ; traiter les findings avant toute
-  activation hors environnement de test. Le contrôle local du 21 octobre était
-  ciblé et ne remplace pas cette revue.
-2. Décider la durée et la fréquence de rétention, puis planifier
-  `cmd/quarantine-reconciler` avec `EUROMNI_QUARANTINE_DIR` et une option
-  `-older-than` explicite (par exemple `720h` pour 30 jours). La commande ne
-  crée pas le répertoire cible et ne définit pas de politique par défaut.
-  Garder la quarantaine isolée des artefacts publiés.
-3. Évaluer l'absence de limitation de débit, l'usage du stockage local et le
+1. Après le push du commit du contrat de package, vérifier la CI courante
+    Linux/Windows sous Go 1.25 ; les succès historiques référencés plus bas ne
+    qualifient pas le commit présent.
+2. Définir les décisions de confiance/signature, de taille/transfert et de
+    validation avant promotion, puis brancher `ValidateBuildPackage` au futur
+    chemin de réception du package. Le validateur n'est pas encore appelé par
+    l'import de ZIP ou le flux de publication courant.
+3. Garder le contrat de package neutre quant au mode de livraison jusqu'à une
+    décision explicite entre catalogue central et traitement local ; ne pas
+    présenter un hash seul comme une preuve d'authenticité.
+4. Obtenir une revue de sécurité indépendante du validateur ZIP, de l'endpoint
+   d'upload et du stockage en quarantaine ; traiter les findings avant toute
+   activation hors environnement de test. Le contrôle local du 21 octobre était
+   ciblé et ne remplace pas cette revue.
+5. Décider la durée et la fréquence de rétention, puis planifier
+   `cmd/quarantine-reconciler` avec `EUROMNI_QUARANTINE_DIR` et une option
+   `-older-than` explicite (par exemple `720h` pour 30 jours). La commande ne
+   crée pas le répertoire cible et ne définit pas de politique par défaut.
+   Garder la quarantaine isolée des artefacts publiés.
+6. Évaluer l'absence de limitation de débit, l'usage du stockage local et le
    scénario multi-instance ; documenter les limites ou choisir une solution
    coordonnée avant le déploiement.
-4. Rejouer `go test ./...`, `go vet ./...`, les tests d'intégration pertinents,
+7. Rejouer `go test ./...`, `go vet ./...`, les tests d'intégration pertinents,
    et vérifier la matrice CI Windows/Linux après chaque changement.
-5. Si des régressions UI deviennent fréquentes, étendre le runner Playwright
+8. Si des régressions UI deviennent fréquentes, étendre le runner Playwright
    avec des scénarios isolés pour les actions administratives actuellement
    vérifiées manuellement ; garder toute base de test séparée de la base locale
    persistante.
-6. Ne pas commencer la traduction PHP générale. QP-04/05 (contrats des
-    adaptateurs et de l'IR) sont des prérequis avant l'élargissement métier.
+9. Ne pas commencer la traduction PHP générale. QP-04/05 (contrats des
+     adaptateurs et de l'IR) sont des prérequis avant l'élargissement métier.
 
 ## Message de reprise à copier dans une nouvelle conversation
 
@@ -139,12 +177,13 @@ pas une preuve que l'arbre de travail est propre.
 > `docs/reprise-prochain-developpeur.md`, `docs/plan-directeur-qualite.md` et
 > `pipeline/README.md`. Vérifie ensuite `git status --short --branch`, le dernier
 > commit et l'état du run GitHub Actions correspondant. Ne touche pas à
-> `.vscode/`. Le chantier actif est QP-03 : endpoint admin d'ingestion ZIP et
-> quarantaine privée, sans extraction ni exécution PHP. Avant toute activation
-> en production, fais une revue de sécurité ciblée et traite la rétention/purge,
-> le rate-limit et le cas multi-instance. Exécute les validations pertinentes,
-> mets à jour le suivi qualité, puis présente les changements et limites avant
-> tout commit/push si je n'ai pas donné mon accord.
+> `.vscode/` ni aux modifications locales préexistantes non liées. Le contrat
+> prototype de package manifeste/IR/Wasm vient d'être ajouté ; consulte les
+> prochaines actions ci-dessus, notamment l'absence d'intégration du validateur
+> au chemin de réception et les décisions d'authenticité encore ouvertes.
+> QP-03 (quarantaine ZIP) est un chantier distinct. Ne lance aucune traduction
+> PHP générale avant les prérequis QP-04/05. Exécute les validations pertinentes
+> et mets à jour le suivi avant tout commit/push non expressément demandé.
 
 ## Choix de conversation
 

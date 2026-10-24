@@ -47,11 +47,11 @@ func NewBuildManifest(ir ModuleIR, wasmBytes []byte) (BuildManifest, error) {
 	sort.Strings(capabilities)
 	compiler := IRCompilerVersion
 	if isSelfnamedPreviewIR(ir) {
-		if !wasmHasCustomSection(wasmBytes, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:]))) ||
-			!wasmHasCustomSection(wasmBytes, selfnamedPreviewCompilerSection, []byte(selfnamedPreviewGuestCompiler)) {
-			return BuildManifest{}, errors.New("Selfnamed preview Wasm is not bound to this IR and compiler")
-		}
 		compiler = selfnamedPreviewGuestCompiler
+	}
+	if !wasmHasCustomSection(wasmBytes, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:]))) ||
+		!wasmHasCustomSection(wasmBytes, wasmCompilerSection, []byte(compiler)) {
+		return BuildManifest{}, errors.New("Wasm is not bound to this IR and compiler")
 	}
 	return BuildManifest{
 		Version:      BuildManifestVersion,

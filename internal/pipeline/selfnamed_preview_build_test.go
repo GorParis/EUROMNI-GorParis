@@ -36,7 +36,7 @@ func TestCompileSelfnamedPreviewIRToWasmIsReproducibleAndBoundToIR(t *testing.T)
 	if !wasmHasCustomSection(first, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:]))) {
 		t.Fatal("compiled guest does not contain the exact IR hash")
 	}
-	if !wasmHasCustomSection(first, selfnamedPreviewCompilerSection, []byte(buildmeta.SelfnamedPreviewCompiler)) {
+	if !wasmHasCustomSection(first, wasmCompilerSection, []byte(buildmeta.SelfnamedPreviewCompiler)) {
 		t.Fatal("compiled guest does not contain the pinned compiler identity")
 	}
 	manifest, err := NewBuildManifest(ir, first)
