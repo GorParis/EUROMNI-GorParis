@@ -64,6 +64,13 @@ func storeBuildArtifact(ctx context.Context, artifacts artifact.Store, ir Module
 	if err != nil {
 		return artifact.Artifact{}, BuildManifest{}, nil, nil, fmt.Errorf("encode build manifest: %w", err)
 	}
+	irJSON, err := json.Marshal(ir)
+	if err != nil {
+		return artifact.Artifact{}, BuildManifest{}, nil, nil, fmt.Errorf("encode build IR: %w", err)
+	}
+	if _, err := ValidateBuildPackage(manifestJSON, irJSON, wasmBytes); err != nil {
+		return artifact.Artifact{}, BuildManifest{}, nil, nil, fmt.Errorf("validate build package before storing artifact: %w", err)
+	}
 	storedArtifact, err := artifacts.Put(ctx, bytes.NewReader(wasmBytes))
 	if err != nil {
 		return artifact.Artifact{}, BuildManifest{}, nil, nil, fmt.Errorf("store Wasm artifact: %w", err)

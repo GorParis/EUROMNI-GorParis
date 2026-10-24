@@ -44,6 +44,7 @@ Le module minimal doit démontrer :
 18. ordonnanceur autonome ajouté sous `cmd/artifact-reconciler` : passage immédiat puis périodique, arrêt SIGINT/SIGTERM, retry après erreurs transitoires
 19. politique provisoire : grâce 7 jours, cadence normale 24 heures, retry 5 minutes ; valeurs configurables et à réviser avant production
 20. contrat de package distribuable : validation stricte du manifeste, de l’IR JSON canonique et du Wasm, avec vérification des hashes, versions approuvées, capabilities, signatures ABI et imports/exports ; l’intégrité ne prouve pas l’authenticité du producteur
+21. publication sécurisée par le même validateur de package avant écriture dans le FileStore ; un Wasm avec import supplémentaire est rejeté avant tout stockage
 
 ## Campagne non financière — 19 octobre 2026
 

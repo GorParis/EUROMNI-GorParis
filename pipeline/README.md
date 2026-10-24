@@ -111,10 +111,14 @@ limites du transfert et la validation avant promotion devront être définies.
 L’activation d’un hash reste distincte de sa distribution et requiert la
 promotion explicite existante.
 
-`PublishModuleBuild` écrit d’abord le Wasm dans le stockage content-addressed,
-puis met à jour en une seule instruction SQL `modules.wasm_sha256` et
-`modules.build_manifest` (`jsonb`). Si l’écriture DB échoue, le Wasm reste
-immuable mais non référencé. `ReconcileModuleArtifacts` récupère les hashes de
+Les parcours `PublishModuleBuild`, `PublishModuleBuildOnly` et l'installation
+PrestaShop passent tous par `storeBuildArtifact`, qui appelle
+`ValidateBuildPackage` avant `artifact.Store.Put`. Un Wasm mal formé ou avec un
+import/export incompatible n'est donc ni stocké ni enregistré par ces
+parcours. Après validation, le Wasm est écrit dans le stockage
+content-addressed, puis les métadonnées sont enregistrées ; si l'écriture DB
+échoue, l'artefact reste immuable mais non référencé.
+`ReconcileModuleArtifacts` récupère les hashes de
 tous les modules en base et ne supprime que les fichiers sans référence et plus
 vieux que le délai de grâce fourni ; les `Put` répétés rafraîchissent leur âge.
 Valeurs provisoires à réviser avant production : `DefaultArtifactOrphanGracePeriod`

@@ -21,14 +21,16 @@ pas une preuve que l'arbre de travail est propre.
   reste indépendant d'une archive, d'un endpoint ou d'un fournisseur. Le helper
   `pipeline.ValidateBuildPackage` vérifie leur cohérence, les versions
   approuvées et l'interface Wasm (import `euromni.call`, exports `memory`/`run`,
-  signatures et limites mémoire). Il est couvert par les tests mais n'est pas
-  encore branché à un workflow de réception/distribution.
+  signatures et limites mémoire). Les parcours existants de publication et
+  d'installation passent par ce validateur avant `artifact.Store.Put`. Aucun
+  workflow de réception/distribution n'est encore branché.
 - Les hashes prouvent l'intégrité, pas l'identité de l'éditeur. Signature,
   politique de confiance, limites de transfert et critères de validation avant
   promotion restent à décider avant toute distribution de builds tiers.
   Aucun choix n'est fait entre catalogue central et builds privés locaux.
 - QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
-  Selfnamed lié à son IR et le validateur de package ; aucune traduction PHP
+  Selfnamed lié à son IR et le validateur de package ; le chemin de publication
+  rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP
   générale ni toolchain/worker de production n'est qualifié. QP-04/05 restent
   des prérequis à tout élargissement métier.
 - QP-03 demeure un chantier distinct : l'endpoint admin accepte un ZIP brut,
@@ -95,6 +97,17 @@ pas une preuve que l'arbre de travail est propre.
   `go test -tags=integration -count=1 ./internal/pipeline -run
   '^TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS$'` et
   `git diff --check` ont réussi sous Linux/amd64.
+- Le run GitHub Actions Go CI #76 du commit `60178f5` est vert : tests/vet Go
+  sous Linux/amd64 et Windows/amd64, plus exécution du guest Rust sur les deux
+  runners. [Détails du run](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/40069691917).
+- Après le run #76, la validation avant publication passe :
+  `go test ./...`, `go vet ./...`, le test de reproductibilité
+  `go test -tags=wasmtoolchain ./internal/pipeline -run
+  '^TestCompileSelfnamedPreviewIRToWasmIsReproducibleAndBoundToIR$' -count=1`,
+  l'intégration PostgreSQL 16/Wasmtime isolée
+  `go test -tags=integration -count=1 ./internal/pipeline -run
+  '^(TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS|TestSelfnamedProductPreviewWasmRunsWithoutPersistence)$'`
+  et `git diff --check` ont réussi sous Linux/amd64.
 - `go test ./...` : réussi après les changements QP-03.
 - `go vet ./...` : réussi.
 - `git diff --check` : réussi.
@@ -140,13 +153,16 @@ pas une preuve que l'arbre de travail est propre.
 
 ## Prochaines actions recommandées
 
-1. Après le push du commit du contrat de package, vérifier la CI courante
-    Linux/Windows sous Go 1.25 ; les succès historiques référencés plus bas ne
-    qualifient pas le commit présent.
+1. Exécuter les validations complètes de l'intégration `ValidateBuildPackage`
+    au chemin de publication : `go test ./...`, `go vet ./...`, le test de
+    reproductibilité `-tags=wasmtoolchain`, l'intégration PostgreSQL/Wasmtime
+    ciblée et `git diff --check`, puis vérifier la CI Windows/Linux du nouveau
+    commit.
 2. Définir les décisions de confiance/signature, de taille/transfert et de
-    validation avant promotion, puis brancher `ValidateBuildPackage` au futur
-    chemin de réception du package. Le validateur n'est pas encore appelé par
-    l'import de ZIP ou le flux de publication courant.
+    validation avant promotion avant d'implémenter la réception d'un package.
+    `ValidateBuildPackage` protège désormais les flux de publication internes,
+    mais l'import ZIP de quarantaine n'accepte pas encore le package Wasm
+    distribuable.
 3. Garder le contrat de package neutre quant au mode de livraison jusqu'à une
     décision explicite entre catalogue central et traitement local ; ne pas
     présenter un hash seul comme une preuve d'authenticité.
@@ -178,9 +194,10 @@ pas une preuve que l'arbre de travail est propre.
 > `pipeline/README.md`. Vérifie ensuite `git status --short --branch`, le dernier
 > commit et l'état du run GitHub Actions correspondant. Ne touche pas à
 > `.vscode/` ni aux modifications locales préexistantes non liées. Le contrat
-> prototype de package manifeste/IR/Wasm vient d'être ajouté ; consulte les
-> prochaines actions ci-dessus, notamment l'absence d'intégration du validateur
-> au chemin de réception et les décisions d'authenticité encore ouvertes.
+> prototype de package manifeste/IR/Wasm est validé avant le stockage des builds
+> publiés ; consulte les prochaines actions ci-dessus, notamment l'absence de
+> réception de packages distribuables et les décisions d'authenticité encore
+> ouvertes.
 > QP-03 (quarantaine ZIP) est un chantier distinct. Ne lance aucune traduction
 > PHP générale avant les prérequis QP-04/05. Exécute les validations pertinentes
 > et mets à jour le suivi avant tout commit/push non expressément demandé.

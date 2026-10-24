@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -13,6 +14,8 @@ import (
 
 	"euromni/internal/artifact"
 	"euromni/internal/store"
+
+	"github.com/bytecodealliance/wasmtime-go/v36"
 )
 
 type publishArtifactStore struct {
@@ -77,6 +80,34 @@ func TestPublishModuleBuildValidatesBeforeStoringArtifact(t *testing.T) {
 	}
 	if artifacts.putCalls != 0 {
 		t.Fatalf("artifact Put() called %d times for empty Wasm, want 0", artifacts.putCalls)
+	}
+}
+
+func TestPublishModuleBuildRejectsIncompatibleWasmBeforeStoringArtifact(t *testing.T) {
+	ir := testCatalogIR()
+	irJSON, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wasmBytes, err := wasmtime.Wat2Wasm(`(module
+  (import "euromni" "call" (func $call (param i32 i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "proc_exit" (func (param i32)))
+  (memory (export "memory") 17)
+  (func (export "run") (result i32) (i32.const 0))
+)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	irHash := sha256.Sum256(irJSON)
+	wasmBytes = appendWASMCustomSection(wasmBytes, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:])))
+	wasmBytes = appendWASMCustomSection(wasmBytes, wasmCompilerSection, []byte(IRCompilerVersion))
+
+	artifacts := &publishArtifactStore{}
+	if _, _, err := PublishModuleBuild(context.Background(), artifacts, store.NewSQL(nil), "module-id", ir, wasmBytes); err == nil {
+		t.Fatal("PublishModuleBuild() accepted Wasm with an additional import")
+	}
+	if artifacts.putCalls != 0 {
+		t.Fatalf("artifact Put() called %d times for incompatible Wasm, want 0", artifacts.putCalls)
 	}
 }
 
