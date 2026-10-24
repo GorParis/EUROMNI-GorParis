@@ -71,7 +71,10 @@ signature sont revalidés par le backend, puis l'approuver ou le rejeter avec
 un motif obligatoire. Un candidat rejeté peut être rouvert par un `owner` ou
 `admin` ; chaque décision reste dans l'historique local. Ces actions
 n'enregistrent aucun build dans le registre partagé, n'installent et ne
-promeuvent rien. La liste est paginée et ne constitue pas une revue de sécurité ;
-le staging et sa trace restent locaux au serveur.
+promeuvent rien. Les archives rejetées sont purgées après 90 jours depuis le
+dernier rejet ; l'historique local reste consultable dans Modules, mais le
+candidat ne peut plus être rouvert. Les archives en attente et approuvées ne
+sont pas purgées automatiquement. La liste est paginée et ne constitue pas une
+revue de sécurité ; le staging et sa trace restent locaux au serveur.
 
 Consomme uniquement les APIs du cœur EUROMNI (REST / GraphQL). Pas de thème PHP.

@@ -232,12 +232,19 @@ vide ne fait confiance à aucun signataire.
 un inventaire paginé des digest, tailles et états d'approbation des candidats
 de la boutique (`limit` 1–100, défaut 50 ; `offset` 0–100000, défaut 0). Il
 n'ouvre pas les archives et ne revalide pas les signatures ; le détail reste
-nécessaire avant toute décision. `GET
+nécessaire avant toute décision. Une archive rejetée depuis au moins 90 jours
+est purgée par `cmd/build-package-candidate-reconciler` ; son entrée et son
+historique restent visibles avec `payload_available:false`, mais elle ne peut
+plus être rouverte. Les candidats en attente et approuvés ne sont pas purgés
+automatiquement. La commande est à exécuter quotidiennement par un ordonnanceur
+externe avec le même répertoire privé que le CMS. `GET
 /v1/admin/modules/build-packages/candidates/{packageSHA256}` permet ensuite à
 `owner` ou `admin` de relire le candidat de sa boutique. La route relit le ZIP
 stocké et revalide la signature avec les clés de confiance courantes ainsi que
-le contenu du package ; elle répond avec les métadonnées et l'état `pending` ou
-`approved`. Les mêmes rôles peuvent approuver avec
+le contenu du package ; elle répond avec les métadonnées, `payload_available`
+et l'état `pending`, `rejected` ou `approved`. Pour un payload purgé, le détail
+ne renvoie que l'état et l'historique conservé, sans métadonnées du package. Les
+mêmes rôles peuvent approuver avec
 `POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval`
 et `{"decision":"approve"}` ou rejeter avec
 `POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/rejection`
@@ -261,13 +268,17 @@ d'innocuité.
 
 L'interface Modules permet à `owner` ou `admin` d'examiner les métadonnées,
 d'approuver, de rejeter avec un motif et de rouvrir un candidat rejeté ;
-toutes les décisions demandent confirmation. Le téléchargement, la
-suppression, la passerelle de publication et la purge automatique restent
-indisponibles.
-La rétention est donc manuelle et la capacité limitée ;
-ne pas activer ce stockage pour la production avant d'avoir défini rétention,
-quota coordonné multi-instance et contrôles opérationnels. L'ingestion PHP ZIP
-de `/v1/admin/modules/imports` reste entièrement distincte.
+toutes les décisions demandent confirmation. La commande de purge supprime
+uniquement l'archive d'un candidat au statut final rejeté dont la date du dernier
+rejet a dépassé 90 jours ; elle vérifie l'intégrité du ZIP avant suppression et
+conserve le sidecar de décisions. Une purge échouée est signalée et ne poursuit
+pas silencieusement au-delà d'une entrée corrompue. L'historique conservé reste
+local, modifiable par un administrateur système et sans coordination
+multi-instance. Le nettoyage des candidats reste manuel tant qu'un ordonnanceur
+externe n'exécute pas quotidiennement la commande. Le quota reste local et
+limité ; ne pas activer ce stockage pour la production avant revue de sécurité
+indépendante et contrôles opérationnels. L'ingestion PHP ZIP de
+`/v1/admin/modules/imports` reste entièrement distincte.
 
 Les parcours `PublishModuleBuild`, `PublishModuleBuildOnly` et l'installation
 PrestaShop passent tous par `storeBuildArtifact`, qui appelle

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"euromni/internal/packagecandidate"
 	"euromni/internal/pipeline"
@@ -412,7 +413,8 @@ func TestAdminRejectsAndReopensBuildPackageCandidateWithAuditHistory(t *testing.
 	}
 	detail := performAdminRequest(mux, http.MethodGet, basePath, auth.token, "")
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"reason":"Review source provenance"`) ||
-		!strings.Contains(detail.Body.String(), `"actor_id":"user-admin"`) {
+		!strings.Contains(detail.Body.String(), `"actor_id":"user-admin"`) ||
+		!strings.Contains(detail.Body.String(), `"payload_available":true`) {
 		t.Fatalf("rejected candidate detail = %d/%s", detail.Code, detail.Body)
 	}
 	listed := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates", auth.token, "")
@@ -435,6 +437,64 @@ func TestAdminRejectsAndReopensBuildPackageCandidateWithAuditHistory(t *testing.
 	}
 	if _, err := candidates.GetReview(context.Background(), seed.ShopID, receipt.SHA256); err != nil {
 		t.Fatalf("GetReview() after decision sequence: %v", err)
+	}
+}
+
+func TestAdminShowsRetainedHistoryAfterRejectedPackagePurge(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "candidates")
+	candidates, err := packagecandidate.NewFileStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := candidates.Put(context.Background(), seed.ShopID, []byte("signed package payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := candidates.Decide(context.Background(), seed.ShopID, receipt.SHA256, "user-admin", "admin", packagecandidate.DecisionReject, "retained audit reason"); err != nil {
+		t.Fatal(err)
+	}
+	shopHash := sha256.Sum256([]byte(seed.ShopID))
+	historyPath := filepath.Join(root, hex.EncodeToString(shopHash[:]), receipt.SHA256+".decisions.json")
+	history := []packagecandidate.Decision{{
+		Action: packagecandidate.DecisionReject, ActorID: "user-admin", ActorRole: "admin",
+		At:     time.Now().Add(-packagecandidate.RejectedCandidateRetention - time.Hour).UTC().Format(time.RFC3339Nano),
+		Reason: "retained audit reason",
+	}}
+	historyJSON, err := json.Marshal(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(historyPath, historyJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := candidates.PurgeRejectedBefore(context.Background(), time.Now().Add(-packagecandidate.RejectedCandidateRetention)); err != nil || removed != 1 {
+		t.Fatalf("purge removed=%d, error=%v; want one expired payload", removed, err)
+	}
+
+	oldCandidates := moduleBuildPackageCandidates
+	oldAuth := staffAuthenticator
+	SetModuleBuildPackageCandidates(candidates)
+	auth := newCatalogTestAuthenticator("admin", seed.ShopID)
+	SetStaffAuthenticator(auth)
+	t.Cleanup(func() {
+		SetModuleBuildPackageCandidates(oldCandidates)
+		SetStaffAuthenticator(oldAuth)
+	})
+
+	mux := http.NewServeMux()
+	Register(mux)
+	basePath := "/v1/admin/modules/build-packages/candidates/" + receipt.SHA256
+	detail := performAdminRequest(mux, http.MethodGet, basePath, auth.token, "")
+	if detail.Code != http.StatusOK ||
+		!strings.Contains(detail.Body.String(), `"payload_available":false`) ||
+		!strings.Contains(detail.Body.String(), `"reason":"retained audit reason"`) {
+		t.Fatalf("expired candidate history = %d/%s", detail.Code, detail.Body)
+	}
+	listed := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates", auth.token, "")
+	if listed.Code != http.StatusOK ||
+		!strings.Contains(listed.Body.String(), `"payload_available":false`) ||
+		!strings.Contains(listed.Body.String(), `"status":"rejected"`) {
+		t.Fatalf("expired candidate listing = %d/%s", listed.Code, listed.Body)
 	}
 }
 

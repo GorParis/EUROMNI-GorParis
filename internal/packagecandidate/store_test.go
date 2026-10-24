@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFileStorePutScopesCandidatesByShopAndIsIdempotent(t *testing.T) {
@@ -195,5 +196,126 @@ func TestFileStoreRejectReopenAndApprovePreservesDecisionHistory(t *testing.T) {
 	}
 	if _, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-4", "owner", DecisionReject, "withdraw approval"); !errors.Is(err, ErrCandidateDecisionConflict) {
 		t.Fatalf("rejection after approval error = %v, want %v", err, ErrCandidateDecisionConflict)
+	}
+}
+
+func TestFileStorePurgesExpiredRejectedPayloadAndRetainsDecisionHistory(t *testing.T) {
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "candidates"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	expired, err := store.Put(ctx, "shop-one", []byte("expired-rejected-package"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recent, err := store.Put(ctx, "shop-one", []byte("recently-rejected-package"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := store.Put(ctx, "shop-one", []byte("pending-package"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := store.Put(ctx, "shop-one", []byte("approved-package"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Decide(ctx, "shop-one", expired.SHA256, "staff-1", "admin", DecisionReject, "expired reason"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Decide(ctx, "shop-one", recent.SHA256, "staff-1", "admin", DecisionReject, "old reason"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Decide(ctx, "shop-one", recent.SHA256, "staff-2", "owner", DecisionReopen, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Decide(ctx, "shop-one", recent.SHA256, "staff-2", "owner", DecisionReject, "current reason"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Decide(ctx, "shop-one", approved.SHA256, "staff-1", "admin", DecisionApprove, ""); err != nil {
+		t.Fatal(err)
+	}
+	setDecisionTime(t, store.root, "shop-one", expired.SHA256, 0,
+		time.Now().Add(-RejectedCandidateRetention-time.Hour))
+	setDecisionTime(t, store.root, "shop-one", recent.SHA256, 0,
+		time.Now().Add(-RejectedCandidateRetention-time.Hour))
+
+	removed, err := store.PurgeRejectedBefore(ctx, time.Now().Add(-RejectedCandidateRetention))
+	if err != nil || removed != 1 {
+		t.Fatalf("PurgeRejectedBefore() removed=%d, error=%v; want only expired rejection", removed, err)
+	}
+	if _, err := store.Get(ctx, "shop-one", expired.SHA256); !errors.Is(err, ErrCandidateNotFound) {
+		t.Fatalf("expired payload Get() error = %v, want %v", err, ErrCandidateNotFound)
+	}
+	expiredReview, err := store.GetReview(ctx, "shop-one", expired.SHA256)
+	if err != nil || expiredReview.PayloadAvailable || expiredReview.Status != "rejected" ||
+		len(expiredReview.History) != 1 || expiredReview.History[0].Reason != "expired reason" {
+		t.Fatalf("expired review = %+v, error = %v", expiredReview, err)
+	}
+	if _, err := store.Decide(ctx, "shop-one", expired.SHA256, "staff-3", "owner", DecisionReopen, ""); !errors.Is(err, ErrCandidateNotFound) {
+		t.Fatalf("reopen expired candidate error = %v, want %v", err, ErrCandidateNotFound)
+	}
+	if _, err := store.Get(ctx, "shop-one", recent.SHA256); err != nil {
+		t.Fatalf("recently rejected payload was purged: %v", err)
+	}
+	if _, err := store.Get(ctx, "shop-one", pending.SHA256); err != nil {
+		t.Fatalf("pending payload was purged: %v", err)
+	}
+	if _, err := store.Get(ctx, "shop-one", approved.SHA256); err != nil {
+		t.Fatalf("approved payload was purged: %v", err)
+	}
+	listed, total, err := store.List(ctx, "shop-one", 10, 0)
+	if err != nil || total != 4 {
+		t.Fatalf("List() total=%d, error=%v; want four reviews including retained history", total, err)
+	}
+	foundExpired := false
+	for _, review := range listed {
+		if review.SHA256 == expired.SHA256 {
+			foundExpired = !review.PayloadAvailable && review.Size == 0 && review.Status == "rejected"
+		}
+	}
+	if !foundExpired {
+		t.Fatal("expired rejection history was not listed without its payload")
+	}
+}
+
+func TestFileStorePurgeRejectedHonorsCancelledContext(t *testing.T) {
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "candidates"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := store.Put(context.Background(), "shop", []byte("rejected-package"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Decide(context.Background(), "shop", candidate.SHA256, "staff-1", "admin", DecisionReject, "reason"); err != nil {
+		t.Fatal(err)
+	}
+	setDecisionTime(t, store.root, "shop", candidate.SHA256, 0,
+		time.Now().Add(-RejectedCandidateRetention-time.Hour))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if removed, err := store.PurgeRejectedBefore(ctx, time.Now()); !errors.Is(err, context.Canceled) || removed != 0 {
+		t.Fatalf("cancelled purge removed=%d, error=%v; want no removals and context.Canceled", removed, err)
+	}
+	if _, err := store.Get(context.Background(), "shop", candidate.SHA256); err != nil {
+		t.Fatalf("cancelled purge removed the payload: %v", err)
+	}
+}
+
+func setDecisionTime(t *testing.T, root, shopID, digest string, index int, at time.Time) {
+	t.Helper()
+	directory := filepath.Join(root, shopDigest(shopID))
+	historyPath := filepath.Join(directory, digest+".decisions.json")
+	history, err := readDecisionHistory(historyPath, filepath.Join(directory, digest+".approval.json"), digest)
+	if err != nil {
+		t.Fatalf("read decision history: %v", err)
+	}
+	history[index].At = at.UTC().Format(time.RFC3339Nano)
+	if err := writeDecisionHistory(historyPath, history); err != nil {
+		t.Fatalf("write decision history: %v", err)
 	}
 }

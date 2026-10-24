@@ -59,8 +59,13 @@ pas une preuve que l'arbre de travail est propre.
   revenir à `pending`. L'historique local est immuable ; ces décisions ne créent
   aucun build publié et n'installent/promeuvent rien. L'admin affiche la liste
   paginée, le détail revalidé et les actions avec confirmation ; la liste seule
-  ne présente pas le candidat comme validé. Téléchargement, suppression,
-  rétention et quotas multi-instance restent à traiter.
+  ne présente pas le candidat comme validé. Les archives rejetées expirent 90
+  jours après le dernier rejet ; la commande
+  `cmd/build-package-candidate-reconciler` doit être planifiée quotidiennement.
+  Elle retire uniquement le payload, conserve la trace locale et laisse la
+  ligne d'historique consultable dans Modules sans action de réouverture.
+  Candidats `pending`/`approved` non purgés automatiquement. Quota multi-instance,
+  sauvegarde et restauration restent à traiter.
 - QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
   Selfnamed lié à son IR et le validateur de package ; le chemin de publication
   rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP

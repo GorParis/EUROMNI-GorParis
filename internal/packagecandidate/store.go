@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ const MaxShopCandidateBytes = 256 << 20
 const MaxDecisionHistoryBytes = 256 << 10
 const MaxDecisionHistoryEntries = 256
 const MaxDecisionReasonBytes = 1000
+const RejectedCandidateRetention = 90 * 24 * time.Hour
 
 var (
 	ErrCandidateEmpty               = errors.New("build package candidate is empty")
@@ -65,10 +67,11 @@ type Decision struct {
 
 type CandidateReview struct {
 	Candidate
-	Status    string     `json:"status"`
-	Approval  *Approval  `json:"approval,omitempty"`
-	Rejection *Decision  `json:"rejection,omitempty"`
-	History   []Decision `json:"decision_history,omitempty"`
+	Status           string     `json:"status"`
+	PayloadAvailable bool       `json:"payload_available"`
+	Approval         *Approval  `json:"approval,omitempty"`
+	Rejection        *Decision  `json:"rejection,omitempty"`
+	History          []Decision `json:"decision_history,omitempty"`
 }
 
 type Store interface {
@@ -272,6 +275,40 @@ func (s *FileStore) List(ctx context.Context, shopID string, limit, offset int) 
 		review.History = nil
 		candidates = append(candidates, review)
 	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		if !strings.HasSuffix(entry.Name(), ".decisions.json") {
+			continue
+		}
+		digest := strings.TrimSuffix(entry.Name(), ".decisions.json")
+		if !validDigest(digest) {
+			return nil, 0, ErrCandidateCorrupt
+		}
+		if _, err := os.Lstat(filepath.Join(directory, digest)); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, 0, fmt.Errorf("inspect expired build package candidate: %w", err)
+		}
+		review, err := readCandidateReview(directory, digest, 0)
+		if err != nil {
+			return nil, 0, err
+		}
+		expired, err := rejectedPayloadExpired(review, time.Now())
+		if err != nil {
+			return nil, 0, err
+		}
+		if !expired {
+			return nil, 0, ErrCandidateCorrupt
+		}
+		review.PayloadAvailable = false
+		review.History = nil
+		candidates = append(candidates, review)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].SHA256 < candidates[j].SHA256
+	})
 
 	total := len(candidates)
 	if offset >= total {
@@ -302,12 +339,126 @@ func (s *FileStore) GetReview(ctx context.Context, shopID, digest string) (Candi
 	directory := filepath.Join(s.root, shopDigest(shopID))
 	data, err := verifyCandidateFile(filepath.Join(directory, digest), digest)
 	if errors.Is(err, os.ErrNotExist) {
-		return CandidateReview{}, ErrCandidateNotFound
+		review, historyErr := readCandidateReview(directory, digest, 0)
+		if historyErr != nil {
+			if errors.Is(historyErr, os.ErrNotExist) {
+				return CandidateReview{}, ErrCandidateNotFound
+			}
+			return CandidateReview{}, historyErr
+		}
+		if review.Status != "rejected" {
+			return CandidateReview{}, ErrCandidateNotFound
+		}
+		expired, err := rejectedPayloadExpired(review, time.Now())
+		if err != nil {
+			return CandidateReview{}, err
+		}
+		if !expired {
+			return CandidateReview{}, ErrCandidateCorrupt
+		}
+		review.PayloadAvailable = false
+		return review, nil
 	}
 	if err != nil {
 		return CandidateReview{}, err
 	}
 	return readCandidateReview(directory, digest, int64(len(data)))
+}
+
+func (s *FileStore) PurgeRejectedBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	if s == nil || s.root == "" {
+		return 0, errors.New("build package candidate store is not initialized")
+	}
+	if cutoff.IsZero() {
+		return 0, errors.New("candidate purge cutoff is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	shops, err := os.ReadDir(s.root)
+	if err != nil {
+		return 0, fmt.Errorf("list build package candidate shops: %w", err)
+	}
+	var expired []string
+	for _, shop := range shops {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		if !validDigest(shop.Name()) {
+			return 0, ErrCandidateCorrupt
+		}
+		directory := filepath.Join(s.root, shop.Name())
+		info, err := os.Lstat(directory)
+		if err != nil {
+			return 0, fmt.Errorf("inspect build package candidate shop: %w", err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return 0, ErrCandidateCorrupt
+		}
+		entries, err := os.ReadDir(directory)
+		if err != nil {
+			return 0, fmt.Errorf("list shop build package candidates: %w", err)
+		}
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			digest := entry.Name()
+			if !validDigest(digest) {
+				continue
+			}
+			candidatePath := filepath.Join(directory, digest)
+			info, err := os.Lstat(candidatePath)
+			if err != nil {
+				return 0, fmt.Errorf("inspect build package candidate: %w", err)
+			}
+			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+				return 0, ErrCandidateCorrupt
+			}
+			history, err := readDecisionHistory(
+				filepath.Join(directory, digest+".decisions.json"),
+				filepath.Join(directory, digest+".approval.json"),
+				digest,
+			)
+			if err != nil {
+				return 0, err
+			}
+			review := reviewFromHistory(digest, info.Size(), history, true)
+			if review.Status != "rejected" || review.Rejection == nil {
+				continue
+			}
+			rejectedAt, err := time.Parse(time.RFC3339Nano, review.Rejection.At)
+			if err != nil {
+				return 0, ErrCandidateCorrupt
+			}
+			if rejectedAt.After(cutoff) {
+				continue
+			}
+			if _, err := verifyCandidateFile(candidatePath, digest); err != nil {
+				return 0, err
+			}
+			expired = append(expired, candidatePath)
+		}
+	}
+
+	removed := 0
+	for _, path := range expired {
+		if err := ctx.Err(); err != nil {
+			return removed, err
+		}
+		if err := os.Remove(path); err != nil {
+			return removed, fmt.Errorf("remove expired rejected build package candidate: %w", err)
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func (s *FileStore) GetApproval(ctx context.Context, shopID, digest string) (*Approval, error) {
@@ -444,10 +595,15 @@ func readCandidateReview(directory, digest string, size int64) (CandidateReview,
 	if err != nil {
 		return CandidateReview{}, err
 	}
+	return reviewFromHistory(digest, size, history, true), nil
+}
+
+func reviewFromHistory(digest string, size int64, history []Decision, payloadAvailable bool) CandidateReview {
 	review := CandidateReview{
-		Candidate: Candidate{SHA256: digest, Size: size},
-		Status:    "pending",
-		History:   history,
+		Candidate:        Candidate{SHA256: digest, Size: size},
+		Status:           "pending",
+		PayloadAvailable: payloadAvailable,
+		History:          history,
 	}
 	for _, decision := range history {
 		switch decision.Action {
@@ -465,7 +621,21 @@ func readCandidateReview(directory, digest string, size int64) (CandidateReview,
 			review.Rejection = nil
 		}
 	}
-	return review, nil
+	return review
+}
+
+func rejectedPayloadExpired(review CandidateReview, now time.Time) (bool, error) {
+	if review.Status != "rejected" {
+		return false, nil
+	}
+	if review.Rejection == nil {
+		return false, ErrCandidateCorrupt
+	}
+	rejectedAt, err := time.Parse(time.RFC3339Nano, review.Rejection.At)
+	if err != nil {
+		return false, ErrCandidateCorrupt
+	}
+	return !rejectedAt.After(now.Add(-RejectedCandidateRetention)), nil
 }
 
 func readDecisionHistory(path, legacyApprovalPath, digest string) ([]Decision, error) {

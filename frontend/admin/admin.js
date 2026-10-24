@@ -1479,11 +1479,15 @@
         rejected: "Rejeté",
         pending: "En attente",
       }[candidate.status] || "État inconnu";
-      summary.textContent = `${status} · ${formatBytes(candidate.size)}`;
+      summary.textContent = candidate.payload_available === false
+        ? `${status} · Archive purgée, historique conservé`
+        : `${status} · ${formatBytes(candidate.size)}`;
       const details = document.createElement("button");
       details.type = "button";
       details.className = "secondary";
-      details.textContent = "Examiner le package";
+      details.textContent = candidate.payload_available === false
+        ? "Afficher l’historique"
+        : "Examiner le package";
       details.addEventListener("click", () => loadBuildPackageCandidateDetail(candidate.package_sha256));
       card.append(title, summary, details);
       buildPackageCandidates.append(card);
@@ -1517,20 +1521,26 @@
   function renderBuildPackageCandidateDetail(candidate) {
     buildPackageCandidateDetail.replaceChildren();
     const title = document.createElement("h4");
-    title.textContent = "Détail du package signé";
+    title.textContent = candidate.payload_available === false
+      ? "Historique du package signé"
+      : "Détail du package signé";
     const metadata = document.createElement("dl");
     const fields = [
       ["Digest du package", candidate.package_sha256],
-      ["Module", candidate.module],
-      ["Plateforme", candidate.platform],
-      ["SHA-256 Wasm", candidate.wasm_sha256],
-      ["Clé signataire", candidate.signer_key_id],
       ["État", {
         approved: "Approuvé",
         rejected: "Rejeté",
         pending: "En attente d’approbation",
       }[candidate.status] || "État inconnu"],
     ];
+    if (candidate.payload_available !== false) {
+      fields.splice(1, 0,
+        ["Module", candidate.module],
+        ["Plateforme", candidate.platform],
+        ["SHA-256 Wasm", candidate.wasm_sha256],
+        ["Clé signataire", candidate.signer_key_id],
+      );
+    }
     for (const [label, value] of fields) {
       const term = document.createElement("dt");
       term.textContent = label;
@@ -1556,6 +1566,14 @@
         history.append(item);
       }
       buildPackageCandidateDetail.append(historyTitle, history);
+    }
+    if (candidate.payload_available === false) {
+      const expired = document.createElement("p");
+      expired.className = "muted";
+      expired.textContent =
+        "L’archive a été purgée après 90 jours suivant le rejet. L’historique est conservé ; ce package ne peut plus être rouvert.";
+      buildPackageCandidateDetail.append(expired);
+      return;
     }
     if (candidate.approval) {
       const approval = document.createElement("p");

@@ -16,6 +16,7 @@ Le paquet `euromni-cms-<OS>-<architecture>` contient :
 | `euromni-db-backup` | Sauvegarde PostgreSQL/FileStore, vérification et restauration du FileStore |
 | `euromni-staff-bootstrap` | Création initiale du compte owner |
 | `euromni-artifact-reconciler` | Réconciliation planifiée du FileStore Wasm |
+| `euromni-build-package-candidate-reconciler` | Purge ponctuelle des archives signées rejetées expirées |
 
 Les distributions Windows et Linux amd64 sont produites sur des runners natifs
 par le workflow GitHub Actions `CMS standalone distribution`, déclenché
@@ -162,8 +163,14 @@ candidat, l'approuver ou le rejeter avec un motif obligatoire ; un rejet peut
 actions ne publient, n'installent ni ne promeuvent le build. La trace est un
 sidecar local, borné et non coordonné entre instances, pas un journal centralisé
 ni inviolable contre un administrateur système.
-La purge automatique et le passage au registre restent absents ; ne pas activer
-ce prototype en production.
+Le binaire `euromni-build-package-candidate-reconciler` purge les archives de
+candidats dont le dernier rejet remonte à au moins 90 jours, tout en conservant
+leur historique local. Les candidats en attente ou approuvés ne sont jamais
+supprimés par cette commande. C'est une exécution ponctuelle : planifier son
+lancement quotidien avec `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR` et le même
+compte/répertoire privé que le CMS. Le quota reste local et non coordonné entre
+instances ; la revue de sécurité indépendante et les contrôles opérationnels
+restent préalables à un usage de production.
 
 Cette documentation décrit le paquet autonome, mais l'installation comme
 service Windows ou unité systemd, la rotation des secrets et une politique de

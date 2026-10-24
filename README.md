@@ -82,3 +82,21 @@ se configurent avec `EUROMNI_ARTIFACT_RECONCILIATION_INTERVAL` et
 est provisoirement de `5m`, configurable avec
 `EUROMNI_ARTIFACT_RECONCILIATION_RETRY_INTERVAL` ; après succès, la cadence
 normale reprend. Le processus s’arrête proprement sur SIGINT/SIGTERM.
+
+## Rétention des packages signés
+
+Les archives de candidats signés rejetés depuis au moins 90 jours sont purgées
+par une commande dédiée ; leurs sidecars d'historique restent présents et
+consultables dans l'admin. Les candidats en attente ou approuvés sont conservés.
+Pour appliquer la règle quotidiennement, planifier l'exécutable
+`euromni-build-package-candidate-reconciler` avec le compte du CMS, ou lancer
+depuis les sources :
+
+```bash
+EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR='/var/lib/euromni/build-package-candidates' \
+go run ./cmd/build-package-candidate-reconciler
+```
+
+La commande ne crée pas le répertoire configuré, ne purge pas la quarantaine
+d'import PHP et échoue explicitement si un candidat expiré est corrompu. Les
+stockages de candidats ne doivent pas être partagés entre plusieurs instances.

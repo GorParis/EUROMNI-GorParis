@@ -109,9 +109,12 @@ func adminBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	digest := r.PathValue("packageSHA256")
-	manifest, signature, err := loadVerifiedBuildPackageCandidate(r, session.ShopID, digest)
-	if err != nil {
-		writeBuildPackageCandidateError(w, err)
+	if moduleBuildPackageCandidates == nil {
+		writeBuildPackageCandidateError(w, errBuildPackageCandidateStorageUnavailable)
+		return
+	}
+	if !isSHA256Hex(digest) {
+		writeBuildPackageCandidateError(w, errBuildPackageCandidateDigestInvalid)
 		return
 	}
 	review, err := moduleBuildPackageCandidates.GetReview(r.Context(), session.ShopID, digest)
@@ -119,17 +122,35 @@ func adminBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
 		writeBuildPackageCandidateError(w, err)
 		return
 	}
+	if !review.PayloadAvailable {
+		writePrivateJSON(w, http.StatusOK, map[string]any{
+			"data": map[string]any{
+				"package_sha256":    digest,
+				"status":            review.Status,
+				"payload_available": false,
+				"rejection":         review.Rejection,
+				"decision_history":  review.History,
+			},
+		})
+		return
+	}
+	manifest, signature, err := loadVerifiedBuildPackageCandidate(r, session.ShopID, digest)
+	if err != nil {
+		writeBuildPackageCandidateError(w, err)
+		return
+	}
 	writePrivateJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
-			"package_sha256":   digest,
-			"status":           review.Status,
-			"module":           manifest.Module,
-			"platform":         manifest.Platform,
-			"wasm_sha256":      manifest.WASMSHA256,
-			"signer_key_id":    signature.KeyID,
-			"approval":         review.Approval,
-			"rejection":        review.Rejection,
-			"decision_history": review.History,
+			"package_sha256":    digest,
+			"status":            review.Status,
+			"payload_available": true,
+			"module":            manifest.Module,
+			"platform":          manifest.Platform,
+			"wasm_sha256":       manifest.WASMSHA256,
+			"signer_key_id":     signature.KeyID,
+			"approval":          review.Approval,
+			"rejection":         review.Rejection,
+			"decision_history":  review.History,
 		},
 	})
 }

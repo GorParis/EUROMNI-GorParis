@@ -77,7 +77,7 @@ jobs:
           set -euo pipefail
           bundle="euromni-cms-${{ matrix.target }}"
           mkdir -p "dist/$bundle/docs"
-          for command in cms db-migrate db-backup staff-bootstrap artifact-reconciler; do
+          for command in cms db-migrate db-backup staff-bootstrap artifact-reconciler build-package-candidate-reconciler; do
             go build -trimpath -o "dist/$bundle/euromni-$command" "./cmd/$command"
           done
           cp docs/cms-distribution.md docs/database.md docs/local-postgresql.md "dist/$bundle/docs/"
@@ -100,6 +100,7 @@ jobs:
           trap 'if [[ -n "${cms_pid:-}" ]]; then kill "$cms_pid" 2>/dev/null || true; wait "$cms_pid" 2>/dev/null || true; fi; rm -rf "$smoke_dir"' EXIT
           tar -xzf "dist/$bundle.tar.gz" -C "$smoke_dir"
           test -x "$smoke_dir/$bundle/euromni-db-backup"
+          test -x "$smoke_dir/$bundle/euromni-build-package-candidate-reconciler"
           LISTEN_ADDR=127.0.0.1:18081 "$smoke_dir/$bundle/euromni-cms" >"$smoke_dir/cms.log" 2>&1 &
           cms_pid=$!
           ready=false
@@ -136,7 +137,7 @@ jobs:
           $bundlePath = Join-Path "dist" $bundle
           $docsPath = Join-Path $bundlePath "docs"
           New-Item -ItemType Directory -Force -Path $docsPath | Out-Null
-          foreach ($command in @("cms", "db-migrate", "db-backup", "staff-bootstrap", "artifact-reconciler")) {
+          foreach ($command in @("cms", "db-migrate", "db-backup", "staff-bootstrap", "artifact-reconciler", "build-package-candidate-reconciler")) {
             go build -trimpath -o (Join-Path $bundlePath "euromni-$command.exe") "./cmd/$command"
             if ($LASTEXITCODE -ne 0) { throw "Build failed for $command" }
           }
@@ -162,6 +163,9 @@ jobs:
           Expand-Archive -LiteralPath (Join-Path "dist" "$bundle.zip") -DestinationPath $smokePath
           if (-not (Test-Path -LiteralPath (Join-Path $smokePath "$bundle\euromni-db-backup.exe") -PathType Leaf)) {
             throw "Packaged Windows db-backup command is missing"
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $smokePath "$bundle\euromni-build-package-candidate-reconciler.exe") -PathType Leaf)) {
+            throw "Packaged Windows build package candidate reconciler is missing"
           }
           $cmsPath = Join-Path $smokePath "$bundle\euromni-cms.exe"
           $env:LISTEN_ADDR = "127.0.0.1:18081"
