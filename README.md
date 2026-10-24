@@ -88,15 +88,20 @@ normale reprend. Le processus s’arrête proprement sur SIGINT/SIGTERM.
 Les archives de candidats signés rejetés depuis au moins 90 jours sont purgées
 par une commande dédiée ; leurs sidecars d'historique restent présents et
 consultables dans l'admin. Les candidats en attente ou approuvés sont conservés.
-Pour appliquer la règle quotidiennement, planifier l'exécutable
-`euromni-build-package-candidate-reconciler` avec le compte du CMS, ou lancer
-depuis les sources :
+Le CMS et le reconciler doivent utiliser la même base PostgreSQL et le même
+volume privé partagé. Les verrous advisory PostgreSQL coordonnent les écritures
+et quotas entre les instances EUROMNI ; le volume doit fournir des hard links
+atomiques et une visibilité cohérente des fichiers. Pour appliquer la règle
+quotidiennement, planifier l'exécutable `euromni-build-package-candidate-reconciler`
+avec le compte du CMS, ou lancer depuis les sources :
 
 ```bash
+DATABASE_URL='<url-postgresql>' \
 EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR='/var/lib/euromni/build-package-candidates' \
 go run ./cmd/build-package-candidate-reconciler
 ```
 
-La commande ne crée pas le répertoire configuré, ne purge pas la quarantaine
-d'import PHP et échoue explicitement si un candidat expiré est corrompu. Les
-stockages de candidats ne doivent pas être partagés entre plusieurs instances.
+La commande ne crée pas le répertoire configuré, exige la même base PostgreSQL,
+ne purge pas la quarantaine d'import PHP et échoue explicitement si un candidat
+expiré est corrompu. Ne pas partager ce répertoire avec des versions de
+l'application antérieures à la coordination DB.

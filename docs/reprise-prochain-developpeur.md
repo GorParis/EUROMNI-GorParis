@@ -47,8 +47,11 @@ pas une preuve que l'arbre de travail est propre.
 - La route admin `POST /v1/admin/modules/build-packages` reçoit un ZIP signé
   exact sous 64 MiB, vérifie la confiance et le package sans extraction, puis
   stocke l'archive originale comme candidat dans un FileStore privé par boutique
-  (`EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`, quota provisoire de 256 MiB par
-  boutique). `GET /v1/admin/modules/build-packages/candidates/{packageSHA256}`
+  (`EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`, quota de 256 MiB par boutique).
+  Le quota est sérialisé par verrou advisory PostgreSQL ; toutes les instances
+  doivent utiliser la même base et le même volume partagé avec hard links
+  atomiques et visibilité cohérente. `GET
+  /v1/admin/modules/build-packages/candidates/{packageSHA256}`
   permet de relire le candidat en revalidant signature et contenu ;
   `GET /v1/admin/modules/build-packages/candidates` fournit l'inventaire paginé
   de la boutique (digest, taille et état) sans ouvrir les archives. Le détail
@@ -64,14 +67,26 @@ pas une preuve que l'arbre de travail est propre.
   `cmd/build-package-candidate-reconciler` doit être planifiée quotidiennement.
   Elle retire uniquement le payload, conserve la trace locale et laisse la
   ligne d'historique consultable dans Modules sans action de réouverture.
-  Candidats `pending`/`approved` non purgés automatiquement. Quota multi-instance,
-  sauvegarde et restauration restent à traiter.
+  Candidats `pending`/`approved` non purgés automatiquement. La coordination
+  DB du quota, des imports, des décisions et des purges est en place ;
+  validation opérationnelle du volume partagé, sauvegarde et restauration
+  restent à traiter.
+- Vérification locale complète : `go test -p 1 -tags=integration -count=1
+  ./...` passe sous Linux avec `pg_dump`/`pg_restore` 16.15 et PostgreSQL 16
+  embarqué ; le client système 18.6 ajoute `SET transaction_timeout`, non pris
+  en charge par PostgreSQL 16. `go vet ./...`, `go test -count=1 ./frontend`,
+  `node --check frontend/admin/admin.js` et `git diff --check passent également.
+  Les tests d'intégration comprennent la concurrence de deux FileStores et le
+  reconciler avec PostgreSQL. La CI sur les changements de coordination est à
+  confirmer ; aucun NAS/système de fichiers partagé n'a été qualifié.
 - Revue de sécurité indépendante en lecture seule du parcours packages signés,
   sur `df7a6a7` : effectuée le 24 octobre 2026, résultat consigné à 10:49:38
   (UTC+02:00). Aucun problème exploitable identifié sur ZIP/signature, accès
   tenant, stockage, décisions, purge et historique conservé. La planification
   effective de la purge et le multi-instance n'ont pas été vérifiés ; ne pas
-  interpréter ce résultat comme une autorisation de production.
+  interpréter ce résultat comme une autorisation de production. La coordination
+  PostgreSQL multi-instance décrite ci-dessus a été ajoutée après cette revue
+  et n'est pas couverte par son résultat.
 - QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
   Selfnamed lié à son IR et le validateur de package ; le chemin de publication
   rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP

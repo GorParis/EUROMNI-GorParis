@@ -154,26 +154,35 @@ export EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR='/var/lib/euromni/build-package-candi
 ./euromni-cms
 ```
 
-Protéger le fichier de confiance et les deux répertoires avec les droits du
-compte de service. Le stockage de candidats est privé et séparé du FileStore
-des artefacts publiés, plafonné provisoirement à 256 MiB par boutique et non
-coordonné entre instances. Un `owner` ou `admin` peut lister et relire un
+Protéger le fichier de confiance et les répertoires avec les droits du compte
+de service. Le stockage de candidats est séparé du FileStore des artefacts
+publiés. Il est plafonné à 256 MiB par boutique et utilise un verrou advisory
+PostgreSQL par boutique pour coordonner imports, décisions et purges entre
+instances. Pour plusieurs instances, toutes doivent utiliser exactement la
+même base PostgreSQL et le même volume partagé ; celui-ci doit garantir la
+visibilité cohérente des fichiers et les hard links atomiques. La configuration
+du stockage échoue sans PostgreSQL.
+Toutes les instances partageant ce volume doivent exécuter une version qui
+prend le verrou PostgreSQL avant de modifier le stockage.
+Un `owner` ou `admin` peut lister et relire un
 candidat, l'approuver ou le rejeter avec un motif obligatoire ; un rejet peut
 être rouvert et chaque décision est tracée par acteur, rôle et horodatage. Ces
 actions ne publient, n'installent ni ne promeuvent le build. La trace est un
-sidecar local, borné et non coordonné entre instances, pas un journal centralisé
-ni inviolable contre un administrateur système.
+sidecar sur le volume partagé, borné et sérialisé par le verrou inter-instance ;
+elle n'est pas un journal centralisé en base ni inviolable contre un
+administrateur système.
 Le binaire `euromni-build-package-candidate-reconciler` purge les archives de
 candidats dont le dernier rejet remonte à au moins 90 jours, tout en conservant
 leur historique local. Les candidats en attente ou approuvés ne sont jamais
 supprimés par cette commande. C'est une exécution ponctuelle : planifier son
 lancement quotidien avec `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR` et le même
-compte/répertoire privé que le CMS. Le quota reste local et non coordonné entre
-instances. Une revue de sécurité indépendante du parcours de packages signés
+compte/répertoire privé et la même base PostgreSQL que le CMS. Une revue de
+sécurité indépendante du parcours de packages signés
 a été effectuée le 24 octobre 2026 et consignée à 10:49:38 (UTC+02:00) sur
 `df7a6a7` ; aucune vulnérabilité exploitable n'a été identifiée dans le
-périmètre examiné. L'ordonnancement opérationnel et le multi-instance restent
-non vérifiés et à traiter avant tout usage de production.
+périmètre examiné avant l'ajout de la coordination multi-instance. La fiabilité
+de la configuration du volume partagé et l'ordonnancement opérationnel restent
+à valider avant tout usage de production.
 
 Cette documentation décrit le paquet autonome, mais l'installation comme
 service Windows ou unité systemd, la rotation des secrets et une politique de

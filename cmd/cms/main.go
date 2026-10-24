@@ -47,7 +47,7 @@ func main() {
 	if err := configureTrustedBuildPackageKeys(); err != nil {
 		log.Fatal(err)
 	}
-	if err := configureBuildPackageCandidates(); err != nil {
+	if err := configureBuildPackageCandidates(reader); err != nil {
 		log.Fatal(err)
 	}
 	closePolicy, err := configureShippingPricingPolicy(reader)
@@ -103,13 +103,20 @@ func configureTrustedBuildPackageKeys() error {
 	return nil
 }
 
-func configureBuildPackageCandidates() error {
+func configureBuildPackageCandidates(reader store.ProductReader) error {
 	api.SetModuleBuildPackageCandidates(nil)
 	root := strings.TrimSpace(os.Getenv("EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR"))
 	if root == "" {
 		return nil
 	}
-	candidates, err := packagecandidate.NewFileStore(root)
+	database, ok := reader.(*store.Store)
+	if !ok || database.SQL == nil {
+		return fmt.Errorf("EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR requires a configured PostgreSQL database for shared quota coordination")
+	}
+	if database.Dialect != dbdialect.PostgreSQL {
+		return fmt.Errorf("EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR requires PostgreSQL for shared quota coordination")
+	}
+	candidates, err := packagecandidate.NewCoordinatedFileStore(root, database.SQL)
 	if err != nil {
 		return fmt.Errorf("configure build package candidate storage: %w", err)
 	}

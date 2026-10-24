@@ -75,6 +75,7 @@ promeuvent rien. Les archives rejetées sont purgées après 90 jours depuis le
 dernier rejet ; l'historique local reste consultable dans Modules, mais le
 candidat ne peut plus être rouvert. Les archives en attente et approuvées ne
 sont pas purgées automatiquement. La liste est paginée et ne constitue pas une
-revue de sécurité ; le staging et sa trace restent locaux au serveur.
+revue de sécurité ; le staging et sa trace résident sur le volume privé configuré
+pour le CMS.
 
 Consomme uniquement les APIs du cœur EUROMNI (REST / GraphQL). Pas de thème PHP.

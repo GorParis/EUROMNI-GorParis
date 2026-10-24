@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -85,8 +86,9 @@ type Store interface {
 }
 
 type FileStore struct {
-	root string
-	mu   sync.Mutex
+	root        string
+	coordinator *sql.DB
+	mu          sync.Mutex
 }
 
 func NewFileStore(root string) (*FileStore, error) {
@@ -101,6 +103,18 @@ func NewFileStore(root string) (*FileStore, error) {
 		return nil, fmt.Errorf("configure private build package candidate directory: %w", err)
 	}
 	return &FileStore{root: absoluteRoot}, nil
+}
+
+func NewCoordinatedFileStore(root string, coordinator *sql.DB) (*FileStore, error) {
+	if coordinator == nil {
+		return nil, errors.New("PostgreSQL coordinator is required for shared build package candidate storage")
+	}
+	store, err := NewFileStore(root)
+	if err != nil {
+		return nil, err
+	}
+	store.coordinator = coordinator
+	return store, nil
 }
 
 func (s *FileStore) Put(ctx context.Context, shopID string, data []byte) (Candidate, error) {
@@ -125,10 +139,20 @@ func (s *FileStore) Put(ctx context.Context, shopID string, data []byte) (Candid
 
 	digestBytes := sha256.Sum256(data)
 	digest := hex.EncodeToString(digestBytes[:])
-	directory := filepath.Join(s.root, shopDigest(shopID))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var result Candidate
+	err := s.withStorageLock(ctx, shopDigest(shopID), func() error {
+		candidate, err := s.putLocked(ctx, shopID, digest, data)
+		result = candidate
+		return err
+	})
+	return result, err
+}
+
+func (s *FileStore) putLocked(ctx context.Context, shopID, digest string, data []byte) (Candidate, error) {
+	directory := filepath.Join(s.root, shopDigest(shopID))
 	if err := privatefs.EnsureDirectory(directory); err != nil {
 		return Candidate{}, fmt.Errorf("create shop build package candidate directory: %w", err)
 	}
@@ -386,66 +410,78 @@ func (s *FileStore) PurgeRejectedBefore(ctx context.Context, cutoff time.Time) (
 	if err != nil {
 		return 0, fmt.Errorf("list build package candidate shops: %w", err)
 	}
-	var expired []string
+	removed := 0
 	for _, shop := range shops {
 		if err := ctx.Err(); err != nil {
-			return 0, err
+			return removed, err
 		}
 		if !validDigest(shop.Name()) {
-			return 0, ErrCandidateCorrupt
+			return removed, ErrCandidateCorrupt
 		}
 		directory := filepath.Join(s.root, shop.Name())
 		info, err := os.Lstat(directory)
 		if err != nil {
-			return 0, fmt.Errorf("inspect build package candidate shop: %w", err)
+			return removed, fmt.Errorf("inspect build package candidate shop: %w", err)
 		}
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return removed, ErrCandidateCorrupt
+		}
+		shopRemoved := 0
+		err = s.withStorageLock(ctx, shop.Name(), func() error {
+			var purgeErr error
+			shopRemoved, purgeErr = purgeRejectedDirectory(ctx, directory, cutoff)
+			return purgeErr
+		})
+		if err != nil {
+			return removed + shopRemoved, err
+		}
+		removed += shopRemoved
+	}
+	return removed, nil
+}
+
+func purgeRejectedDirectory(ctx context.Context, directory string, cutoff time.Time) (int, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return 0, fmt.Errorf("list shop build package candidates: %w", err)
+	}
+	var expired []string
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		digest := entry.Name()
+		if !validDigest(digest) {
+			continue
+		}
+		candidatePath := filepath.Join(directory, digest)
+		info, err := os.Lstat(candidatePath)
+		if err != nil {
+			return 0, fmt.Errorf("inspect build package candidate: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return 0, ErrCandidateCorrupt
 		}
-		entries, err := os.ReadDir(directory)
+		history, err := readDecisionHistory(
+			filepath.Join(directory, digest+".decisions.json"),
+			filepath.Join(directory, digest+".approval.json"),
+			digest,
+		)
 		if err != nil {
-			return 0, fmt.Errorf("list shop build package candidates: %w", err)
+			return 0, err
 		}
-		for _, entry := range entries {
-			if err := ctx.Err(); err != nil {
-				return 0, err
-			}
-			digest := entry.Name()
-			if !validDigest(digest) {
-				continue
-			}
-			candidatePath := filepath.Join(directory, digest)
-			info, err := os.Lstat(candidatePath)
-			if err != nil {
-				return 0, fmt.Errorf("inspect build package candidate: %w", err)
-			}
-			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-				return 0, ErrCandidateCorrupt
-			}
-			history, err := readDecisionHistory(
-				filepath.Join(directory, digest+".decisions.json"),
-				filepath.Join(directory, digest+".approval.json"),
-				digest,
-			)
-			if err != nil {
-				return 0, err
-			}
-			review := reviewFromHistory(digest, info.Size(), history, true)
-			if review.Status != "rejected" || review.Rejection == nil {
-				continue
-			}
-			rejectedAt, err := time.Parse(time.RFC3339Nano, review.Rejection.At)
-			if err != nil {
-				return 0, ErrCandidateCorrupt
-			}
-			if rejectedAt.After(cutoff) {
-				continue
-			}
-			if _, err := verifyCandidateFile(candidatePath, digest); err != nil {
-				return 0, err
-			}
-			expired = append(expired, candidatePath)
+		review := reviewFromHistory(digest, info.Size(), history, true)
+		expiredPayload, err := rejectedAtOrBefore(review, cutoff)
+		if err != nil {
+			return 0, err
 		}
+		if !expiredPayload {
+			continue
+		}
+		if _, err := verifyCandidateFile(candidatePath, digest); err != nil {
+			return 0, err
+		}
+		expired = append(expired, candidatePath)
 	}
 
 	removed := 0
@@ -528,57 +564,62 @@ func (s *FileStore) Decide(ctx context.Context, shopID, digest, actorID, actorRo
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data, err := verifyCandidateFile(filepath.Join(directory, digest), digest)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return CandidateReview{}, ErrCandidateNotFound
+	var result CandidateReview
+	err := s.withStorageLock(ctx, shopDigest(shopID), func() error {
+		data, err := verifyCandidateFile(filepath.Join(directory, digest), digest)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return ErrCandidateNotFound
+			}
+			return err
 		}
-		return CandidateReview{}, err
-	}
-	review, err := readCandidateReview(directory, digest, int64(len(data)))
-	if err != nil {
-		return CandidateReview{}, err
-	}
-	if action == DecisionApprove && review.Status == "approved" {
-		return CandidateReview{}, ErrCandidateApproved
-	}
-	if (action == DecisionReject && review.Status != "pending") ||
-		(action == DecisionReopen && review.Status != "rejected") ||
-		(action == DecisionApprove && review.Status != "pending") {
-		return CandidateReview{}, ErrCandidateDecisionConflict
-	}
-	if len(review.History) >= MaxDecisionHistoryEntries {
-		return CandidateReview{}, ErrCandidateDecisionHistoryFull
-	}
-	decision := Decision{
-		Action:    action,
-		ActorID:   actorID,
-		ActorRole: actorRole,
-		At:        time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	if action == DecisionReject {
-		decision.Reason = reason
-	}
-	review.History = append(review.History, decision)
-	switch action {
-	case DecisionApprove:
-		review.Status = "approved"
-		review.Approval = approvalFromDecision(digest, decision)
-		review.Rejection = nil
-	case DecisionReject:
-		review.Status = "rejected"
-		review.Approval = nil
-		review.Rejection = &decision
-	case DecisionReopen:
-		review.Status = "pending"
-		review.Approval = nil
-		review.Rejection = nil
-	}
-	historyPath := filepath.Join(directory, digest+".decisions.json")
-	if err := writeDecisionHistory(historyPath, review.History); err != nil {
-		return CandidateReview{}, err
-	}
-	return review, nil
+		review, err := readCandidateReview(directory, digest, int64(len(data)))
+		if err != nil {
+			return err
+		}
+		if action == DecisionApprove && review.Status == "approved" {
+			return ErrCandidateApproved
+		}
+		if (action == DecisionReject && review.Status != "pending") ||
+			(action == DecisionReopen && review.Status != "rejected") ||
+			(action == DecisionApprove && review.Status != "pending") {
+			return ErrCandidateDecisionConflict
+		}
+		if len(review.History) >= MaxDecisionHistoryEntries {
+			return ErrCandidateDecisionHistoryFull
+		}
+		decision := Decision{
+			Action:    action,
+			ActorID:   actorID,
+			ActorRole: actorRole,
+			At:        time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		if action == DecisionReject {
+			decision.Reason = reason
+		}
+		review.History = append(review.History, decision)
+		switch action {
+		case DecisionApprove:
+			review.Status = "approved"
+			review.Approval = approvalFromDecision(digest, decision)
+			review.Rejection = nil
+		case DecisionReject:
+			review.Status = "rejected"
+			review.Approval = nil
+			review.Rejection = &decision
+		case DecisionReopen:
+			review.Status = "pending"
+			review.Approval = nil
+			review.Rejection = nil
+		}
+		historyPath := filepath.Join(directory, digest+".decisions.json")
+		if err := writeDecisionHistory(historyPath, review.History); err != nil {
+			return err
+		}
+		result = review
+		return nil
+	})
+	return result, err
 }
 
 func approvalFromDecision(digest string, decision Decision) *Approval {
@@ -625,6 +666,10 @@ func reviewFromHistory(digest string, size int64, history []Decision, payloadAva
 }
 
 func rejectedPayloadExpired(review CandidateReview, now time.Time) (bool, error) {
+	return rejectedAtOrBefore(review, now.Add(-RejectedCandidateRetention))
+}
+
+func rejectedAtOrBefore(review CandidateReview, cutoff time.Time) (bool, error) {
 	if review.Status != "rejected" {
 		return false, nil
 	}
@@ -635,7 +680,7 @@ func rejectedPayloadExpired(review CandidateReview, now time.Time) (bool, error)
 	if err != nil {
 		return false, ErrCandidateCorrupt
 	}
-	return !rejectedAt.After(now.Add(-RejectedCandidateRetention)), nil
+	return !rejectedAt.After(cutoff), nil
 }
 
 func readDecisionHistory(path, legacyApprovalPath, digest string) ([]Decision, error) {
@@ -842,6 +887,39 @@ func candidateDirectorySize(directory string) (int64, error) {
 		total += info.Size()
 	}
 	return total, nil
+}
+
+func (s *FileStore) withStorageLock(ctx context.Context, scope string, operation func() error) error {
+	if operation == nil {
+		return errors.New("candidate storage operation is required")
+	}
+	if s.coordinator == nil {
+		return operation()
+	}
+	tx, err := s.coordinator.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin build package candidate coordination: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		scope,
+	); err != nil {
+		return rollbackCandidateCoordination(tx, fmt.Errorf("lock build package candidate scope: %w", err))
+	}
+	if err := operation(); err != nil {
+		return rollbackCandidateCoordination(tx, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("release build package candidate coordination: %w", err)
+	}
+	return nil
+}
+
+func rollbackCandidateCoordination(tx *sql.Tx, cause error) error {
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		return errors.Join(cause, fmt.Errorf("release build package candidate coordination: %w", err))
+	}
+	return cause
 }
 
 func verifyCandidateFile(path, digest string) ([]byte, error) {

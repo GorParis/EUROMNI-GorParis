@@ -218,10 +218,16 @@ et appelle `ValidateBuildPackage` avant toute écriture.
 
 La route exige `owner` ou `admin` et stocke l'archive originale comme candidat
 dans le répertoire privé configuré par `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`,
-sous un chemin adressé par boutique et SHA-256. La limite provisoire est
-256 MiB par boutique ; elle est comptée par processus et ne coordonne pas les
-instances. Une seule validation d'import est exécutée à la fois par processus ;
-les demandes concurrentes reçoivent `503`. Un package accepté répond `202` avec son digest, son signataire,
+sur un volume partagé, sous un chemin adressé par boutique et SHA-256. Chaque
+CMS doit utiliser le même volume et la même base PostgreSQL ; un verrou
+transactionnel advisory PostgreSQL par boutique sérialise les imports, les
+décisions et les purges, et la limite de 256 MiB par boutique est comptée sur
+les fichiers visibles dans ce volume. Le système de fichiers doit fournir une
+visibilité cohérente entre hôtes et prendre en charge la publication atomique
+par hard link utilisée par le FileStore. Sans base PostgreSQL, la configuration
+de ce répertoire échoue explicitement. Une seule validation d'import est
+exécutée à la fois par processus ; les demandes concurrentes reçoivent `503`.
+Un package accepté répond `202` avec son digest, son signataire,
 son module et son état `candidate`. Il ne crée pas de build dans le registre,
 ne change aucun pin et ne déclenche aucune installation ni promotion.
 L'absence de configuration du répertoire désactive cette route (`503`) ; une
@@ -256,12 +262,12 @@ réouverture explicite.
 
 Chaque approbation, rejet et réouverture conserve l'action, l'identifiant de
 l'acteur, son rôle, l'heure UTC et, pour un rejet, son motif dans le sidecar
-local `<digest>.decisions.json`. L'historique est borné à 256 entrées et 256
-KiB. Les transitions impossibles répondent `409`, un motif absent/invalide
-`400`. L'historique local n'est pas un journal centralisé en base et ne
-constitue pas une trace inviolable contre un administrateur système ; il ne
-coordonne pas plusieurs instances et ce stockage ne doit pas être partagé entre
-instances. Une clé retirée ou un package qui échoue à la revalidation bloque
+`<digest>.decisions.json` du volume partagé. L'historique est borné à 256
+entrées et 256 KiB. Les transitions impossibles répondent `409`, un motif
+absent/invalide `400`. Le verrou PostgreSQL sérialise les modifications faites
+par les instances EUROMNI configurées ; l'historique n'est toutefois pas un
+journal centralisé en base ni une trace inviolable contre un administrateur
+système. Une clé retirée ou un package qui échoue à la revalidation bloque
 toute transition. Ces décisions ne publient, n'installent et ne promeuvent
 aucun build, ne modifient aucun pin et ne constituent pas une preuve
 d'innocuité.
@@ -271,16 +277,18 @@ d'approuver, de rejeter avec un motif et de rouvrir un candidat rejeté ;
 toutes les décisions demandent confirmation. La commande de purge supprime
 uniquement l'archive d'un candidat au statut final rejeté dont la date du dernier
 rejet a dépassé 90 jours ; elle vérifie l'intégrité du ZIP avant suppression et
-conserve le sidecar de décisions. Une purge échouée est signalée et ne poursuit
-pas silencieusement au-delà d'une entrée corrompue. L'historique conservé reste
-local, modifiable par un administrateur système et sans coordination
-multi-instance. Le nettoyage des candidats reste manuel tant qu'un ordonnanceur
-externe n'exécute pas quotidiennement la commande. Le quota reste local et
-limité. Une revue de sécurité indépendante en lecture seule du parcours des
+conserve le sidecar de décisions. Elle se connecte à la même base PostgreSQL
+que le CMS et utilise le même verrou advisory par boutique. Une purge échouée
+est signalée et ne poursuit pas silencieusement au-delà d'une entrée corrompue.
+L'historique conservé reste modifiable par un administrateur système. Le
+nettoyage des candidats reste manuel tant qu'un ordonnanceur externe n'exécute
+pas quotidiennement la commande. Une revue de sécurité indépendante en lecture
+seule du parcours des
 packages signés a été effectuée le 24 octobre 2026 et consignée à 10:49:38
 (UTC+02:00) sur `df7a6a7` ; aucune vulnérabilité exploitable n'a été identifiée
 dans le périmètre examiné. La planification effective de la purge et le
-comportement multi-instance n'ont pas été vérifiés ; cette revue ne vaut pas
+déploiement du système de fichiers partagé n'ont pas été vérifiés ; cette revue
+précède la coordination multi-instance ajoutée ensuite et ne vaut pas
 autorisation de production. L'ingestion PHP ZIP de
 `/v1/admin/modules/imports` reste entièrement distincte et hors de cette revue.
 

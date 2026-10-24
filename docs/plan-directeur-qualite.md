@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.33 |
+| Version | 3.34 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-24 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -97,6 +97,15 @@ pas les archives, ce que fait la lecture détaillée avant décision. L'interfac
 Modules expose l'inventaire, le détail revalidé, l'approbation, le rejet et la
 réouverture. La rétention des rejets et la conservation de l'historique sont
 implémentées ; la passerelle de publication reste à implémenter.
+
+La capacité des candidats signés est coordonnée entre instances au moyen d'un
+verrou advisory transactionnel PostgreSQL par boutique ; imports, décisions et
+purges prennent ce verrou avant de lire ou modifier le FileStore. Le CMS et le
+réconciliateur doivent partager la même base PostgreSQL ainsi qu'un volume
+commun supportant les hard links atomiques et la visibilité cohérente. Un test
+d'intégration PostgreSQL lance deux FileStores concurrents et vérifie qu'un
+seul upload peut occuper le quota restant. Ce test ne qualifie pas les garanties
+d'un NAS ou d'un système de fichiers partagé en production.
 
 ### Revue de sécurité indépendante — packages signés
 
@@ -346,3 +355,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.31 | 2026-10-24 | Décisions de package étendues au rejet avec motif obligatoire et à la réouverture d'un candidat rejeté. Historique local borné (256 décisions / 256 KiB), état vérifié, attribution actor/rôle/UTC ; transitions invalides refusées et détail/API exposent l'historique. L'API ne modifie pas les événements existants, mais la trace locale n'est pas inviolable contre un administrateur système et ne coordonne pas les instances. Admin permet rejeter/rouvrir avec confirmation. Tests de transitions API/store et de conservation d'historique ajoutés. Validation complète, vet, frontend et syntaxe JS réussis sous Linux ; CI Windows et revue indépendante à venir. | En attente du responsable qualité |
 | 3.32 | 2026-10-24 | Politique de rétention validée par le responsable produit : purger après 90 jours le payload des candidats dont le dernier état est rejeté ; préserver pending/approved et le sidecar des décisions. `PurgeRejectedBefore` vérifie le digest avant suppression ; la liste et le détail exposent l'historique conservé avec `payload_available:false`, sans action de réouverture. `cmd/build-package-candidate-reconciler` fournit le passage ponctuel à planifier quotidiennement et est inclus dans les paquets Linux/Windows. Tests couvrent expiration, rejeu après réouverture, états conservés, historique consultable et annulation. `go test ./...`, `go vet ./...`, `go test ./frontend`, `node --check frontend/admin/admin.js`, compilation du reconciler et `git diff --check` réussis sous Linux ; ordonnanceur externe, CI Windows, multi-instance et revue de sécurité indépendante restent à faire. | En attente du responsable qualité |
 | 3.33 | 2026-10-24, 10:49:38 UTC+02:00 | Revue de sécurité indépendante en lecture seule du parcours des packages signés, sur `df7a6a7` : ZIP/signature, authentification et scope boutique, stockage, décisions, purge et historique retenu. Aucun problème de sécurité exploitable identifié dans le périmètre. L'ordonnancement opérationnel de la purge et le multi-instance n'ont pas été vérifiés ; aucune approbation de production n'en découle. | Résultat à examiner par le responsable qualité |
+| 3.34 | 2026-10-24 | Quota de candidats signés coordonné par verrou advisory transactionnel PostgreSQL par boutique. Imports, décisions et purges sont sérialisés entre processus ; le reconciler exige `DATABASE_URL` et la même base que le CMS. Le déploiement multi-instance exige aussi un volume partagé avec hard links et visibilité cohérente ; ce support stockage n'est pas qualifié en production. `go test -p 1 -tags=integration -count=1 ./...` passe sous Linux avec les clients PostgreSQL 16.15 ; `go vet ./...`, frontend, syntaxe JS et `git diff --check` passent également. La CI Linux/Windows vient d’être configurée pour les intégrations ; la validation distante du code de coordination et celle du système de fichiers partagé restent à faire. La revue de sécurité antérieure ne couvre pas cette tranche. | En attente du responsable qualité |

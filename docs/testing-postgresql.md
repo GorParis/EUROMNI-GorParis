@@ -10,7 +10,7 @@ go test -tags=integration -count=1 ./...
 
 L’archive partagée et les binaires extraits, runtime et données propres à chaque instance résident dans `.tmp/embedded-postgres`, sous le dépôt ; `.tmp` est ignoré par Git.
 
-La CI GitHub exécute `go vet ./...` et les tests sans tag sur un runner Linux à chaque push sur `main` et pull request vers `main`. Le workflow manuel/de publication des distributions (`.github/workflows/cms-distribution.yml`) exécute aussi les intégrations sur ses runners natifs Linux amd64 et Windows amd64 avant de construire les archives. Il ajoute le dépôt officiel PostgreSQL pour installer le client `pg_dump` 16 sur Ubuntu 22.04 (le dépôt système ne fournit que la version 14) et sérialise les packages (`-p 1`) pour éviter les courses sur le cache partagé de l'archive PostgreSQL embarquée.
+Le workflow Go CI (`.github/workflows/ci.yml`) exécute `go vet ./...`, les tests sans tag et les tests d’intégration (`go test -p 1 -tags=integration -count=1 ./...`) sur des runners natifs Linux amd64 et Windows amd64 à chaque push sur `main` et pull request vers `main`. Il installe Rust 1.99.1 et précharge avec `cargo fetch --locked` les dépendances du guest qui est compilé par un test d’intégration ; sur Linux, il installe aussi le client PostgreSQL 16 depuis PGDG pour faire correspondre `pg_dump`/`pg_restore` au serveur de test. Les intégrations sont sérialisées (`-p 1`) pour éviter les courses sur le cache partagé de l'archive PostgreSQL embarquée. Le workflow manuel/de publication des distributions (`.github/workflows/cms-distribution.yml`) exécute également les intégrations sur ses runners natifs avant de construire les archives.
 
 Pour exécuter les tests dans un runner Linux conteneurisé, Docker reste une option :
 

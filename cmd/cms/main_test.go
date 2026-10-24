@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"euromni/internal/api"
+	"euromni/internal/dbdialect"
 	"euromni/internal/store"
 )
 
@@ -118,12 +119,17 @@ func TestTrustedBuildPackageKeysLoadFromExplicitFile(t *testing.T) {
 func TestBuildPackageCandidateStorageIsOptIn(t *testing.T) {
 	t.Cleanup(func() { api.SetModuleBuildPackageCandidates(nil) })
 	t.Setenv("EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR", "")
-	if err := configureBuildPackageCandidates(); err != nil {
+	if err := configureBuildPackageCandidates(store.NewMemory()); err != nil {
 		t.Fatalf("disable build package candidate storage: %v", err)
 	}
 	t.Setenv("EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR", filepath.Join(t.TempDir(), "candidates"))
-	if err := configureBuildPackageCandidates(); err != nil {
-		t.Fatalf("configure build package candidate storage: %v", err)
+	if err := configureBuildPackageCandidates(store.NewMemory()); err == nil ||
+		!strings.Contains(err.Error(), "configured PostgreSQL database") {
+		t.Fatalf("configure build package candidate storage without PostgreSQL error = %v", err)
+	}
+	if err := configureBuildPackageCandidates(store.NewSQLWithDialect(nil, dbdialect.PostgreSQL)); err == nil ||
+		!strings.Contains(err.Error(), "configured PostgreSQL database") {
+		t.Fatalf("configure build package candidate storage without SQL connection error = %v", err)
 	}
 }
 

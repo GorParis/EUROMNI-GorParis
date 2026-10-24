@@ -5,27 +5,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"euromni/internal/packagecandidate"
 )
 
-func TestRunReportsRetentionAndLeavesEmptyStoreIntact(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "candidates")
-	if _, err := packagecandidate.NewFileStore(root); err != nil {
-		t.Fatalf("create candidate store: %v", err)
-	}
-
+func TestRunRequiresPostgreSQLCoordinator(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+	root := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"-dir", root}, &stdout, &stderr); err != nil {
-		t.Fatalf("run() error = %v; stderr=%s", err, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "removed=0") ||
-		!strings.Contains(stdout.String(), packagecandidate.RejectedCandidateRetention.String()) {
-		t.Fatalf("run() output = %q, want retention and no removals", stdout.String())
+	err := run([]string{"-dir", root}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL is required") {
+		t.Fatalf("run() error = %v, want PostgreSQL coordinator requirement", err)
 	}
 }
 
 func TestRunRequiresExistingCandidateDirectory(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+	existingDirectory := t.TempDir()
 	for _, test := range []struct {
 		name string
 		args []string
@@ -43,7 +37,7 @@ func TestRunRequiresExistingCandidateDirectory(t *testing.T) {
 		},
 		{
 			name: "unexpected argument",
-			args: []string{"-dir", t.TempDir(), "extra"},
+			args: []string{"-dir", existingDirectory, "extra"},
 			want: "unexpected positional arguments",
 		},
 	} {
