@@ -7,13 +7,13 @@ l'arbre de travail est propre.
 
 ## Passation immédiate — 24 octobre 2026
 
-- HEAD partagé est `e0547bbb898a4312d663f7614e9f4ae478ed487f`
-  (`Test transported signed build publication`), sur `main` et aligné avec
+- HEAD partagé est `4ab57c17d08525da7ef05f06aadb3e3a07545dbc`
+  (`Validate catalog sorting module pilots`), sur `main` et aligné avec
   `origin/main` lors de cette vérification.
-- GitHub Actions Go CI #94 a réussi sur ce commit : les quatre jobs Go/Rust
+- GitHub Actions Go CI #95 a réussi sur ce commit : les quatre jobs Go/Rust
   Linux/Windows sont verts. Les jobs Go incluent `go vet ./...`, les tests
   unitaires et les intégrations PostgreSQL ; la preuve distante est le
-  [run #94](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/40102898132).
+  run #95.
 - QP-07 est partagé et validé techniquement sur Linux/Windows pour ce lot. Les
   tests couvrent le rejet d’un manifeste signé altéré, la stabilité du build
   courant et du pin lorsqu’un package est rejeté, l’échec DB après écriture de
@@ -29,8 +29,12 @@ l'arbre de travail est propre.
   le module PrestaShop (défaut 8), mais la fenêtre de nouveauté est un réglage
   global du CMS ; EUROMNI la rend par boutique (défaut 30 jours). Les tests de
   lowering et d’intégration ont été renforcés pour vérifier la source épinglée
-  et le contenu complet des réponses Wasm. Les validations de ce dernier lot
-  restent à exécuter ; aucune validation CI Windows n’est disponible.
+  et le contenu complet des réponses Wasm. Le pilote natif persistant
+  PrestaShop 9.0.3/MariaDB 11.8.9 fonctionne sous Podman local : le module
+  épinglé 2.0.1 rend les trois produits synthétiques de 1, 5 et 29 jours, exclut
+  celui de 31 jours et respecte la limite 2 et la fenêtre globale désactivée.
+  `manage.sh test` a réussi deux fois consécutivement. L’instance reste une
+  vérification technique locale, sans qualification Windows ni production.
 - La suite intégration complète
   `go test -p 1 -tags=integration -count=1 ./...` passe pour le pipeline, le
   store et Wasmtime, mais échoue dans `internal/backup/TestBackupAndRestorePostgreSQL` :
@@ -41,8 +45,9 @@ l'arbre de travail est propre.
   reprise, l’arbre contenait des modifications locales à `AGENTS.md`,
   `cmd/quarantine-reconciler/main.go`, ce guide et `internal/store/store.go`,
   ainsi que `.vscode/` et `docs/systeme-management-qualite.md` non suivis.
-  Préserver ces changements ; isoler précisément tout lot avant un commit et
-  ne rien commiter ou pousser sans demande explicite.
+  Le README pipeline et le pilote PrestaShop ajoutés ensuite sont aussi locaux
+  et non commités. Préserver ces changements ; isoler précisément tout lot
+  avant un commit et ne rien commiter ou pousser sans demande explicite.
 
 ### Reproduction ciblée sur Windows
 

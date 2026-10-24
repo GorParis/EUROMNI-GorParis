@@ -467,6 +467,17 @@ et l’exécution du Wasm dans le CMS de test ; elle ne couvre ni l’installati
 du PHP amont dans PrestaShop, ni le rendu Smarty, ni une parité fonctionnelle
 complète avec le module d’origine.
 
+### Pilote PrestaShop natif persistant
+
+Une instance isolée PrestaShop/MariaDB permet de comparer le module PHP natif
+à l’adaptateur EUROMNI sur des produits synthétiques. Voir
+[`prestashop-pilot/README.md`](prestashop-pilot/README.md) pour démarrer,
+répéter les tests, accéder à l’admin et arrêter sans supprimer les volumes.
+Elle utilise des images épinglées, un réseau interne sans sortie et une
+publication HTTP limitée à la boucle locale. Sa base persistante ne doit
+contenir aucune donnée réelle ; `destroy --confirm` supprime explicitement ses
+seuls volumes.
+
 L’IR accepte un appel par module et prend en charge `catalog.product.get`,
 `catalog.product.list`, `catalog.product.newest` et `catalog.category.list`.
 Conditions, chaînes d’opérations et traduction générale du code métier restent

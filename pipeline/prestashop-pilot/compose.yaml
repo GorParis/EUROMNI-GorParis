@@ -1,0 +1,60 @@
+services:
+  database:
+    image: docker.io/library/mariadb@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa
+    environment:
+      MARIADB_DATABASE: prestashop
+      MARIADB_USER: prestashop
+      MARIADB_PASSWORD: ${PRESTASHOP_DB_PASSWORD:?}
+      MARIADB_ROOT_PASSWORD: ${PRESTASHOP_DB_ROOT_PASSWORD:?}
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - default
+    volumes:
+      - database-data:/var/lib/mysql
+
+  prestashop:
+    image: docker.io/prestashop/prestashop@sha256:bd05527bc324b43bf70458413be60181614fad62f71a63af2525362985207b3d
+    environment:
+      DB_SERVER: database
+      DB_NAME: prestashop
+      DB_USER: prestashop
+      DB_PASSWD: ${PRESTASHOP_DB_PASSWORD:?}
+      PS_INSTALL_AUTO: "1"
+      PS_INSTALL_DB: "1"
+      PS_ERASE_DB: ${PRESTASHOP_ERASE_DB:-0}
+      PS_DOMAIN: localhost:18084
+      PS_FOLDER_ADMIN: admin-dev
+      PS_LANGUAGE: en
+      PS_COUNTRY: US
+      PS_ENABLE_SSL: "0"
+      PS_DEMO_MODE: "0"
+      PS_DEV_MODE: "0"
+      ADMIN_MAIL: ${PRESTASHOP_ADMIN_EMAIL:?}
+      ADMIN_PASSWD: ${PRESTASHOP_ADMIN_PASSWORD:?}
+    ports:
+      - "127.0.0.1:18084:80"
+    volumes:
+      - prestashop-files:/var/www/html
+      - ${PRESTASHOP_MODULE_SOURCE:?}:/var/www/html/modules/ps_newproducts:z
+      - ./seed-and-test.php:/opt/euromni-pilot/seed-and-test.php:ro,z
+    depends_on:
+      database:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - default
+
+networks:
+  default:
+    internal: true
+
+volumes:
+  database-data:
+  prestashop-files:
