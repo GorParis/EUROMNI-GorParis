@@ -7,6 +7,11 @@ de Node.js ni de Docker. Le binaire est propre à son OS et à son architecture 
 la CGo/Wasmtime exige une construction native sur chaque cible et ne permet pas
 de supposer qu’un exécutable est universel.
 
+Les outils nécessaires pour construire et tester les paquets ne sont pas les
+prérequis d’exécution du CMS. La matrice des dépendances CI et les composants
+externes éventuellement nécessaires à la base, aux sauvegardes ou aux options
+de rétention figurent dans [Dépendances de CI et d’installation](./dependencies.md).
+
 Le paquet `euromni-cms-<OS>-<architecture>` contient :
 
 | Exécutable | Usage |
