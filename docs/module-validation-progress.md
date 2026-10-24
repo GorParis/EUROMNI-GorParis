@@ -240,6 +240,14 @@ mock correspond au token synthétique utilisé pour le callback.
 Le scénario à 1 001 g n’obtient pas de tarif avec le calcul flottant kg→g du
 plugin 2.0.19 ; le test confirme 1 000 g et 1 002 g, et cette limite reste à
 traiter.
+Le scénario de pagination fait répondre le mock catalogue sur deux pages de
+deux produits, et l’endpoint des zones sur deux pages de trois entrées. Dans
+WooCommerce, la page 1 importe les deux premiers produits ; la page 2 est
+requise pour créer le troisième, puis les deux pages sont rejouées pour vérifier
+l’idempotence. `create_all_products(page, size)` ne suit pas les pages à lui
+seul. À l’inverse, `get_all_shipping_zones()` parcourt et agrège les deux pages ;
+le test vérifie les six identifiants en ordre et confirme les appels aux deux
+pages pour chaque récupération non mise en cache.
 C’est une preuve d’intégration native WordPress/WooCommerce, pas une importation
 ou traduction EUROMNI, pas un test Wasm et pas une véritable commande,
 expédition ou synchronisation Selfnamed. Toute expérience ultérieure avec des
@@ -291,6 +299,16 @@ fixtures partagées avec le pilote natif : nominal, rupture de stock avec poids
 de 1 001 g et tags, et prix `0.10` avec description vide. Le nombre de produits
 en base reste identique après les trois appels. Les tests d’hôte couvrent les
 entrées invalides, la limite de taille et l’absence de capability.
+
+**Prochaine tranche Wasm convenue :** garder le périmètre sur cette seule
+prévisualisation catalogue. Renforcer le test d’intégration Wasmtime pour
+exécuter aussi des entrées malformées et au-delà de la limite de 8 KiB, vérifier
+leur rejet avec une erreur ABI `invalid`, et confirmer que les appels valides
+comme invalides ne changent pas le catalogue persistant. La comparaison aux
+trois fixtures et la restriction d’import à `euromni.call` restent des critères
+de passage. Aucun accès réseau, pagination, commande, livraison ou modification
+de produit n’entre dans ce call Wasm ; devise, locale et unité de volume restent
+non résolues. Le travail ne vise pas la traduction générale du plugin PHP.
 
 Cette preuve valide une frontière ABI Wasm → hôte et un aperçu non persistant,
 pas la traduction de PHP ni l’équivalence complète du plugin Selfnamed. La

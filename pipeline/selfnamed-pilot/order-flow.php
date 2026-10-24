@@ -14,9 +14,11 @@ update_option( 'selfnamed_api_key', 'EUROMNI_LOCAL_FAKE_TOKEN_NOT_A_CREDENTIAL' 
 update_option( 'selfnamed_order_sync_mode', 'manual' );
 
 $product_importer = new Selfnamed\Model\Product();
-pilot_assert( $product_importer->create_all_products( 1, 10 ), 'Selfnamed mock catalog import failed.' );
+pilot_assert( $product_importer->create_all_products( 1, 2 ), 'Selfnamed mock catalog page 1 import failed.' );
 pilot_assert_catalog_product( 842002, 'Synthetic Catalog Balm', '28.82', '0.176', '176', 'instock' );
 pilot_assert_catalog_product( 842003, 'Synthetic Out-of-Stock Balm', '17.4', '1.001', '88', 'outofstock' );
+pilot_assert_catalog_product_absent( 842004 );
+pilot_assert( $product_importer->create_all_products( 2, 2 ), 'Selfnamed mock catalog page 2 import failed.' );
 pilot_assert_catalog_product( 842004, 'Synthetic Decimal-Price Balm', '0.1', '1', '1', 'instock' );
 
 $tagged_product = get_posts(
@@ -34,7 +36,8 @@ pilot_assert(
 	'Imported product tags were not persisted.'
 );
 
-pilot_assert( $product_importer->create_all_products( 1, 10 ), 'Repeated Selfnamed mock catalog import failed.' );
+pilot_assert( $product_importer->create_all_products( 1, 2 ), 'Repeated Selfnamed mock catalog page 1 import failed.' );
+pilot_assert( $product_importer->create_all_products( 2, 2 ), 'Repeated Selfnamed mock catalog page 2 import failed.' );
 foreach ( array( 842002, 842003, 842004 ) as $selfnamed_id ) {
 	$reimported_products = wc_get_products(
 		array(
@@ -230,9 +233,17 @@ pilot_assert(
 	1 === $assertions['product_lookup_ids']['842002'],
 	'Expected exactly one supplier lookup for the valid product callback.'
 );
-pilot_assert( 2 === $assertions['catalog_product_lookups'], 'Expected the initial import and re-import catalog requests.' );
+pilot_assert( 4 === $assertions['catalog_product_lookups'], 'Expected both catalog pages during initial and repeated imports.' );
+pilot_assert(
+	array( '1' => 2, '2' => 2 ) === $assertions['catalog_product_lookup_pages'],
+	'Catalog imports did not request both pages twice.'
+);
 pilot_assert( 1 === $assertions['catalog_error_lookups'], 'Expected one simulated unauthorized catalog request.' );
-pilot_assert( 2 === $assertions['shipping_zone_lookups'], 'Expected one cached shipping-zone lookup and one direct mock contract check.' );
+pilot_assert( 4 === $assertions['shipping_zone_lookups'], 'Expected two pages for both the direct and shipping-method zone lookups.' );
+pilot_assert(
+	array( '1' => 2, '2' => 2 ) === $assertions['shipping_zone_lookup_pages'],
+	'Shipping-zone lookups did not fetch both pages for each uncached API call.'
+);
 pilot_assert( 1 === $assertions['store_lookups'], 'Expected one store-profile refresh lookup.' );
 pilot_assert(
 	array( '9001' => 1, '9002' => 1 ) === $assertions['order_lookups'],
@@ -323,6 +334,15 @@ function pilot_assert_shipping_behavior(): void {
 		! $shipping_zones->error &&
 		6 === count( $shipping_zones->data ),
 		'Selfnamed mock shipping zones did not return all six synthetic country/service scenarios.'
+	);
+	pilot_assert(
+		array( 71, 72, 73, 74, 75, 76 ) === array_map(
+			static function ( $zone ) {
+				return $zone->id;
+			},
+			$shipping_zones->data
+		),
+		'Selfnamed mock shipping-zone pagination returned missing, duplicate, or unordered zones.'
 	);
 
 	$rates = $shipping_method->get_rates_for_package( $selfnamed_package );
@@ -452,4 +472,16 @@ function pilot_assert_catalog_product( int $selfnamed_id, string $name, string $
 	pilot_assert( $stock_status === $product->get_stock_status(), sprintf( 'Product %d stock status mismatch.', $selfnamed_id ) );
 	pilot_assert( false === $product->get_manage_stock(), sprintf( 'Product %d unexpectedly manages stock quantity.', $selfnamed_id ) );
 	pilot_assert( $volume === get_post_meta( $product->get_id(), '_volume', true ), sprintf( 'Product %d volume metadata mismatch.', $selfnamed_id ) );
+}
+
+function pilot_assert_catalog_product_absent( int $selfnamed_id ): void {
+	$products = wc_get_products(
+		array(
+			'limit'        => -1,
+			'meta_key'     => '_selfnamed_product_id',
+			'meta_value'   => $selfnamed_id,
+			'meta_compare' => '=',
+		)
+	);
+	pilot_assert( 0 === count( $products ), sprintf( 'Product %d was imported before its catalog page was requested.', $selfnamed_id ) );
 }

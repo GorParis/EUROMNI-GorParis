@@ -13,8 +13,10 @@ state = {
     "product_lookups": 0,
     "product_lookup_ids": {},
     "catalog_product_lookups": 0,
+    "catalog_product_lookup_pages": {},
     "catalog_error_lookups": 0,
     "shipping_zone_lookups": 0,
+    "shipping_zone_lookup_pages": {},
     "store_lookups": 0,
     "order_lookups": {},
     "order_posts": 0,
@@ -47,14 +49,23 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(401, {"message": "Unauthorized"})
                 return
             state["catalog_product_lookups"] += 1
+            query = parse_qs(urlparse(self.path).query)
+            page = int(query.get("page", ["1"])[0])
+            per_page = int(query.get("per-page", ["10"])[0])
+            state["catalog_product_lookup_pages"][str(page)] = (
+                state["catalog_product_lookup_pages"].get(str(page), 0) + 1
+            )
+            start = (page - 1) * per_page
+            page_products = catalog_products[start : start + per_page]
+            page_count = (len(catalog_products) + per_page - 1) // per_page
             self.send_json(
                 200,
-                catalog_products,
+                page_products,
                 {
-                    "X-Pagination-Current-Page": "1",
-                    "X-Pagination-Page-Count": "1",
-                    "X-Pagination-Total-Count": "1",
-                    "X-Pagination-Per-Page": "10",
+                    "X-Pagination-Current-Page": str(page),
+                    "X-Pagination-Page-Count": str(page_count),
+                    "X-Pagination-Total-Count": str(len(catalog_products)),
+                    "X-Pagination-Per-Page": str(per_page),
                 },
             )
             return
@@ -69,14 +80,24 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(401, {"message": "Unauthorized"})
                 return
             state["shipping_zone_lookups"] += 1
+            query = parse_qs(urlparse(self.path).query)
+            page = int(query.get("page", ["1"])[0])
+            per_page = int(query.get("per-page", ["50"])[0])
+            state["shipping_zone_lookup_pages"][str(page)] = (
+                state["shipping_zone_lookup_pages"].get(str(page), 0) + 1
+            )
+            page_size = 3
+            start = (page - 1) * page_size
+            page_zones = shipping_zones[start : start + page_size]
+            page_count = (len(shipping_zones) + page_size - 1) // page_size
             self.send_json(
                 200,
-                shipping_zones,
+                page_zones,
                 {
-                    "X-Pagination-Current-Page": "1",
-                    "X-Pagination-Page-Count": "1",
-                    "X-Pagination-Total-Count": "1",
-                    "X-Pagination-Per-Page": str(len(shipping_zones)),
+                    "X-Pagination-Current-Page": str(page),
+                    "X-Pagination-Page-Count": str(page_count),
+                    "X-Pagination-Total-Count": str(len(shipping_zones)),
+                    "X-Pagination-Per-Page": str(per_page),
                 },
             )
             return
@@ -173,8 +194,10 @@ class Handler(BaseHTTPRequestHandler):
                     "product_lookups": state["product_lookups"],
                     "product_lookup_ids": state["product_lookup_ids"],
                     "catalog_product_lookups": state["catalog_product_lookups"],
+                    "catalog_product_lookup_pages": state["catalog_product_lookup_pages"],
                     "catalog_error_lookups": state["catalog_error_lookups"],
                     "shipping_zone_lookups": state["shipping_zone_lookups"],
+                    "shipping_zone_lookup_pages": state["shipping_zone_lookup_pages"],
                     "store_lookups": state["store_lookups"],
                     "order_lookups": state["order_lookups"],
                     "order_posts": state["order_posts"],

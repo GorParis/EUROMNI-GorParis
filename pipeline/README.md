@@ -305,6 +305,17 @@ Le cas de 1 001 g n'obtient pas de tarif avec le calcul flottant kg→g du plugi
 1 002 g, et cette limite reste à traiter. Le test oracle Go est
 `TestSelfnamedCatalogProductMappingCharacterization`. Les fixtures n’ont pas
 d’image afin d’exclure les téléchargements.
+
+Le mock renvoie aussi le catalogue en deux pages de deux produits et les six
+zones en deux pages de trois zones, avec des en-têtes de pagination cohérents.
+Dans le CMS, l’import catalogue demande explicitement la page 1 puis la page 2,
+vérifie que le produit de la page suivante n’existe pas avant son import et
+rejoue les deux pages pour tester l’idempotence. La version 2.0.19 n’itère pas
+automatiquement le catalogue dans `create_all_products` : l’appelant fournit la
+page. À l’inverse, `get_all_shipping_zones` suit le nombre de pages annoncé par
+l’API et agrège les zones ; le pilote vérifie les six IDs et les demandes des
+deux pages sur les parcours direct et méthode de livraison.
+
 La base et les sources temporaires sont supprimées au nettoyage. Aucun trafic
 vers le service réel, aucune commande réelle et aucune expédition ne sont
 testés. L’accès avec credentials réels reste une étape séparée, à autoriser
