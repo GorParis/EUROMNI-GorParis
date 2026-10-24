@@ -4,11 +4,11 @@ package main
 
 import (
 	"bytes"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"euromni/internal/privatefs"
 	"euromni/internal/store"
 	"euromni/internal/testdb"
 )
@@ -16,7 +16,7 @@ import (
 func TestPurgeUsesPostgreSQLCandidateCoordinator(t *testing.T) {
 	database := store.NewSQL(testdb.Start(t))
 	root := filepath.Join(t.TempDir(), "candidates")
-	if err := os.Mkdir(root, 0o700); err != nil {
+	if err := privatefs.EnsureDirectory(root); err != nil {
 		t.Fatalf("create candidate directory: %v", err)
 	}
 	var output bytes.Buffer

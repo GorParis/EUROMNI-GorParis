@@ -76,9 +76,12 @@ pas une preuve que l'arbre de travail est propre.
   embarqué ; le client système 18.6 ajoute `SET transaction_timeout`, non pris
   en charge par PostgreSQL 16. `go vet ./...`, `go test -count=1 ./frontend`,
   `node --check frontend/admin/admin.js` et `git diff --check passent également.
-  Les tests d'intégration comprennent la concurrence de deux FileStores et le
-  reconciler avec PostgreSQL. La CI sur les changements de coordination est à
-  confirmer ; aucun NAS/système de fichiers partagé n'a été qualifié.
+  Le run CI de `c81ca35` a révélé que les deux nouveaux tests d'intégration
+  créaient des répertoires avec les ACL Windows héritées, rejetées à juste titre
+  par le FileStore. Les fixtures utilisent maintenant
+  `privatefs.EnsureDirectory` pour établir le DACL privé explicite ; le nouveau
+  run distant doit confirmer le correctif. Aucun NAS/système de fichiers
+  partagé n'a été qualifié.
 - Revue de sécurité indépendante en lecture seule du parcours packages signés,
   sur `df7a6a7` : effectuée le 24 octobre 2026, résultat consigné à 10:49:38
   (UTC+02:00). Aucun problème exploitable identifié sur ZIP/signature, accès

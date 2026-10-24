@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"euromni/internal/privatefs"
 	"euromni/internal/seed"
 	"euromni/internal/testdb"
 )
@@ -27,7 +28,7 @@ func TestCoordinatedFileStoresEnforceShopQuotaAcrossInstances(t *testing.T) {
 		t.Fatalf("create second coordinated store: %v", err)
 	}
 	directory := filepath.Join(root, shopDigest(seed.ShopID))
-	if err := os.MkdirAll(directory, 0o700); err != nil {
+	if err := privatefs.EnsureDirectory(directory); err != nil {
 		t.Fatalf("create shop candidate directory: %v", err)
 	}
 	occupiedPath := filepath.Join(directory, strings.Repeat("a", 64))
