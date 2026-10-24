@@ -120,10 +120,11 @@ le widget, et l’hôte borne les requêtes à 3 650 jours et 100 produits. L’
 filtre les produits actifs sur `created_at`, du plus récent au plus ancien.
 
 Le prototype `catalog.supplier.product.preview` exerce aussi un trigger IR
-dynamique avec un produit Selfnamed synthétique. Il transmet le JSON au call
-hôte qui retourne une projection de prévisualisation non persistée. Ce n’est
-pas une traduction du PHP Selfnamed : aucune image, requête réseau ou écriture
-catalogue n’est impliquée. Les limites et champs encore indéterminés sont
+dynamique avec les trois fixtures Selfnamed synthétiques, communes au pilote
+natif et au test oracle. Le test d’intégration compile, publie et charge le
+module Wasm dans Wasmtime, puis vérifie chaque projection de prévisualisation
+et l’absence d’écriture catalogue. Ce n’est pas une traduction du PHP
+Selfnamed : aucune image ni requête réseau n’est impliquée. Les limites et champs encore indéterminés sont
 documentés dans [le contrat ABI](../docs/abi.md#prévisualisation-catalogue-selfnamed-prototype).
 
 ### Ingestion bornée du ZIP amont `ps_newproducts`
@@ -288,7 +289,12 @@ uniquement un bearer token fictif et la stack n’a aucun credential Selfnamed.
 Le pilote contrôle le mapping catalogue vers un produit brouillon (prix, poids,
 volume et stock), les tags, le refus HTTP 401, le réimport sans doublon, puis
 les appels de commande et le groupe de livraison ; les courriels sont
-désactivés. Le test oracle Go est
+désactivés. Il vérifie aussi les notifications `PRODUCT`, `ORDER` (`SHIPPED`
+et `CANCELLED`) et `STORE`, le rejet d'un token de callback invalide, la
+séparation d'un panier mixte et les tarifs de livraison sur 1 000 g, 1 002 g
+et une destination non desservie. Le cas de 1 001 g n'obtient pas de tarif
+avec le calcul flottant kg→g du plugin 2.0.19 ; le scénario supérieur utilise
+1 002 g et cette limite reste à traiter. Le test oracle Go est
 `TestSelfnamedCatalogProductMappingCharacterization`. Les fixtures n’ont pas
 d’image afin d’exclure les téléchargements.
 La base et les sources temporaires sont supprimées au nettoyage. Aucun trafic

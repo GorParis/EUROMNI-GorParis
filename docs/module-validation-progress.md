@@ -223,6 +223,13 @@ permise.
 synthétiques d’un produit par le mock et soumet une commande avec groupe de
 livraison ; le test confirme les champs attendus, l’identifiant et le statut
 retournés, ainsi que l’absence de doublon lors d’une deuxième synchronisation.
+Le pilote couvre maintenant aussi les notifications `PRODUCT`, `ORDER`
+(`SHIPPED`, `CANCELLED`) et `STORE`, le rejet d’un token de callback invalide,
+la séparation d’un panier mixte, les tarifs à 1 000 g et 1 002 g et l’absence
+de tarif pour une destination non desservie. Le token du profil retourné par
+le mock correspond au token synthétique utilisé pour le callback. Le scénario
+à 1 001 g n’obtient pas de tarif avec le calcul flottant kg→g du plugin 2.0.19 ;
+ce cas de limite est documenté et le test de tranche supérieure utilise 1 002 g.
 C’est une preuve d’intégration native WordPress/WooCommerce, pas une importation
 ou traduction EUROMNI, pas un test Wasm et pas une véritable commande,
 expédition ou synchronisation Selfnamed. Toute expérience ultérieure avec des
@@ -269,8 +276,10 @@ volume sont encore inconnues et apparaissent dans `unresolved`.
 
 `TestSelfnamedProductPreviewWasmRunsWithoutPersistence` compile un IR dynamique,
 vérifie que l’import Wasm est limité à `euromni.call`, publie puis charge le
-module installé dans Wasmtime et compare la sortie avec l’objet attendu ; le
-nombre de produits en base reste identique. Les tests d’hôte couvrent les
+module installé dans Wasmtime et compare la sortie attendue pour les trois
+fixtures partagées avec le pilote natif : nominal, rupture de stock avec poids
+de 1 001 g et tags, et prix `0.10` avec description vide. Le nombre de produits
+en base reste identique après les trois appels. Les tests d’hôte couvrent les
 entrées invalides, la limite de taille et l’absence de capability.
 
 Cette preuve valide une frontière ABI Wasm → hôte et un aperçu non persistant,
