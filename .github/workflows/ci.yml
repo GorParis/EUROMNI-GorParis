@@ -49,6 +49,9 @@ jobs:
       - name: Unit tests
         run: go test -count=1 ./...
 
+      - name: Install pinned Rust guest target
+        run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+
       - name: Install PostgreSQL 16 client from PGDG
         if: runner.os == 'Linux'
         shell: bash
