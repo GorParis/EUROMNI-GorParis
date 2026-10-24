@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"testing"
 )
@@ -33,12 +35,23 @@ func TestReadSignedBuildPackageArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadSignedBuildPackageArchive() returned error: %v", err)
 	}
-	if _, err := ValidateSignedBuildPackage(
+	if !bytes.Equal(packageArchive.SignatureJSON, signatureJSON) ||
+		!bytes.Equal(packageArchive.ManifestJSON, manifest) ||
+		!bytes.Equal(packageArchive.IRJSON, ir) ||
+		!bytes.Equal(packageArchive.WASMBytes, wasmBytes) {
+		t.Fatal("parsed build package components differ from the signed transport")
+	}
+	validatedManifest, err := ValidateSignedBuildPackage(
 		packageArchive.SignatureJSON, packageArchive.ManifestJSON,
 		packageArchive.IRJSON, packageArchive.WASMBytes,
 		map[string]ed25519.PublicKey{signature.KeyID: privateKey.Public().(ed25519.PublicKey)},
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatalf("ValidateSignedBuildPackage() rejected parsed archive: %v", err)
+	}
+	wasmDigest := sha256.Sum256(packageArchive.WASMBytes)
+	if validatedManifest.WASMSHA256 != hex.EncodeToString(wasmDigest[:]) {
+		t.Fatalf("validated package Wasm digest = %q, does not match transported artifact", validatedManifest.WASMSHA256)
 	}
 }
 

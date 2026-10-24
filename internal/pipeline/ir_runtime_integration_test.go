@@ -5,6 +5,9 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -19,6 +22,270 @@ import (
 	"euromni/internal/testdb"
 	"euromni/internal/wasm"
 )
+
+func TestRejectedBuildPublicationPreservesCurrentBuildAndInstalledPin(t *testing.T) {
+	ctx := context.Background()
+	database := testdb.Start(t)
+	moduleStore := store.NewSQL(database)
+	moduleID, err := store.NewCatalogID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO modules (id, name) VALUES ($1, $2)
+	`, moduleID, "demo.catalog-reader"); err != nil {
+		t.Fatalf("create test module: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO shop_modules (shop_id, module_id, status, capabilities)
+		VALUES ($1, $2, 'installed', ARRAY['catalog']::text[])
+	`, seed.ShopID, moduleID); err != nil {
+		t.Fatalf("create installed test module: %v", err)
+	}
+
+	ir := testCatalogIR()
+	wasmBytes, err := CompileIRToWasm(ir)
+	if err != nil {
+		t.Fatalf("compile valid module build: %v", err)
+	}
+	artifactStore, err := artifact.NewFileStore(filepath.Join(t.TempDir(), "artifacts"))
+	if err != nil {
+		t.Fatalf("create isolated artifact store: %v", err)
+	}
+	published, _, err := PublishModuleBuild(ctx, artifactStore, moduleStore, moduleID, ir, wasmBytes)
+	if err != nil {
+		t.Fatalf("publish valid baseline build: %v", err)
+	}
+	installedBefore, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil {
+		t.Fatalf("read baseline installed module: %v", err)
+	}
+	if installedBefore.WASMSHA256 == nil || hex.EncodeToString(installedBefore.WASMSHA256) != published.SHA256 {
+		t.Fatalf("baseline install pin = %x, want %s", installedBefore.WASMSHA256, published.SHA256)
+	}
+
+	tamperedWasm := append([]byte(nil), wasmBytes...)
+	tamperedWasm[len(tamperedWasm)-1] ^= 1
+	tamperedDigest := sha256.Sum256(tamperedWasm)
+	if _, _, err := PublishModuleBuild(ctx, artifactStore, moduleStore, moduleID, ir, tamperedWasm); err == nil {
+		t.Fatal("publication accepted Wasm with a modified compiler provenance section")
+	}
+	if _, err := artifactStore.Get(ctx, hex.EncodeToString(tamperedDigest[:])); !os.IsNotExist(err) {
+		t.Fatalf("tampered artifact read error = %v, want not found", err)
+	}
+
+	var currentHash []byte
+	if err := database.QueryRowContext(ctx, `
+		SELECT wasm_sha256 FROM modules WHERE id = $1
+	`, moduleID).Scan(&currentHash); err != nil {
+		t.Fatalf("read current build after rejected publication: %v", err)
+	}
+	if hex.EncodeToString(currentHash) != published.SHA256 {
+		t.Fatalf("current build hash = %x, want unchanged %s", currentHash, published.SHA256)
+	}
+	installedAfter, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil {
+		t.Fatalf("read installed module after rejected publication: %v", err)
+	}
+	if !bytes.Equal(installedAfter.WASMSHA256, installedBefore.WASMSHA256) {
+		t.Fatalf("rejected publication changed installation pin from %x to %x", installedBefore.WASMSHA256, installedAfter.WASMSHA256)
+	}
+}
+
+func TestBuildRegistrationFailurePreservesCurrentBuildAndInstalledPin(t *testing.T) {
+	ctx := context.Background()
+	database := testdb.Start(t)
+	moduleStore := store.NewSQL(database)
+	moduleID, err := store.NewCatalogID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO modules (id, name) VALUES ($1, $2)
+	`, moduleID, "demo.registration-failure"); err != nil {
+		t.Fatalf("create test module: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO shop_modules (shop_id, module_id, status, capabilities)
+		VALUES ($1, $2, 'installed', ARRAY['catalog']::text[])
+	`, seed.ShopID, moduleID); err != nil {
+		t.Fatalf("create installed test module: %v", err)
+	}
+
+	ir := testCatalogIR()
+	wasmBytes, err := CompileIRToWasm(ir)
+	if err != nil {
+		t.Fatalf("compile baseline module build: %v", err)
+	}
+	artifactStore, err := artifact.NewFileStore(filepath.Join(t.TempDir(), "artifacts"))
+	if err != nil {
+		t.Fatalf("create isolated artifact store: %v", err)
+	}
+	published, _, err := PublishModuleBuild(ctx, artifactStore, moduleStore, moduleID, ir, wasmBytes)
+	if err != nil {
+		t.Fatalf("publish baseline build: %v", err)
+	}
+	installedBefore, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil {
+		t.Fatalf("read baseline installed module: %v", err)
+	}
+
+	if _, err := database.ExecContext(ctx, `
+		CREATE FUNCTION reject_test_build_update() RETURNS trigger AS $$
+		BEGIN
+			IF OLD.name = 'demo.registration-failure'
+				AND NEW.wasm_sha256 IS DISTINCT FROM OLD.wasm_sha256 THEN
+				RAISE EXCEPTION 'injected build registration failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE TRIGGER reject_test_build_update
+		BEFORE UPDATE ON modules
+		FOR EACH ROW EXECUTE FUNCTION reject_test_build_update();
+	`); err != nil {
+		t.Fatalf("install temporary database failure trigger: %v", err)
+	}
+
+	failedIR := testCatalogIR()
+	failedIR.Provenance.SourceReference = "database-failure-injected"
+	failedWASM, err := CompileIRToWasm(failedIR)
+	if err != nil {
+		t.Fatalf("compile candidate for database failure: %v", err)
+	}
+	failedDigest := sha256.Sum256(failedWASM)
+	if _, _, err := PublishModuleBuild(ctx, artifactStore, moduleStore, moduleID, failedIR, failedWASM); err == nil {
+		t.Fatal("publication succeeded despite injected database registration failure")
+	}
+	storedFailedWASM, err := artifactStore.Get(ctx, hex.EncodeToString(failedDigest[:]))
+	if err != nil || !bytes.Equal(storedFailedWASM, failedWASM) {
+		t.Fatalf("failed registration artifact read size/error = %d/%v, want immutable stored orphan", len(storedFailedWASM), err)
+	}
+
+	var currentHash []byte
+	if err := database.QueryRowContext(ctx, `
+		SELECT wasm_sha256 FROM modules WHERE id = $1
+	`, moduleID).Scan(&currentHash); err != nil {
+		t.Fatalf("read current build after registration failure: %v", err)
+	}
+	if hex.EncodeToString(currentHash) != published.SHA256 {
+		t.Fatalf("current build hash = %x, want unchanged %s", currentHash, published.SHA256)
+	}
+	installedAfter, err := moduleStore.GetInstalledModule(ctx, seed.ShopID, moduleID)
+	if err != nil {
+		t.Fatalf("read installed module after registration failure: %v", err)
+	}
+	if !bytes.Equal(installedAfter.WASMSHA256, installedBefore.WASMSHA256) {
+		t.Fatalf("registration failure changed installation pin from %x to %x", installedBefore.WASMSHA256, installedAfter.WASMSHA256)
+	}
+	referenced, err := moduleStore.ListModuleWASMDigests(ctx)
+	if err != nil {
+		t.Fatalf("list module build references after registration failure: %v", err)
+	}
+	for _, digest := range referenced {
+		if digest == hex.EncodeToString(failedDigest[:]) {
+			t.Fatal("failed build registration added its artifact to the module registry")
+		}
+	}
+}
+
+func TestTransportedSignedBuildPackageRunsAsInstalledModule(t *testing.T) {
+	ctx := context.Background()
+	database := testdb.Start(t)
+	moduleStore := store.NewSQL(database)
+	manifestJSON, irJSON, wasmBytes := validBuildPackageJSON(t)
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate test package signing key: %v", err)
+	}
+	signature, err := SignBuildPackage(manifestJSON, irJSON, wasmBytes, privateKey)
+	if err != nil {
+		t.Fatalf("sign valid build package: %v", err)
+	}
+	signatureJSON, err := MarshalBuildPackageSignature(signature)
+	if err != nil {
+		t.Fatalf("encode build package signature: %v", err)
+	}
+	transport := buildPackageZIP(t, map[string][]byte{
+		"signature.json": signatureJSON,
+		"manifest.json":  manifestJSON,
+		"module.ir.json": irJSON,
+		"module.wasm":    wasmBytes,
+	})
+	received, err := ReadSignedBuildPackageArchive(transport)
+	if err != nil {
+		t.Fatalf("read transported signed package: %v", err)
+	}
+	validatedManifest, err := ValidateSignedBuildPackage(
+		received.SignatureJSON, received.ManifestJSON, received.IRJSON, received.WASMBytes,
+		map[string]ed25519.PublicKey{signature.KeyID: publicKey},
+	)
+	if err != nil {
+		t.Fatalf("validate transported signed package: %v", err)
+	}
+	var ir ModuleIR
+	if err := decodeStrictJSON(received.IRJSON, &ir); err != nil {
+		t.Fatalf("decode validated package IR: %v", err)
+	}
+
+	moduleID, err := store.NewCatalogID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO modules (id, name) VALUES ($1, $2)
+	`, moduleID, ir.Module); err != nil {
+		t.Fatalf("create test module: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO shop_modules (shop_id, module_id, status, capabilities)
+		VALUES ($1, $2, 'installed', ARRAY['catalog']::text[])
+	`, seed.ShopID, moduleID); err != nil {
+		t.Fatalf("create installed test module: %v", err)
+	}
+	artifactStore, err := artifact.NewFileStore(filepath.Join(t.TempDir(), "artifacts"))
+	if err != nil {
+		t.Fatalf("create isolated artifact store: %v", err)
+	}
+	transportedArtifact, publishedManifest, err := PublishModuleBuild(
+		ctx, artifactStore, moduleStore, moduleID, ir, received.WASMBytes,
+	)
+	if err != nil {
+		t.Fatalf("publish validated transported package: %v", err)
+	}
+	if publishedManifest.WASMSHA256 != validatedManifest.WASMSHA256 ||
+		transportedArtifact.SHA256 != validatedManifest.WASMSHA256 {
+		t.Fatalf("published digest = %q/%q, want validated package digest %q",
+			publishedManifest.WASMSHA256, transportedArtifact.SHA256, validatedManifest.WASMSHA256)
+	}
+	storedWasm, err := artifactStore.Get(ctx, transportedArtifact.SHA256)
+	if err != nil {
+		t.Fatalf("read transported Wasm from artifact store: %v", err)
+	}
+	if !bytes.Equal(storedWasm, received.WASMBytes) {
+		t.Fatal("stored Wasm differs from the validated transported package")
+	}
+
+	memory := store.NewMemory()
+	product, err := memory.GetProduct(ctx, seed.ShopID, seed.ProductID)
+	if err != nil {
+		t.Fatalf("load expected catalog product: %v", err)
+	}
+	expectedResponse := abi.EncodeOK("catalog.product.get", "", product)
+	runtime := wasm.NewRuntime(&wasm.Host{Products: memory, Categories: memory})
+	t.Cleanup(runtime.Close)
+	if err := runtime.LoadInstalled(ctx, moduleStore, seed.ShopID, moduleID, storedWasm); err != nil {
+		t.Fatalf("load transported Wasm as installed module: %v", err)
+	}
+	results, err := runtime.Run(ctx, moduleStore, seed.ShopID, moduleID, "run")
+	if err != nil {
+		t.Fatalf("run transported Wasm: %v", err)
+	}
+	if len(results) != 1 || results[0] != int32(len(expectedResponse)) {
+		t.Fatalf("guest result = %v, want successful catalog response length %d", results, len(expectedResponse))
+	}
+}
 
 func TestIRGeneratedWasmRunsAsInstalledModule(t *testing.T) {
 	ctx := context.Background()

@@ -166,6 +166,68 @@ func TestAdminSignedBuildPackageImportRejectsUntrustedSignerWithoutStorage(t *te
 	}
 }
 
+func TestAdminSignedBuildPackageImportRejectsTamperedManifestWithoutStorage(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, irJSON, wasmBytes := makeSignedBuildPackageParts(t)
+	signature, err := pipeline.SignBuildPackage(manifestJSON, irJSON, wasmBytes, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signatureJSON, err := pipeline.MarshalBuildPackageSignature(signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tamperedManifest := bytes.Replace(
+		manifestJSON,
+		[]byte(`"module":"demo.catalog-reader"`),
+		[]byte(`"module":"demo.tampered"`),
+		1,
+	)
+	if bytes.Equal(tamperedManifest, manifestJSON) {
+		t.Fatal("test could not tamper with signed build manifest")
+	}
+	archive := makeSignedBuildPackageZIP(t, map[string][]byte{
+		"signature.json": signatureJSON,
+		"manifest.json":  tamperedManifest,
+		"module.ir.json": irJSON,
+		"module.wasm":    wasmBytes,
+	})
+
+	candidates, err := packagecandidate.NewFileStore(filepath.Join(t.TempDir(), "candidates"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCandidates := moduleBuildPackageCandidates
+	oldKeys := TrustedBuildPackageKeys()
+	oldAuth := staffAuthenticator
+	SetModuleBuildPackageCandidates(candidates)
+	SetTrustedBuildPackageKeys(map[string]ed25519.PublicKey{signature.KeyID: publicKey})
+	admin := newCatalogTestAuthenticator("admin", seed.ShopID)
+	SetStaffAuthenticator(admin)
+	t.Cleanup(func() {
+		SetModuleBuildPackageCandidates(oldCandidates)
+		SetTrustedBuildPackageKeys(oldKeys)
+		SetStaffAuthenticator(oldAuth)
+	})
+
+	mux := http.NewServeMux()
+	Register(mux)
+	response := performSignedPackageImport(mux, admin.token, archive)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "rejected") {
+		t.Fatalf("tampered manifest response = %d/%s, want rejected 400", response.Code, response.Body)
+	}
+	_, total, err := candidates.List(context.Background(), seed.ShopID, 10, 0)
+	if err != nil {
+		t.Fatalf("list candidates after tampered import: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("tampered package created %d candidates, want none", total)
+	}
+}
+
 func TestAdminApprovesVerifiedBuildPackageCandidate(t *testing.T) {
 	roles := []string{"owner", "admin"}
 	for _, role := range roles {

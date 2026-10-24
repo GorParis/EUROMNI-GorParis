@@ -299,6 +299,22 @@ import/export incompatible n'est donc ni stocké ni enregistré par ces
 parcours. Après validation, le Wasm est écrit dans le stockage
 content-addressed, puis les métadonnées sont enregistrées ; si l'écriture DB
 échoue, l'artefact reste immuable mais non référencé.
+Les tests de sécurité ciblés couvrent aussi le refus API d’un manifeste
+modifié après signature sans stockage candidat, le rejet d’un Wasm à provenance
+altérée avant stockage avec invariance du build courant et du pin installé, ainsi
+que la relecture octet pour octet des composants d’un package signé valide et
+la validation du Wasm par `ValidateSignedBuildPackage`/Wasmtime. L’intégration
+PostgreSQL utilise une instance temporaire isolée. Le test
+`TestBuildRegistrationFailurePreservesCurrentBuildAndInstalledPin` injecte une
+erreur de base après l’écriture du fichier : la transaction de métadonnées est
+annulée, le build courant et le pin installé restent inchangés et le Wasm écrit
+reste un artefact orphelin, sans référence dans le registre. Le
+réconciliateur est responsable de la suppression ultérieure après le délai de
+grâce ; le test ne qualifie pas son ordonnanceur en production. Le rechargement
+complet est couvert par `TestTransportedSignedBuildPackageRunsAsInstalledModule` :
+un ZIP signé est relu et revalidé, publié dans un registre PostgreSQL temporaire,
+relu du FileStore, puis chargé et exécuté dans Wasmtime. Ce test n'exerce pas la
+passerelle API entre l’approbation d’un candidat et la publication.
 `ReconcileModuleArtifacts` récupère les hashes de
 tous les modules en base et ne supprime que les fichiers sans référence et plus
 vieux que le délai de grâce fourni ; les `Put` répétés rafraîchissent leur âge.
