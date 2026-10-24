@@ -305,7 +305,12 @@ en base reste identique après les trois appels. Le même module Wasmtime rejett
 aussi un JSON produit malformé et une entrée produit dépassant 8 KiB avec
 l’erreur ABI `invalid` ; le nombre de produits persistant reste inchangé après
 les appels valides et invalides. Les tests d’hôte couvrent aussi l’absence de
-capability.
+capability. `CompileSelfnamedPreviewIRToWasm` n’accepte que la forme IR prévue,
+construit le guest depuis le crate verrouillé, ajoute les sections custom du
+hash exact de l’IR et de l’identité du compilateur approuvé, puis vérifie
+imports/exports Wasm. `TestCompileSelfnamedPreviewIRToWasmIsReproducibleAndBoundToIR`
+compare deux builds indépendants octet pour octet et vérifie le manifeste ainsi
+que le refus d’un IR différent.
 
 Cette tranche Wasm reste limitée à la prévisualisation catalogue : aucun accès
 réseau, pagination, commande, livraison ou modification de produit n’entre dans
@@ -317,8 +322,9 @@ Cette preuve valide un mapping de prévisualisation exécuté dans le guest Rust
 une validation ABI hôte et un aperçu non persistant ; elle ne valide pas la
 traduction de PHP ni l’équivalence complète du plugin Selfnamed. La
 caractérisation du plugin natif, le mapper hôte oracle et le guest Rust sont des
-implémentations distinctes. Le compilateur IR générique ne génère pas encore ce
-guest spécialisé ; le test le compile séparément depuis le crate épinglé.
+implémentations distinctes. Le compilateur IR générique délègue explicitement
+les IR Selfnamed à la fonction dédiée ; les autres IR conservent leur chemin
+WAT actuel.
 Devise, locale et unité du volume doivent encore être décidées ;
 images/téléchargements, catégories, mise à jour de produits existants et
 publication active restent hors périmètre.
@@ -338,9 +344,12 @@ générale du plugin ni une décision sur son mode de distribution.
    et l’absence de mutation persistante.
 4. Terminé : garder l’hôte comme frontière CMS ; il valide le DTO guest et
    reste seul responsable de l’affichage ou de toute future action d’import.
-5. Prochaine étape : intégrer ce guest spécialisé à une génération de build
-   reproductible liée à l’IR, puis définir le contrat du build distribuable
-   (provenance, versions compatibles, capacités, hash et validation). Ce contrat pourra
+5. Terminé pour le prototype : compiler le guest Rust avec toolchain et
+   dépendances verrouillées, lier le hash exact de l’IR et l’identité du
+   compilateur au Wasm, choisir le compilateur du manifeste selon l’artefact,
+   puis démontrer deux builds identiques et l’exécution de l’artefact publié.
+6. Prochaine étape : définir le contrat du build distribuable (provenance,
+   versions compatibles, capacités, hash et validation). Ce contrat pourra
    servir aussi bien à un catalogue central de builds qu’à des imports privés ;
    le choix entre distribution centrale et traitement local est différé.
 

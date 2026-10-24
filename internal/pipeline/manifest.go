@@ -45,6 +45,14 @@ func NewBuildManifest(ir ModuleIR, wasmBytes []byte) (BuildManifest, error) {
 	wasmHash := sha256.Sum256(wasmBytes)
 	capabilities := append([]string(nil), validated.Capabilities...)
 	sort.Strings(capabilities)
+	compiler := IRCompilerVersion
+	if isSelfnamedPreviewIR(ir) {
+		if !wasmHasCustomSection(wasmBytes, wasmIRHashSection, []byte(hex.EncodeToString(irHash[:]))) ||
+			!wasmHasCustomSection(wasmBytes, selfnamedPreviewCompilerSection, []byte(selfnamedPreviewGuestCompiler)) {
+			return BuildManifest{}, errors.New("Selfnamed preview Wasm is not bound to this IR and compiler")
+		}
+		compiler = selfnamedPreviewGuestCompiler
+	}
 	return BuildManifest{
 		Version:      BuildManifestVersion,
 		Module:       ir.Module,
@@ -53,7 +61,7 @@ func NewBuildManifest(ir ModuleIR, wasmBytes []byte) (BuildManifest, error) {
 		IRVersion:    ir.Version,
 		IRSHA256:     hex.EncodeToString(irHash[:]),
 		ABIVersion:   abi.Version,
-		Compiler:     IRCompilerVersion,
+		Compiler:     compiler,
 		Capabilities: capabilities,
 		WASMSHA256:   hex.EncodeToString(wasmHash[:]),
 		WASMSize:     int64(len(wasmBytes)),

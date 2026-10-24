@@ -220,6 +220,21 @@ func TestCompileIRToWasmIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestCompileIRToWasmRequiresSpecializedSelfnamedPreviewBuild(t *testing.T) {
+	ir := testSelfnamedPreviewIR()
+	if _, err := CompileIRToWasm(ir); err == nil {
+		t.Fatal("CompileIRToWasm() accepted Selfnamed preview IR")
+	}
+}
+
+func TestCompileSelfnamedPreviewRejectsIROutsideGuestContract(t *testing.T) {
+	ir := testSelfnamedPreviewIR()
+	ir.Triggers[0].Name = "other.trigger"
+	if _, err := CompileSelfnamedPreviewIRToWasm(ir); err == nil {
+		t.Fatal("CompileSelfnamedPreviewIRToWasm() accepted an unrelated trigger")
+	}
+}
+
 func TestCompileIRToWATCanonicalizesInput(t *testing.T) {
 	ir := testCatalogIR()
 	ir.Operations[0].Input["product_id"] = IRValue{Literal: json.RawMessage(` "e0e00000-0001-4000-8000-000000000040" `)}
@@ -362,6 +377,24 @@ func testDynamicCatalogIR() ModuleIR {
 		Operations: []IROperation{{
 			Call:  "catalog.product.get",
 			Input: map[string]IRValue{"product_id": {TriggerField: "product_id"}},
+		}},
+	}
+}
+
+func testSelfnamedPreviewIR() ModuleIR {
+	return ModuleIR{
+		Version:    IRVersion,
+		Platform:   "woocommerce",
+		Module:     "selfnamed-catalog-preview",
+		Provenance: testSourceProvenance("woocommerce"),
+		Triggers: []IRTrigger{{
+			Kind:   "manual",
+			Name:   "supplier_product.preview",
+			Fields: map[string]string{"product_json": "string"},
+		}},
+		Operations: []IROperation{{
+			Call:  "catalog.supplier.product.preview",
+			Input: map[string]IRValue{"product_json": {TriggerField: "product_json"}},
 		}},
 	}
 }

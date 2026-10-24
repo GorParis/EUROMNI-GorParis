@@ -121,15 +121,24 @@ filtre les produits actifs sur `created_at`, du plus récent au plus ancien.
 
 Le prototype `catalog.supplier.product.preview` exerce aussi un trigger IR
 dynamique avec les trois fixtures Selfnamed synthétiques, communes au pilote
-natif et au test oracle. Le test d’intégration compile le guest Rust `no_std`
-épinglé avec Cargo, publie et charge son artefact Wasm dans Wasmtime, puis
-vérifie chaque projection et le rejet ABI `invalid` d’un produit malformé ou
-supérieur à 8 KiB ; le catalogue persistant reste inchangé après tous les
-appels. Le guest effectue le mapping et soumet le DTO à
+natif et au test oracle. `CompileSelfnamedPreviewIRToWasm` n’accepte que l’IR
+Selfnamed approuvé, compile le crate Rust `no_std` avec son toolchain/lockfile
+épinglés, puis ajoute au Wasm le hash exact de l’IR et l’identité du compilateur.
+Le manifeste indique ce compilateur dédié au lieu du compilateur WAT générique.
+Un test construit deux artefacts dans des répertoires indépendants et exige
+l’égalité octet pour octet. Le test d’intégration publie et charge ce même
+artefact dans Wasmtime, vérifie chaque projection et le rejet ABI `invalid`
+d’un produit malformé ou supérieur à 8 KiB ; le catalogue persistant reste
+inchangé après tous les appels. Le guest effectue le mapping et soumet le DTO à
 `catalog.supplier.product.preview.result`, que l’hôte valide sans accès aux
-données. Le compilateur IR générique ne génère pas encore ce guest spécialisé.
-Ce n’est pas une traduction du PHP Selfnamed : aucune image ni requête réseau
-n’est impliquée.
+données. Ce n’est pas une traduction du PHP Selfnamed : aucune image ni requête
+réseau n’est impliquée.
+
+Le build dédié est vérifié avec :
+
+```sh
+go test -tags=wasmtoolchain ./internal/pipeline -run TestCompileSelfnamedPreviewIRToWasmIsReproducibleAndBoundToIR
+```
 Les limites et champs encore indéterminés sont
 documentés dans [le contrat ABI](../docs/abi.md#prévisualisation-catalogue-selfnamed-prototype).
 

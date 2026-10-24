@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -62,7 +61,10 @@ func TestSelfnamedProductPreviewWasmRunsWithoutPersistence(t *testing.T) {
 	if len(validated.Capabilities) != 1 || validated.Capabilities[0] != string(wasm.CapCatalog) {
 		t.Fatalf("preview capabilities = %v, want catalog only", validated.Capabilities)
 	}
-	wasmBytes := buildSelfnamedPreviewGuest(t)
+	wasmBytes, err := CompileSelfnamedPreviewIRToWasm(ir)
+	if err != nil {
+		t.Fatalf("compile Selfnamed preview IR to Wasm: %v", err)
+	}
 	assertOnlyEUROMNICallImport(t, wasmBytes)
 
 	artifactStore, err := artifact.NewFileStore(filepath.Join(t.TempDir(), "artifacts"))
@@ -212,32 +214,4 @@ func TestSelfnamedProductPreviewWasmRunsWithoutPersistence(t *testing.T) {
 	if productCountAfter != productCountBefore {
 		t.Fatalf("preview changed persistent product count from %d to %d", productCountBefore, productCountAfter)
 	}
-}
-
-func buildSelfnamedPreviewGuest(t *testing.T) []byte {
-	t.Helper()
-	projectRoot, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("resolve project root: %v", err)
-	}
-	guestDirectory := filepath.Join(projectRoot, "pipeline", "testdata", "rust-selfnamed-preview")
-	targetDirectory := filepath.Join(t.TempDir(), "target")
-	command := exec.Command(
-		"cargo",
-		"build",
-		"--frozen",
-		"--release",
-		"--target", "wasm32-unknown-unknown",
-		"--target-dir", targetDirectory,
-	)
-	command.Dir = guestDirectory
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("build Rust Selfnamed guest: %v\n%s", err, output)
-	}
-	wasmPath := filepath.Join(targetDirectory, "wasm32-unknown-unknown", "release", "euromni_selfnamed_preview_guest.wasm")
-	wasmBytes, err := os.ReadFile(wasmPath)
-	if err != nil {
-		t.Fatalf("read Rust Selfnamed guest: %v", err)
-	}
-	return wasmBytes
 }

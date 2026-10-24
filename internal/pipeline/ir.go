@@ -454,6 +454,9 @@ func CompileIRToWAT(ir ModuleIR) (string, error) {
 }
 
 func CompileIRToWasm(ir ModuleIR) ([]byte, error) {
+	if isSelfnamedPreviewIR(ir) {
+		return nil, errors.New("Selfnamed preview IR requires CompileSelfnamedPreviewIRToWasm")
+	}
 	wat, err := CompileIRToWAT(ir)
 	if err != nil {
 		return nil, err
@@ -479,6 +482,39 @@ func appendWASMCustomSection(wasmBytes []byte, name string, contents []byte) []b
 	wasmBytes = append(wasmBytes, 0)
 	wasmBytes = binary.AppendUvarint(wasmBytes, uint64(len(payload)))
 	return append(wasmBytes, payload...)
+}
+
+func wasmHasCustomSection(wasmBytes []byte, wantedName string, wantedContents []byte) bool {
+	if len(wasmBytes) < 8 || !bytes.Equal(wasmBytes[:8], []byte{0, 'a', 's', 'm', 1, 0, 0, 0}) {
+		return false
+	}
+	for offset := 8; offset < len(wasmBytes); {
+		sectionID := wasmBytes[offset]
+		offset++
+		sectionLength, count := binary.Uvarint(wasmBytes[offset:])
+		if count <= 0 {
+			return false
+		}
+		offset += count
+		if sectionLength > uint64(len(wasmBytes)-offset) {
+			return false
+		}
+		section := wasmBytes[offset : offset+int(sectionLength)]
+		offset += int(sectionLength)
+		if sectionID != 0 {
+			continue
+		}
+		nameLength, count := binary.Uvarint(section)
+		if count <= 0 || nameLength > uint64(len(section)-count) {
+			continue
+		}
+		nameStart := count
+		nameEnd := nameStart + int(nameLength)
+		if string(section[nameStart:nameEnd]) == wantedName && bytes.Equal(section[nameEnd:], wantedContents) {
+			return true
+		}
+	}
+	return false
 }
 
 func operationHasDynamicInput(operation IROperation) bool {
