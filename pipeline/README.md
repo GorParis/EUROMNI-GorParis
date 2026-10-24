@@ -228,8 +228,13 @@ L'absence de configuration du répertoire désactive cette route (`503`) ; une
 liste de confiance absente la désactive également. Une liste explicitement
 vide ne fait confiance à aucun signataire.
 
-Après réception, `GET /v1/admin/modules/build-packages/candidates/{packageSHA256}` permet
-à `owner` ou `admin` de relire le candidat de sa boutique. La route relit le ZIP
+`GET /v1/admin/modules/build-packages/candidates` fournit à `owner` ou `admin`
+un inventaire paginé des digest, tailles et états d'approbation des candidats
+de la boutique (`limit` 1–100, défaut 50 ; `offset` 0–100000, défaut 0). Il
+n'ouvre pas les archives et ne revalide pas les signatures ; le détail reste
+nécessaire avant toute décision. `GET
+/v1/admin/modules/build-packages/candidates/{packageSHA256}` permet ensuite à
+`owner` ou `admin` de relire le candidat de sa boutique. La route relit le ZIP
 stocké et revalide la signature avec les clés de confiance courantes ainsi que
 le contenu du package ; elle répond avec les métadonnées et l'état `pending` ou
 `approved`. `POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval`
@@ -242,9 +247,10 @@ et une clé retirée ou un package qui échoue désormais à la validation bloqu
 l'approbation. Cette décision ne publie, n'installe et ne promeut aucun build,
 ne modifie aucun pin et ne constitue pas une preuve d'innocuité.
 
-Il n'existe pas encore de liste/inventaire, d'interface de revue, de décision
-de rejet, de téléchargement, de suppression, de passerelle de publication ou
-de purge automatique. La rétention est donc manuelle et la capacité limitée ;
+L'interface Modules permet à `owner` ou `admin` d'examiner ces métadonnées et
+d'enregistrer l'approbation ; aucune décision de rejet, téléchargement,
+suppression, passerelle de publication ou purge automatique n'est disponible.
+La rétention est donc manuelle et la capacité limitée ;
 ne pas activer ce stockage pour la production avant d'avoir défini rétention,
 quota coordonné multi-instance et contrôles opérationnels. L'ingestion PHP ZIP
 de `/v1/admin/modules/imports` reste entièrement distincte.

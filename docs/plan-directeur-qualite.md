@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.28 |
+| Version | 3.30 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-24 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -89,9 +89,11 @@ désormais le ZIP, la signature et le package, puis stocke l'archive comme
 candidat privé par boutique via `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`. Les routes
 de lecture par digest revalident le package ; l'approbation backend `owner` ou
 `admin` est attribuée et horodatée, immuable et distincte de la publication ou
-promotion. Aucun build publié ni pin n'est modifié. Inventaire, interface,
-décision de rejet, rétention, nettoyage et passerelle de publication restent à
-implémenter.
+promotion. Aucun build publié ni pin n'est modifié. L'inventaire admin paginé
+des digest, tailles et états est ajouté ; il ne revalide pas les archives, ce
+que fait la lecture détaillée avant décision. L'interface Modules propose la
+consultation paginée, le détail revalidé et l'approbation explicite. Décision de
+rejet, rétention, nettoyage et passerelle de publication restent à implémenter.
 
 Avant toute reprise de code, vérifier l’état réel de l’arbre de travail et
 l’historique Git. Les notes de version précédentes ne permettent pas de déduire
@@ -323,3 +325,5 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.26 | 2026-10-24 | Premier socle de configuration des clés implémenté : lecteur de fichier JSON strict et versionné, borné à 64 KiB/256 clés, validant Base64, empreintes et doublons ; chargé au démarrage par `EUROMNI_BUILD_TRUST_FILE` avec échec explicite si invalide. Tests pipeline et configuration CMS ciblés réussis. Pas encore relié à un récepteur de packages ; protection opérationnelle et limites de transfert restent à faire. | En attente du responsable qualité |
 | 3.27 | 2026-10-24 | Réception prototype `POST /v1/admin/modules/build-packages` : ZIP signé exact plafonné à 64 MiB, lecture bornée sans extraction, validation clé Ed25519 + package ABI/manifeste, staging privé content-addressed par boutique plafonné provisoirement à 256 MiB. Tests ciblés pipeline/API/store passent. Aucun build publié, pin, installation ni promotion n'est modifié ; liste/revue/rétention, quota multi-instance et revue sécurité indépendante restent ouverts. | En attente du responsable qualité |
 | 3.28 | 2026-10-24 | Approbation humaine backend : lecture par digest et approbation après revalidation de la signature avec les clés courantes ; autorisation `owner`/`admin`, scope boutique et attribution utilisateur/rôle/heure UTC. Le sidecar local est immuable via l'API mais n'est pas un journal d'audit centralisé ; aucun build/pin/installation/promotion ne change. Tests ajoutés pour les deux rôles, rôle refusé, non-authentifié, candidat absent/altéré, clé retirée, répétition et isolation boutique. `go test ./...`, `go vet ./...` et `git diff --check` réussis sous Linux ; CI Windows et revue sécurité indépendante non exécutées. Inventaire, UI, rejet, rétention et quota multi-instance restent ouverts. | En attente du responsable qualité |
+| 3.29 | 2026-10-24 | Inventaire backend `GET /v1/admin/modules/build-packages/candidates` ajouté avec pagination bornée (50 par défaut, 100 maximum), digest/taille/état et approbation, limité à la boutique ; les rôles restent `owner`/`admin`. La liste ne lit pas les ZIP et n'affirme pas leur validation ; le détail revalide avant décision. Tests store/API ajoutés. `go test ./...`, `go vet ./...` et `git diff --check` réussis sous Linux. UI, rejet, rétention, coordination multi-instance et revue sécurité indépendante restent ouverts. | En attente du responsable qualité |
+| 3.30 | 2026-10-24 | Interface Modules pour consulter les candidats signés, ouvrir le détail revalidé et approuver explicitement avec confirmation. Pagination, états accessibles, erreurs explicites et invalidation des réponses en changement de boutique ; aucun chemin de publication/activation ajouté. `go test ./...`, `go vet ./...`, `go test ./frontend`, `node --check frontend/admin/admin.js` et `git diff --check` réussis sous Linux. Rejet, rétention, coordination multi-instance et revue sécurité indépendante restent ouverts. | En attente du responsable qualité |

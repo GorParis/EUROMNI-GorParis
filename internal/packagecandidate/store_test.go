@@ -88,3 +88,51 @@ func TestFileStoreRecordsImmutableShopScopedApproval(t *testing.T) {
 		t.Fatal("Approve() accepted an editor")
 	}
 }
+
+func TestFileStoreListsCandidatesWithStablePaginationAndStatus(t *testing.T) {
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "candidates"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	receipts := make([]Candidate, 0, 3)
+	for _, data := range [][]byte{[]byte("package-one"), []byte("package-two"), []byte("package-three")} {
+		candidate, err := store.Put(ctx, "shop-one", data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipts = append(receipts, candidate)
+	}
+	approvedCandidate := receipts[1]
+	if _, err := store.Approve(ctx, "shop-one", approvedCandidate.SHA256, "staff-123", "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	firstPage, total, err := store.List(ctx, "shop-one", 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(firstPage) != 2 || firstPage[0].SHA256 >= firstPage[1].SHA256 {
+		t.Fatalf("first page / total = %+v / %d", firstPage, total)
+	}
+	secondPage, secondTotal, err := store.List(ctx, "shop-one", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondTotal != total || len(secondPage) != 1 {
+		t.Fatalf("second page / total = %+v / %d", secondPage, secondTotal)
+	}
+	foundApproval := false
+	for _, item := range append(firstPage, secondPage...) {
+		if item.SHA256 == approvedCandidate.SHA256 {
+			foundApproval = item.Status == "approved" && item.Approval != nil && item.Approval.ApprovedBy == "staff-123"
+		}
+	}
+	if !foundApproval {
+		t.Fatal("approved candidate was not represented with its approval metadata")
+	}
+	emptyPage, emptyTotal, err := store.List(ctx, "shop-two", 50, 0)
+	if err != nil || len(emptyPage) != 0 || emptyTotal != 0 {
+		t.Fatalf("other shop list / total / error = %+v / %d / %v", emptyPage, emptyTotal, err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"strconv"
 
 	"euromni/internal/packagecandidate"
 	"euromni/internal/pipeline"
@@ -135,6 +136,36 @@ func adminBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func adminBuildPackageCandidates(w http.ResponseWriter, r *http.Request) {
+	session, ok := adminSessionFromContext(r.Context())
+	if !ok {
+		writePrivateJSON(w, http.StatusUnauthorized, map[string]any{"error": "staff session required"})
+		return
+	}
+	if moduleBuildPackageCandidates == nil {
+		writeBuildPackageCandidateError(w, errBuildPackageCandidateStorageUnavailable)
+		return
+	}
+	limit, offset, err := parseBuildPackageCandidatePagination(r)
+	if err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	items, total, err := moduleBuildPackageCandidates.List(r.Context(), session.ShopID, limit, offset)
+	if err != nil {
+		writeBuildPackageCandidateError(w, err)
+		return
+	}
+	writePrivateJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"items":  items,
+			"limit":  limit,
+			"offset": offset,
+			"total":  total,
+		},
+	})
+}
+
 func adminApproveBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
 	session, ok := adminSessionFromContext(r.Context())
 	if !ok {
@@ -170,6 +201,26 @@ func adminApproveBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writePrivateJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"status": "approved", "approval": approval}})
+}
+
+func parseBuildPackageCandidatePagination(r *http.Request) (int, int, error) {
+	limit := 50
+	offset := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 100 {
+			return 0, 0, errors.New("limit must be between 1 and 100")
+		}
+		limit = value
+	}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 || value > 100000 {
+			return 0, 0, errors.New("offset must be between 0 and 100000")
+		}
+		offset = value
+	}
+	return limit, offset, nil
 }
 
 func loadVerifiedBuildPackageCandidate(r *http.Request, shopID, digest string) (pipeline.BuildManifest, pipeline.BuildPackageSignature, error) {

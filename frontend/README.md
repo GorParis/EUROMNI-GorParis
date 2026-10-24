@@ -65,4 +65,12 @@ fragment d’URL, par exemple `/admin/#commandes`. Pour tester un achat, suivre
 les raccourcis de l’onglet Boutique : vérifier le catalogue et la livraison,
 passer la commande dans la vitrine, puis la retrouver dans Commandes.
 
+Dans **Modules**, les rôles `owner` et `admin` peuvent parcourir les packages
+signés reçus dans la boutique active, ouvrir un candidat dont le contenu et la
+signature sont revalidés par le backend, puis enregistrer une approbation
+explicite. Cette action n'enregistre aucun build dans le registre partagé,
+n'installe et ne promeut rien. La liste est paginée et ne constitue pas une
+revue de sécurité ; le staging et sa trace d'approbation restent locaux au
+serveur.
+
 Consomme uniquement les APIs du cœur EUROMNI (REST / GraphQL). Pas de thème PHP.

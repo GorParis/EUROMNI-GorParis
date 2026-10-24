@@ -42,9 +42,16 @@ type Approval struct {
 	ApprovedAt    string `json:"approved_at"`
 }
 
+type CandidateReview struct {
+	Candidate
+	Status   string    `json:"status"`
+	Approval *Approval `json:"approval"`
+}
+
 type Store interface {
 	Put(context.Context, string, []byte) (Candidate, error)
 	Get(context.Context, string, string) ([]byte, error)
+	List(context.Context, string, int, int) ([]CandidateReview, int, error)
 	GetApproval(context.Context, string, string) (*Approval, error)
 	Approve(context.Context, string, string, string, string) (Approval, error)
 }
@@ -186,6 +193,79 @@ func (s *FileStore) Get(ctx context.Context, shopID, digest string) ([]byte, err
 		return nil, ErrCandidateCorrupt
 	}
 	return readCandidate(path, digest)
+}
+
+func (s *FileStore) List(ctx context.Context, shopID string, limit, offset int) ([]CandidateReview, int, error) {
+	if s == nil || s.root == "" {
+		return nil, 0, errors.New("build package candidate store is not initialized")
+	}
+	if strings.TrimSpace(shopID) == "" {
+		return nil, 0, errors.New("shop ID is required")
+	}
+	if limit < 1 || offset < 0 {
+		return nil, 0, errors.New("candidate list limit and offset are invalid")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	directory := filepath.Join(s.root, shopDigest(shopID))
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return []CandidateReview{}, 0, nil
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("list shop build package candidates: %w", err)
+	}
+
+	candidates := make([]CandidateReview, 0, len(entries))
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		digest := entry.Name()
+		if !validDigest(digest) {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(directory, digest))
+		if err != nil {
+			return nil, 0, fmt.Errorf("inspect build package candidate: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 ||
+			info.Size() <= 0 || info.Size() > pipeline.MaxBuildPackageArchiveBytes {
+			return nil, 0, ErrCandidateCorrupt
+		}
+		recordedApproval, err := readApproval(filepath.Join(directory, digest+".approval.json"), digest)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, 0, err
+		}
+		status := "pending"
+		var approval *Approval
+		if err == nil {
+			approval = &recordedApproval
+			status = "approved"
+		}
+		candidates = append(candidates, CandidateReview{
+			Candidate: Candidate{SHA256: digest, Size: info.Size()},
+			Status:    status,
+			Approval:  approval,
+		})
+	}
+
+	total := len(candidates)
+	if offset >= total {
+		return []CandidateReview{}, total, nil
+	}
+	end := offset + limit
+	if end < offset || end > total {
+		end = total
+	}
+	return candidates[offset:end], total, nil
 }
 
 func (s *FileStore) GetApproval(ctx context.Context, shopID, digest string) (*Approval, error) {

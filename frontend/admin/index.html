@@ -87,6 +87,7 @@
       }
       .order-action-form p { margin: 0; }
       .product-list, .category-list { display: grid; gap: 0.75rem; }
+      .candidate-pagination { align-items: center; margin: 0.75rem 0; }
       .card { margin: 0; }
       .card h3 { margin-bottom: 0.3rem; }
       .card dl { display: grid; grid-template-columns: minmax(9rem, 0.4fr) minmax(0, 1fr); gap: 0.35rem 0.75rem; }
@@ -328,6 +329,18 @@
         <section id="module-settings-panel" class="panel" hidden>
           <h2>Gestion des modules</h2>
           <p class="muted">Registre et installations de cette boutique. Les actions de cycle de vie sont limitées aux builds validés et réservées aux rôles owner et admin.</p>
+          <section aria-labelledby="build-package-candidates-title">
+            <h3 id="build-package-candidates-title">Packages signés reçus</h3>
+            <p class="muted">Les candidats restent isolés de la boutique. Le détail revalide signature et contenu ; approuver ne publie, n’installe ni ne promeut aucun build.</p>
+            <p id="build-package-candidates-status" class="status" role="status" aria-live="polite"></p>
+            <div class="actions">
+              <button id="refresh-build-package-candidates" class="secondary" type="button">Actualiser les candidats</button>
+              <button id="build-package-candidates-previous" class="secondary" type="button" disabled>Précédents</button>
+              <button id="build-package-candidates-next" class="secondary" type="button" disabled>Suivants</button>
+            </div>
+            <div id="build-package-candidates" class="product-list"></div>
+            <section id="build-package-candidate-detail" class="card" hidden aria-live="polite"></section>
+          </section>
           <p id="module-inventory-status" class="status" role="status" aria-live="polite"></p>
           <div id="module-inventory" class="product-list"></div>
           <h3>Réglages — PrestaShop Nouveaux produits</h3>

@@ -10,6 +10,11 @@
   const moduleSettingsPanel = document.querySelector("#module-settings-panel");
   const moduleInventoryStatus = document.querySelector("#module-inventory-status");
   const moduleInventory = document.querySelector("#module-inventory");
+  const buildPackageCandidatesStatus = document.querySelector("#build-package-candidates-status");
+  const buildPackageCandidates = document.querySelector("#build-package-candidates");
+  const buildPackageCandidateDetail = document.querySelector("#build-package-candidate-detail");
+  const buildPackageCandidatesPrevious = document.querySelector("#build-package-candidates-previous");
+  const buildPackageCandidatesNext = document.querySelector("#build-package-candidates-next");
   const moduleSettingsStatus = document.querySelector("#module-settings-status");
   const newProductsSettingsForm = document.querySelector("#new-products-settings-form");
   const categoryForm = document.querySelector("#category-form");
@@ -51,6 +56,9 @@
   let editingBrand = null;
   let editingSupplier = null;
   let currentIdentity = null;
+  let buildPackageCandidatesOffset = 0;
+  let buildPackageCandidatesRequest = 0;
+  let buildPackageCandidateDetailRequest = 0;
   let emailOffset = 0;
   let emailRequest = 0;
   let emailDetailRequest = 0;
@@ -125,6 +133,12 @@
       shippingHistoryRequest += 1;
       emailRequest += 1;
       emailDetailRequest += 1;
+      buildPackageCandidatesRequest += 1;
+      buildPackageCandidateDetailRequest += 1;
+      buildPackageCandidatesOffset = 0;
+      buildPackageCandidates.replaceChildren();
+      buildPackageCandidateDetail.replaceChildren();
+      buildPackageCandidateDetail.hidden = true;
       emailOffset = 0;
     }
     currentIdentity = identity;
@@ -161,6 +175,8 @@
     shippingHistoryRequest += 1;
     emailRequest += 1;
     emailDetailRequest += 1;
+    buildPackageCandidatesRequest += 1;
+    buildPackageCandidateDetailRequest += 1;
     try {
       sessionStorage.removeItem(tokenKey);
     } catch {
@@ -1391,6 +1407,7 @@
       }
       if (["owner", "admin"].includes(currentIdentity?.role)) {
         renderShipping(await request("/v1/admin/shipping"));
+        await loadBuildPackageCandidates();
         await loadModuleInventory();
         await loadNewProductsSettings();
       }
@@ -1413,6 +1430,155 @@
       moduleInventoryStatus.textContent = error.message;
       moduleInventoryStatus.dataset.kind = "error";
     }
+  }
+
+  async function loadBuildPackageCandidates(offset = buildPackageCandidatesOffset, clearDetail = true) {
+    const requestID = ++buildPackageCandidatesRequest;
+    buildPackageCandidatesOffset = offset;
+    buildPackageCandidatesStatus.textContent = "Chargement des packages reçus…";
+    buildPackageCandidatesStatus.dataset.kind = "info";
+    buildPackageCandidates.replaceChildren();
+    if (clearDetail) {
+      buildPackageCandidateDetailRequest += 1;
+      buildPackageCandidateDetail.replaceChildren();
+      buildPackageCandidateDetail.hidden = true;
+    }
+    try {
+      const page = await request(
+        `/v1/admin/modules/build-packages/candidates?limit=50&offset=${buildPackageCandidatesOffset}`,
+      );
+      if (requestID !== buildPackageCandidatesRequest) return;
+      renderBuildPackageCandidates(page.items);
+      buildPackageCandidatesStatus.textContent = page.total
+        ? `${page.total} candidat(s) dans cette boutique.`
+        : "Aucun package signé reçu pour cette boutique.";
+      buildPackageCandidatesStatus.dataset.kind = "info";
+      buildPackageCandidatesPrevious.disabled = buildPackageCandidatesOffset === 0;
+      buildPackageCandidatesNext.disabled =
+        buildPackageCandidatesOffset + page.items.length >= page.total;
+    } catch (error) {
+      if (requestID !== buildPackageCandidatesRequest) return;
+      buildPackageCandidatesStatus.textContent = error.message;
+      buildPackageCandidatesStatus.dataset.kind = "error";
+      buildPackageCandidatesPrevious.disabled = true;
+      buildPackageCandidatesNext.disabled = true;
+    }
+  }
+
+  function renderBuildPackageCandidates(candidates) {
+    buildPackageCandidates.replaceChildren();
+    for (const candidate of candidates) {
+      const card = document.createElement("article");
+      card.className = "card";
+      const title = document.createElement("h4");
+      title.textContent = candidate.package_sha256;
+      const summary = document.createElement("p");
+      summary.className = "muted";
+      summary.textContent =
+        `${candidate.status === "approved" ? "Approuvé" : "En attente"} · ${formatBytes(candidate.size)}`;
+      const details = document.createElement("button");
+      details.type = "button";
+      details.className = "secondary";
+      details.textContent = "Examiner le package";
+      details.addEventListener("click", () => loadBuildPackageCandidateDetail(candidate.package_sha256));
+      card.append(title, summary, details);
+      buildPackageCandidates.append(card);
+    }
+  }
+
+  async function loadBuildPackageCandidateDetail(digest) {
+    const requestID = ++buildPackageCandidateDetailRequest;
+    buildPackageCandidateDetail.hidden = false;
+    buildPackageCandidateDetail.replaceChildren();
+    const loading = document.createElement("p");
+    loading.className = "muted";
+    loading.textContent = "Revalidation et chargement du candidat…";
+    buildPackageCandidateDetail.append(loading);
+    try {
+      const candidate = await request(
+        `/v1/admin/modules/build-packages/candidates/${encodeURIComponent(digest)}`,
+      );
+      if (requestID !== buildPackageCandidateDetailRequest) return;
+      renderBuildPackageCandidateDetail(candidate);
+    } catch (error) {
+      if (requestID !== buildPackageCandidateDetailRequest) return;
+      const message = document.createElement("p");
+      message.className = "status";
+      message.dataset.kind = "error";
+      message.textContent = `Le candidat n’a pas pu être revalidé : ${error.message}`;
+      buildPackageCandidateDetail.replaceChildren(message);
+    }
+  }
+
+  function renderBuildPackageCandidateDetail(candidate) {
+    buildPackageCandidateDetail.replaceChildren();
+    const title = document.createElement("h4");
+    title.textContent = "Détail du package signé";
+    const metadata = document.createElement("dl");
+    const fields = [
+      ["Digest du package", candidate.package_sha256],
+      ["Module", candidate.module],
+      ["Plateforme", candidate.platform],
+      ["SHA-256 Wasm", candidate.wasm_sha256],
+      ["Clé signataire", candidate.signer_key_id],
+      ["État", candidate.status === "approved" ? "Approuvé" : "En attente d’approbation"],
+    ];
+    for (const [label, value] of fields) {
+      const term = document.createElement("dt");
+      term.textContent = label;
+      const description = document.createElement("dd");
+      description.textContent = value || "Non renseigné";
+      metadata.append(term, description);
+    }
+    buildPackageCandidateDetail.append(title, metadata);
+    if (candidate.approval) {
+      const approval = document.createElement("p");
+      approval.className = "muted";
+      approval.textContent =
+        `Approuvé par ${candidate.approval.approved_by} (${candidate.approval.approver_role}) le ${new Date(candidate.approval.approved_at).toLocaleString()}.`;
+      buildPackageCandidateDetail.append(approval);
+      return;
+    }
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = "Une approbation ne publie, n’installe ni ne promeut ce build.";
+    const approve = document.createElement("button");
+    approve.type = "button";
+    approve.textContent = "Approuver ce package";
+    approve.addEventListener("click", () => approveBuildPackageCandidate(candidate.package_sha256, approve));
+    buildPackageCandidateDetail.append(note, approve);
+  }
+
+  async function approveBuildPackageCandidate(digest, button) {
+    if (!window.confirm(
+      "Approuver ce package après vérification de ses métadonnées ? Cette action ne publie, n’installe ni ne promeut aucun build.",
+    )) {
+      return;
+    }
+    button.disabled = true;
+    buildPackageCandidatesStatus.textContent = "Enregistrement de l’approbation…";
+    buildPackageCandidatesStatus.dataset.kind = "info";
+    try {
+      await request(`/v1/admin/modules/build-packages/candidates/${encodeURIComponent(digest)}/approval`, {
+        method: "POST",
+        body: JSON.stringify({ decision: "approve" }),
+      });
+      buildPackageCandidatesStatus.textContent = "Approbation enregistrée. Aucun build n’a été publié ni activé.";
+      buildPackageCandidatesStatus.dataset.kind = "info";
+      await loadBuildPackageCandidates(buildPackageCandidatesOffset, false);
+      await loadBuildPackageCandidateDetail(digest);
+    } catch (error) {
+      buildPackageCandidatesStatus.textContent = error.message;
+      buildPackageCandidatesStatus.dataset.kind = "error";
+      button.disabled = false;
+    }
+  }
+
+  function formatBytes(size) {
+    if (!Number.isFinite(size) || size < 0) return "Taille inconnue";
+    if (size < 1024) return `${size} octet(s)`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} Kio`;
+    return `${(size / (1024 * 1024)).toFixed(1)} Mio`;
   }
 
   function renderModuleInventory(modules) {
@@ -1633,6 +1799,15 @@
   document.querySelector("#refresh-emails").addEventListener("click", () => loadAdminEmails(emailOffset));
   emailsPrevious.addEventListener("click", () => loadAdminEmails(Math.max(0, emailOffset - 50)));
   emailsNext.addEventListener("click", () => loadAdminEmails(emailOffset + 50));
+  document.querySelector("#refresh-build-package-candidates").addEventListener("click", () =>
+    loadBuildPackageCandidates(buildPackageCandidatesOffset)
+  );
+  buildPackageCandidatesPrevious.addEventListener("click", () =>
+    loadBuildPackageCandidates(Math.max(0, buildPackageCandidatesOffset - 50))
+  );
+  buildPackageCandidatesNext.addEventListener("click", () =>
+    loadBuildPackageCandidates(buildPackageCandidatesOffset + 50)
+  );
   window.addEventListener("popstate", activateAdminTabFromHash);
 
   productForm.addEventListener("submit", async (event) => {

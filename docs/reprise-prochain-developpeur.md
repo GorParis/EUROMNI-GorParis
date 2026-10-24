@@ -49,12 +49,17 @@ pas une preuve que l'arbre de travail est propre.
   stocke l'archive originale comme candidat dans un FileStore privé par boutique
   (`EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`, quota provisoire de 256 MiB par
   boutique). `GET /v1/admin/modules/build-packages/candidates/{packageSHA256}`
-  permet de relire le candidat en revalidant signature et contenu ; `POST
+  permet de relire le candidat en revalidant signature et contenu ;
+  `GET /v1/admin/modules/build-packages/candidates` fournit l'inventaire paginé
+  de la boutique (digest, taille et état d'approbation) sans ouvrir les archives.
+  `POST
   /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval` enregistre une
   approbation immuable de `owner` ou `admin`, attribuée à l'acteur, son rôle et
   l'heure UTC. L'approbation ne crée pas de build publié et n'installe/promeut
-  rien. Inventaire, interface de revue, rejet, téléchargement, suppression,
-  rétention et quotas multi-instance restent à traiter.
+  rien. Interface de revue, rejet, téléchargement, suppression, rétention et
+  quotas multi-instance restent à traiter. L'admin affiche désormais la liste
+  paginée, le détail revalidé et le bouton d'approbation avec confirmation ; la
+  liste seule ne présente pas le candidat comme validé.
 - QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
   Selfnamed lié à son IR et le validateur de package ; le chemin de publication
   rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP
@@ -184,11 +189,10 @@ pas une preuve que l'arbre de travail est propre.
 
 1. Qualifier la primitive Ed25519 et le récepteur ZIP avec tests complets, CI
    Linux/Windows et revue de sécurité indépendante avant tout usage de production.
-2. Pour les candidats reçus, compléter l'inventaire et l'interface de revue
-   admin, puis définir les décisions de rejet et la rétention avant toute
-   passerelle vers le registre global de builds. L'approbation backend existante
-   ne publie ni ne promeut ; le quota local de stockage est provisoire et non
-   coordonné multi-instance.
+2. Pour les candidats reçus, définir les décisions de rejet et la rétention
+   avant toute passerelle vers le registre global de builds. L'inventaire et la
+   revue admin sont disponibles ; l'approbation ne publie ni ne promeut, et le
+   quota local reste provisoire et non coordonné multi-instance.
 3. Garder les builds locaux disponibles et le catalogue facultatif. Une
    signature prouve l'origine cryptographique seulement, jamais l'innocuité ;
    tout passage futur au registre puis toute promotion doivent rester distincts
@@ -228,11 +232,12 @@ pas une preuve que l'arbre de travail est propre.
 > prototype manifeste/IR/Wasm et la réception ZIP signée sont implémentés :
 > `EUROMNI_BUILD_TRUST_FILE` configure la confiance, et
 > `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR` active le staging privé par boutique.
-> `GET .../candidates/{packageSHA256}` fournit les métadonnées du candidat
-> revalidé et `POST .../candidates/{packageSHA256}/approval` enregistre l'approbation auditée d'un
-> owner/admin, sans publier, installer ni promouvoir. Consulte les prochaines
-> actions pour l'inventaire UI, le rejet, la rétention, les quotas multi-instance
-> et la revue sécurité indépendante. L'orientation
+> `GET .../candidates` fournit l'inventaire paginé, `GET
+> .../candidates/{packageSHA256}` les métadonnées revalidées et `POST
+> .../candidates/{packageSHA256}/approval` enregistre l'approbation auditée
+> d'un owner/admin, sans publier, installer ni promouvoir. L'interface Modules
+> expose ce parcours ; consulte les prochaines actions pour le rejet, la
+> rétention, les quotas multi-instance et la revue sécurité indépendante. L'orientation
 > reste hybride : build local possible, catalogue signé facultatif.
 > QP-03 (quarantaine ZIP) est un chantier distinct. Ne lance aucune traduction
 > PHP générale avant les prérequis QP-04/05. Exécute les validations pertinentes

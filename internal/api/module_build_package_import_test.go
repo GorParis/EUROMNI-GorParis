@@ -213,6 +213,12 @@ func TestAdminApprovesVerifiedBuildPackageCandidate(t *testing.T) {
 			SetStaffAuthenticator(auth)
 			path := "/v1/admin/modules/build-packages/candidates/" + receipt.SHA256
 
+			listed := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates?limit=10", auth.token, "")
+			if listed.Code != http.StatusOK ||
+				!strings.Contains(listed.Body.String(), `"package_sha256":"`+receipt.SHA256+`"`) ||
+				!strings.Contains(listed.Body.String(), `"total":1`) {
+				t.Fatalf("candidate list response = %d/%s", listed.Code, listed.Body)
+			}
 			pending := performAdminRequest(mux, http.MethodGet, path, auth.token, "")
 			if pending.Code != http.StatusOK || !strings.Contains(pending.Body.String(), `"status":"pending"`) {
 				t.Fatalf("pending candidate response = %d/%s", pending.Code, pending.Body)
@@ -237,6 +243,10 @@ func TestAdminApprovesVerifiedBuildPackageCandidate(t *testing.T) {
 			}
 			if response.Data.Approval.ApprovedBy != "user-"+role || response.Data.Approval.ApproverRole != role {
 				t.Fatalf("approval actor = %+v", response.Data.Approval)
+			}
+			approvedList := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates", auth.token, "")
+			if approvedList.Code != http.StatusOK || !strings.Contains(approvedList.Body.String(), `"status":"approved"`) {
+				t.Fatalf("approved candidate list response = %d/%s", approvedList.Code, approvedList.Body)
 			}
 
 			repeated := performAdminRequest(mux, http.MethodPost, path+"/approval", auth.token, `{"decision":"approve"}`)
@@ -300,6 +310,9 @@ func TestBuildPackageCandidateApprovalRequiresAuthorizedAuthenticatedStaff(t *te
 	if response := performAdminRequest(mux, http.MethodPost, path, "catalog-test-support", `{"decision":"approve"}`); response.Code != http.StatusForbidden {
 		t.Fatalf("support approval status = %d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body)
 	}
+	if response := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates", "catalog-test-support", ""); response.Code != http.StatusForbidden {
+		t.Fatalf("support candidate list status = %d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body)
+	}
 	SetStaffAuthenticator(nil)
 	if response := performAdminRequest(mux, http.MethodPost, path, "", `{"decision":"approve"}`); response.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous approval status = %d, want %d; body=%s", response.Code, http.StatusUnauthorized, response.Body)
@@ -312,6 +325,10 @@ func TestBuildPackageCandidateApprovalRequiresAuthorizedAuthenticatedStaff(t *te
 	invalidDigest := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates/not-a-digest", "catalog-test-admin", "")
 	if invalidDigest.Code != http.StatusBadRequest {
 		t.Fatalf("invalid digest status = %d, want %d; body=%s", invalidDigest.Code, http.StatusBadRequest, invalidDigest.Body)
+	}
+	invalidPagination := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates?limit=101", "catalog-test-admin", "")
+	if invalidPagination.Code != http.StatusBadRequest {
+		t.Fatalf("invalid pagination status = %d, want %d; body=%s", invalidPagination.Code, http.StatusBadRequest, invalidPagination.Body)
 	}
 	shopHash := sha256.Sum256([]byte(seed.ShopID))
 	candidatePath := filepath.Join(candidateRoot, hex.EncodeToString(shopHash[:]), receipt.SHA256)
