@@ -156,12 +156,14 @@ export EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR='/var/lib/euromni/build-package-candi
 Protéger le fichier de confiance et les deux répertoires avec les droits du
 compte de service. Le stockage de candidats est privé et séparé du FileStore
 des artefacts publiés, plafonné provisoirement à 256 MiB par boutique et non
-coordonné entre instances. Un `owner` ou `admin` peut relire un candidat par son
-digest et lui attribuer une approbation humaine via l'API ; cette décision est
-immuable et auditée par utilisateur, rôle et horodatage, mais ne publie,
-n'installe ni ne promeut le build. L'inventaire, la purge automatique et le
-passage au registre restent absents. La trace est un sidecar local, pas un
-journal d'audit centralisé ; ne pas activer ce prototype en production.
+coordonné entre instances. Un `owner` ou `admin` peut lister et relire un
+candidat, l'approuver ou le rejeter avec un motif obligatoire ; un rejet peut
+être rouvert et chaque décision est tracée par acteur, rôle et horodatage. Ces
+actions ne publient, n'installent ni ne promeuvent le build. La trace est un
+sidecar local, borné et non coordonné entre instances, pas un journal centralisé
+ni inviolable contre un administrateur système.
+La purge automatique et le passage au registre restent absents ; ne pas activer
+ce prototype en production.
 
 Cette documentation décrit le paquet autonome, mais l'installation comme
 service Windows ou unité systemd, la rotation des secrets et une politique de

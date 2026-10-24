@@ -114,24 +114,22 @@ func adminBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
 		writeBuildPackageCandidateError(w, err)
 		return
 	}
-	approval, err := moduleBuildPackageCandidates.GetApproval(r.Context(), session.ShopID, digest)
+	review, err := moduleBuildPackageCandidates.GetReview(r.Context(), session.ShopID, digest)
 	if err != nil {
 		writeBuildPackageCandidateError(w, err)
 		return
 	}
-	status := "pending"
-	if approval != nil {
-		status = "approved"
-	}
 	writePrivateJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
-			"package_sha256": digest,
-			"status":         status,
-			"module":         manifest.Module,
-			"platform":       manifest.Platform,
-			"wasm_sha256":    manifest.WASMSHA256,
-			"signer_key_id":  signature.KeyID,
-			"approval":       approval,
+			"package_sha256":   digest,
+			"status":           review.Status,
+			"module":           manifest.Module,
+			"platform":         manifest.Platform,
+			"wasm_sha256":      manifest.WASMSHA256,
+			"signer_key_id":    signature.KeyID,
+			"approval":         review.Approval,
+			"rejection":        review.Rejection,
+			"decision_history": review.History,
 		},
 	})
 }
@@ -167,11 +165,6 @@ func adminBuildPackageCandidates(w http.ResponseWriter, r *http.Request) {
 }
 
 func adminApproveBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
-	session, ok := adminSessionFromContext(r.Context())
-	if !ok {
-		writePrivateJSON(w, http.StatusUnauthorized, map[string]any{"error": "staff session required"})
-		return
-	}
 	var request struct {
 		Decision string `json:"decision"`
 	}
@@ -179,28 +172,70 @@ func adminApproveBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
 		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain {"decision":"approve"}`})
 		return
 	}
+	adminDecideBuildPackageCandidate(w, r, packagecandidate.DecisionApprove, "")
+}
+
+func adminRejectBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Decision string `json:"decision"`
+		Reason   string `json:"reason"`
+	}
+	if err := decodeAdminJSON(w, r, &request); err != nil || request.Decision != packagecandidate.DecisionReject {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain {"decision":"reject","reason":"…"}`})
+		return
+	}
+	adminDecideBuildPackageCandidate(w, r, packagecandidate.DecisionReject, request.Reason)
+}
+
+func adminReopenBuildPackageCandidate(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Decision string `json:"decision"`
+	}
+	if err := decodeAdminJSON(w, r, &request); err != nil || request.Decision != packagecandidate.DecisionReopen {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain {"decision":"reopen"}`})
+		return
+	}
+	adminDecideBuildPackageCandidate(w, r, packagecandidate.DecisionReopen, "")
+}
+
+func adminDecideBuildPackageCandidate(w http.ResponseWriter, r *http.Request, decision, reason string) {
+	session, ok := adminSessionFromContext(r.Context())
+	if !ok {
+		writePrivateJSON(w, http.StatusUnauthorized, map[string]any{"error": "staff session required"})
+		return
+	}
 	digest := r.PathValue("packageSHA256")
 	if _, _, err := loadVerifiedBuildPackageCandidate(r, session.ShopID, digest); err != nil {
 		writeBuildPackageCandidateError(w, err)
 		return
 	}
-	if approval, err := moduleBuildPackageCandidates.GetApproval(r.Context(), session.ShopID, digest); err != nil {
-		writeBuildPackageCandidateError(w, err)
-		return
-	} else if approval != nil {
-		writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "build package candidate is already approved"})
-		return
-	}
-	approval, err := moduleBuildPackageCandidates.Approve(r.Context(), session.ShopID, digest, session.UserID, session.Role)
+	review, err := moduleBuildPackageCandidates.Decide(
+		r.Context(), session.ShopID, digest, session.UserID, session.Role, decision, reason,
+	)
 	if err != nil {
-		if errors.Is(err, packagecandidate.ErrCandidateApproved) {
-			writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "build package candidate is already approved"})
-			return
-		}
-		writeBuildPackageCandidateError(w, err)
+		writeBuildPackageDecisionError(w, err)
 		return
 	}
-	writePrivateJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"status": "approved", "approval": approval}})
+	writePrivateJSON(w, http.StatusOK, map[string]any{"data": review})
+}
+
+func writeBuildPackageDecisionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, packagecandidate.ErrCandidateDecisionConflict),
+		errors.Is(err, packagecandidate.ErrCandidateApproved),
+		errors.Is(err, packagecandidate.ErrCandidateDecisionHistoryFull):
+		writePrivateJSON(w, http.StatusConflict, map[string]any{"error": "build package candidate decision conflicts with its current state"})
+	case errors.Is(err, packagecandidate.ErrCandidateReasonRequired):
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "a rejection reason is required"})
+	case errors.Is(err, packagecandidate.ErrCandidateReasonInvalid):
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": "rejection reason exceeds the allowed size"})
+	case errors.Is(err, packagecandidate.ErrCandidateNotFound),
+		errors.Is(err, packagecandidate.ErrCandidateCorrupt):
+		writeBuildPackageCandidateError(w, err)
+	default:
+		log.Printf("admin build package candidate decision: %v", err)
+		writePrivateJSON(w, http.StatusInternalServerError, map[string]any{"error": "build package candidate decision failed"})
+	}
 }
 
 func parseBuildPackageCandidatePagination(r *http.Request) (int, int, error) {

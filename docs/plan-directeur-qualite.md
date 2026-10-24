@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.30 |
+| Version | 3.31 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-24 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -89,11 +89,14 @@ désormais le ZIP, la signature et le package, puis stocke l'archive comme
 candidat privé par boutique via `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`. Les routes
 de lecture par digest revalident le package ; l'approbation backend `owner` ou
 `admin` est attribuée et horodatée, immuable et distincte de la publication ou
-promotion. Aucun build publié ni pin n'est modifié. L'inventaire admin paginé
-des digest, tailles et états est ajouté ; il ne revalide pas les archives, ce
-que fait la lecture détaillée avant décision. L'interface Modules propose la
-consultation paginée, le détail revalidé et l'approbation explicite. Décision de
-rejet, rétention, nettoyage et passerelle de publication restent à implémenter.
+promotion. Le rejet exige un motif ; il est révisable par une réouverture
+explicite. Chaque transition est conservée dans un historique local borné et
+attribué ; cette trace n'est pas inviolable contre un administrateur système.
+Aucune transition ne publie ou ne promeut. L'inventaire admin paginé ne revalide
+pas les archives, ce que fait la lecture détaillée avant décision. L'interface
+Modules expose l'inventaire, le détail revalidé, l'approbation, le rejet et la
+réouverture. Rétention, nettoyage et passerelle de publication restent à
+implémenter.
 
 Avant toute reprise de code, vérifier l’état réel de l’arbre de travail et
 l’historique Git. Les notes de version précédentes ne permettent pas de déduire
@@ -327,3 +330,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.28 | 2026-10-24 | Approbation humaine backend : lecture par digest et approbation après revalidation de la signature avec les clés courantes ; autorisation `owner`/`admin`, scope boutique et attribution utilisateur/rôle/heure UTC. Le sidecar local est immuable via l'API mais n'est pas un journal d'audit centralisé ; aucun build/pin/installation/promotion ne change. Tests ajoutés pour les deux rôles, rôle refusé, non-authentifié, candidat absent/altéré, clé retirée, répétition et isolation boutique. `go test ./...`, `go vet ./...` et `git diff --check` réussis sous Linux ; CI Windows et revue sécurité indépendante non exécutées. Inventaire, UI, rejet, rétention et quota multi-instance restent ouverts. | En attente du responsable qualité |
 | 3.29 | 2026-10-24 | Inventaire backend `GET /v1/admin/modules/build-packages/candidates` ajouté avec pagination bornée (50 par défaut, 100 maximum), digest/taille/état et approbation, limité à la boutique ; les rôles restent `owner`/`admin`. La liste ne lit pas les ZIP et n'affirme pas leur validation ; le détail revalide avant décision. Tests store/API ajoutés. `go test ./...`, `go vet ./...` et `git diff --check` réussis sous Linux. UI, rejet, rétention, coordination multi-instance et revue sécurité indépendante restent ouverts. | En attente du responsable qualité |
 | 3.30 | 2026-10-24 | Interface Modules pour consulter les candidats signés, ouvrir le détail revalidé et approuver explicitement avec confirmation. Pagination, états accessibles, erreurs explicites et invalidation des réponses en changement de boutique ; aucun chemin de publication/activation ajouté. `go test ./...`, `go vet ./...`, `go test ./frontend`, `node --check frontend/admin/admin.js` et `git diff --check` réussis sous Linux. Rejet, rétention, coordination multi-instance et revue sécurité indépendante restent ouverts. | En attente du responsable qualité |
+| 3.31 | 2026-10-24 | Décisions de package étendues au rejet avec motif obligatoire et à la réouverture d'un candidat rejeté. Historique local borné (256 décisions / 256 KiB), état vérifié, attribution actor/rôle/UTC ; transitions invalides refusées et détail/API exposent l'historique. L'API ne modifie pas les événements existants, mais la trace locale n'est pas inviolable contre un administrateur système et ne coordonne pas les instances. Admin permet rejeter/rouvrir avec confirmation. Tests de transitions API/store et de conservation d'historique ajoutés. Validation complète, vet, frontend et syntaxe JS réussis sous Linux ; CI Windows et revue indépendante à venir. | En attente du responsable qualité |

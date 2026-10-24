@@ -20,14 +20,27 @@ import (
 )
 
 const MaxShopCandidateBytes = 256 << 20
+const MaxDecisionHistoryBytes = 256 << 10
+const MaxDecisionHistoryEntries = 256
+const MaxDecisionReasonBytes = 1000
 
 var (
-	ErrCandidateEmpty     = errors.New("build package candidate is empty")
-	ErrCandidateLarge     = errors.New("build package candidate exceeds size limit")
-	ErrCandidateStoreFull = errors.New("shop build package candidate storage limit reached")
-	ErrCandidateCorrupt   = errors.New("build package candidate failed integrity check")
-	ErrCandidateNotFound  = errors.New("build package candidate not found")
-	ErrCandidateApproved  = errors.New("build package candidate already approved")
+	ErrCandidateEmpty               = errors.New("build package candidate is empty")
+	ErrCandidateLarge               = errors.New("build package candidate exceeds size limit")
+	ErrCandidateStoreFull           = errors.New("shop build package candidate storage limit reached")
+	ErrCandidateCorrupt             = errors.New("build package candidate failed integrity check")
+	ErrCandidateNotFound            = errors.New("build package candidate not found")
+	ErrCandidateApproved            = errors.New("build package candidate already approved")
+	ErrCandidateDecisionConflict    = errors.New("build package candidate decision conflicts with current state")
+	ErrCandidateReasonRequired      = errors.New("build package candidate rejection reason is required")
+	ErrCandidateReasonInvalid       = errors.New("build package candidate rejection reason is invalid")
+	ErrCandidateDecisionHistoryFull = errors.New("build package candidate decision history is full")
+)
+
+const (
+	DecisionApprove = "approve"
+	DecisionReject  = "reject"
+	DecisionReopen  = "reopen"
 )
 
 type Candidate struct {
@@ -42,18 +55,30 @@ type Approval struct {
 	ApprovedAt    string `json:"approved_at"`
 }
 
+type Decision struct {
+	Action    string `json:"action"`
+	ActorID   string `json:"actor_id"`
+	ActorRole string `json:"actor_role"`
+	At        string `json:"at"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 type CandidateReview struct {
 	Candidate
-	Status   string    `json:"status"`
-	Approval *Approval `json:"approval"`
+	Status    string     `json:"status"`
+	Approval  *Approval  `json:"approval,omitempty"`
+	Rejection *Decision  `json:"rejection,omitempty"`
+	History   []Decision `json:"decision_history,omitempty"`
 }
 
 type Store interface {
 	Put(context.Context, string, []byte) (Candidate, error)
 	Get(context.Context, string, string) ([]byte, error)
 	List(context.Context, string, int, int) ([]CandidateReview, int, error)
+	GetReview(context.Context, string, string) (CandidateReview, error)
 	GetApproval(context.Context, string, string) (*Approval, error)
 	Approve(context.Context, string, string, string, string) (Approval, error)
+	Decide(context.Context, string, string, string, string, string, string) (CandidateReview, error)
 }
 
 type FileStore struct {
@@ -240,21 +265,12 @@ func (s *FileStore) List(ctx context.Context, shopID string, limit, offset int) 
 			info.Size() <= 0 || info.Size() > pipeline.MaxBuildPackageArchiveBytes {
 			return nil, 0, ErrCandidateCorrupt
 		}
-		recordedApproval, err := readApproval(filepath.Join(directory, digest+".approval.json"), digest)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		review, err := readCandidateReview(directory, digest, info.Size())
+		if err != nil {
 			return nil, 0, err
 		}
-		status := "pending"
-		var approval *Approval
-		if err == nil {
-			approval = &recordedApproval
-			status = "approved"
-		}
-		candidates = append(candidates, CandidateReview{
-			Candidate: Candidate{SHA256: digest, Size: info.Size()},
-			Status:    status,
-			Approval:  approval,
-		})
+		review.History = nil
+		candidates = append(candidates, review)
 	}
 
 	total := len(candidates)
@@ -266,6 +282,32 @@ func (s *FileStore) List(ctx context.Context, shopID string, limit, offset int) 
 		end = total
 	}
 	return candidates[offset:end], total, nil
+}
+
+func (s *FileStore) GetReview(ctx context.Context, shopID, digest string) (CandidateReview, error) {
+	if s == nil || s.root == "" {
+		return CandidateReview{}, errors.New("build package candidate store is not initialized")
+	}
+	if strings.TrimSpace(shopID) == "" || !validDigest(digest) {
+		return CandidateReview{}, errors.New("shop ID and valid package digest are required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return CandidateReview{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	directory := filepath.Join(s.root, shopDigest(shopID))
+	data, err := verifyCandidateFile(filepath.Join(directory, digest), digest)
+	if errors.Is(err, os.ErrNotExist) {
+		return CandidateReview{}, ErrCandidateNotFound
+	}
+	if err != nil {
+		return CandidateReview{}, err
+	}
+	return readCandidateReview(directory, digest, int64(len(data)))
 }
 
 func (s *FileStore) GetApproval(ctx context.Context, shopID, digest string) (*Approval, error) {
@@ -281,99 +323,279 @@ func (s *FileStore) GetApproval(ctx context.Context, shopID, digest string) (*Ap
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	directory := filepath.Join(s.root, shopDigest(shopID))
-	if _, err := verifyCandidateFile(filepath.Join(directory, digest), digest); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, ErrCandidateNotFound
-		}
-		return nil, err
-	}
-	approval, err := readApproval(filepath.Join(directory, digest+".approval.json"), digest)
+	review, err := s.GetReview(ctx, shopID, digest)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	return &approval, nil
+	return review.Approval, nil
 }
 
 func (s *FileStore) Approve(ctx context.Context, shopID, digest, actorID, actorRole string) (Approval, error) {
+	review, err := s.Decide(ctx, shopID, digest, actorID, actorRole, DecisionApprove, "")
+	if err != nil {
+		return Approval{}, err
+	}
+	if review.Approval == nil {
+		return Approval{}, ErrCandidateCorrupt
+	}
+	return *review.Approval, nil
+}
+
+func (s *FileStore) Decide(ctx context.Context, shopID, digest, actorID, actorRole, action, reason string) (CandidateReview, error) {
 	if s == nil || s.root == "" {
-		return Approval{}, errors.New("build package candidate store is not initialized")
+		return CandidateReview{}, errors.New("build package candidate store is not initialized")
 	}
 	if strings.TrimSpace(shopID) == "" || !validDigest(digest) || strings.TrimSpace(actorID) == "" {
-		return Approval{}, errors.New("shop ID, valid package digest, and approver ID are required")
+		return CandidateReview{}, errors.New("shop ID, valid package digest, and decision actor are required")
 	}
 	if actorRole != "owner" && actorRole != "admin" {
-		return Approval{}, errors.New("approver must have owner or admin role")
+		return CandidateReview{}, errors.New("decision actor must have owner or admin role")
+	}
+	reason = strings.TrimSpace(reason)
+	switch action {
+	case DecisionApprove, DecisionReopen:
+		if reason != "" {
+			return CandidateReview{}, errors.New("reason is only valid for a rejection")
+		}
+	case DecisionReject:
+		if reason == "" {
+			return CandidateReview{}, ErrCandidateReasonRequired
+		}
+		if len(reason) > MaxDecisionReasonBytes {
+			return CandidateReview{}, ErrCandidateReasonInvalid
+		}
+	default:
+		return CandidateReview{}, errors.New("candidate decision is invalid")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return Approval{}, err
+		return CandidateReview{}, err
 	}
 	directory := filepath.Join(s.root, shopDigest(shopID))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := verifyCandidateFile(filepath.Join(directory, digest), digest); err != nil {
+	data, err := verifyCandidateFile(filepath.Join(directory, digest), digest)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Approval{}, ErrCandidateNotFound
+			return CandidateReview{}, ErrCandidateNotFound
 		}
-		return Approval{}, err
+		return CandidateReview{}, err
 	}
-	target := filepath.Join(directory, digest+".approval.json")
-	if _, err := os.Lstat(target); err == nil {
-		return Approval{}, ErrCandidateApproved
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return Approval{}, fmt.Errorf("inspect build package approval: %w", err)
+	review, err := readCandidateReview(directory, digest, int64(len(data)))
+	if err != nil {
+		return CandidateReview{}, err
 	}
+	if action == DecisionApprove && review.Status == "approved" {
+		return CandidateReview{}, ErrCandidateApproved
+	}
+	if (action == DecisionReject && review.Status != "pending") ||
+		(action == DecisionReopen && review.Status != "rejected") ||
+		(action == DecisionApprove && review.Status != "pending") {
+		return CandidateReview{}, ErrCandidateDecisionConflict
+	}
+	if len(review.History) >= MaxDecisionHistoryEntries {
+		return CandidateReview{}, ErrCandidateDecisionHistoryFull
+	}
+	decision := Decision{
+		Action:    action,
+		ActorID:   actorID,
+		ActorRole: actorRole,
+		At:        time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if action == DecisionReject {
+		decision.Reason = reason
+	}
+	review.History = append(review.History, decision)
+	switch action {
+	case DecisionApprove:
+		review.Status = "approved"
+		review.Approval = approvalFromDecision(digest, decision)
+		review.Rejection = nil
+	case DecisionReject:
+		review.Status = "rejected"
+		review.Approval = nil
+		review.Rejection = &decision
+	case DecisionReopen:
+		review.Status = "pending"
+		review.Approval = nil
+		review.Rejection = nil
+	}
+	historyPath := filepath.Join(directory, digest+".decisions.json")
+	if err := writeDecisionHistory(historyPath, review.History); err != nil {
+		return CandidateReview{}, err
+	}
+	return review, nil
+}
 
-	approval := Approval{
+func approvalFromDecision(digest string, decision Decision) *Approval {
+	return &Approval{
 		PackageSHA256: digest,
-		ApprovedBy:    actorID,
-		ApproverRole:  actorRole,
-		ApprovedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		ApprovedBy:    decision.ActorID,
+		ApproverRole:  decision.ActorRole,
+		ApprovedAt:    decision.At,
 	}
-	data, err := json.Marshal(approval)
+}
+
+func readCandidateReview(directory, digest string, size int64) (CandidateReview, error) {
+	history, err := readDecisionHistory(filepath.Join(directory, digest+".decisions.json"), filepath.Join(directory, digest+".approval.json"), digest)
 	if err != nil {
-		return Approval{}, fmt.Errorf("encode build package approval: %w", err)
+		return CandidateReview{}, err
 	}
-	temporary, err := os.CreateTemp(directory, ".package-approval-*")
+	review := CandidateReview{
+		Candidate: Candidate{SHA256: digest, Size: size},
+		Status:    "pending",
+		History:   history,
+	}
+	for _, decision := range history {
+		switch decision.Action {
+		case DecisionApprove:
+			review.Status = "approved"
+			review.Approval = approvalFromDecision(digest, decision)
+			review.Rejection = nil
+		case DecisionReject:
+			review.Status = "rejected"
+			review.Approval = nil
+			review.Rejection = &decision
+		case DecisionReopen:
+			review.Status = "pending"
+			review.Approval = nil
+			review.Rejection = nil
+		}
+	}
+	return review, nil
+}
+
+func readDecisionHistory(path, legacyApprovalPath, digest string) ([]Decision, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		legacy, legacyErr := readApproval(legacyApprovalPath, digest)
+		if errors.Is(legacyErr, os.ErrNotExist) {
+			return []Decision{}, nil
+		}
+		if legacyErr != nil {
+			return nil, legacyErr
+		}
+		return []Decision{{
+			Action: DecisionApprove, ActorID: legacy.ApprovedBy,
+			ActorRole: legacy.ApproverRole, At: legacy.ApprovedAt,
+		}}, nil
+	}
 	if err != nil {
-		return Approval{}, fmt.Errorf("create build package approval staging file: %w", err)
+		return nil, fmt.Errorf("inspect build package decision history: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > MaxDecisionHistoryBytes {
+		return nil, ErrCandidateCorrupt
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open build package decision history: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, MaxDecisionHistoryBytes+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("read build package decision history: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close build package decision history: %w", closeErr)
+	}
+	if len(data) > MaxDecisionHistoryBytes {
+		return nil, ErrCandidateCorrupt
+	}
+	var history []Decision
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&history); err != nil {
+		return nil, fmt.Errorf("%w: decode decision history: %v", ErrCandidateCorrupt, err)
+	}
+	if history == nil || len(history) > MaxDecisionHistoryEntries {
+		return nil, ErrCandidateCorrupt
+	}
+	if err := validateDecisionHistory(history); err != nil {
+		return nil, err
+	}
+	canonical, err := json.Marshal(history)
+	if err != nil || !bytes.Equal(data, canonical) {
+		return nil, ErrCandidateCorrupt
+	}
+	return history, nil
+}
+
+func validateDecisionHistory(history []Decision) error {
+	state := "pending"
+	for _, decision := range history {
+		if strings.TrimSpace(decision.ActorID) == "" ||
+			(decision.ActorRole != "owner" && decision.ActorRole != "admin") {
+			return ErrCandidateCorrupt
+		}
+		if _, err := time.Parse(time.RFC3339Nano, decision.At); err != nil {
+			return ErrCandidateCorrupt
+		}
+		switch decision.Action {
+		case DecisionApprove:
+			if state != "pending" || decision.Reason != "" {
+				return ErrCandidateCorrupt
+			}
+			state = "approved"
+		case DecisionReject:
+			if state != "pending" || strings.TrimSpace(decision.Reason) == "" ||
+				decision.Reason != strings.TrimSpace(decision.Reason) ||
+				len(decision.Reason) > MaxDecisionReasonBytes {
+				return ErrCandidateCorrupt
+			}
+			state = "rejected"
+		case DecisionReopen:
+			if state != "rejected" || decision.Reason != "" {
+				return ErrCandidateCorrupt
+			}
+			state = "pending"
+		default:
+			return ErrCandidateCorrupt
+		}
+	}
+	return nil
+}
+
+func writeDecisionHistory(path string, history []Decision) error {
+	data, err := json.Marshal(history)
+	if err != nil {
+		return fmt.Errorf("encode build package decision history: %w", err)
+	}
+	if len(data) > MaxDecisionHistoryBytes {
+		return ErrCandidateDecisionHistoryFull
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".package-decisions-*")
+	if err != nil {
+		return fmt.Errorf("create build package decision history staging file: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
 	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
-		return Approval{}, fmt.Errorf("secure build package approval staging file: %w", err)
+		return fmt.Errorf("secure build package decision history: %w", err)
 	}
 	written, err := temporary.Write(data)
 	if err != nil {
 		_ = temporary.Close()
-		return Approval{}, fmt.Errorf("write build package approval: %w", err)
+		return fmt.Errorf("write build package decision history: %w", err)
 	}
 	if written != len(data) {
 		_ = temporary.Close()
-		return Approval{}, errors.New("write build package approval: short write")
+		return errors.New("write build package decision history: short write")
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return Approval{}, fmt.Errorf("sync build package approval: %w", err)
+		return fmt.Errorf("sync build package decision history: %w", err)
 	}
 	if err := temporary.Close(); err != nil {
-		return Approval{}, fmt.Errorf("close build package approval: %w", err)
+		return fmt.Errorf("close build package decision history: %w", err)
 	}
-	if err := os.Link(temporaryPath, target); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return Approval{}, ErrCandidateApproved
-		}
-		return Approval{}, fmt.Errorf("record build package approval: %w", err)
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("record build package decision history: %w", err)
 	}
-	return approval, nil
+	return nil
 }
 
 func readApproval(path, expectedDigest string) (Approval, error) {

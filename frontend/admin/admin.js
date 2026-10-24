@@ -1474,8 +1474,12 @@
       title.textContent = candidate.package_sha256;
       const summary = document.createElement("p");
       summary.className = "muted";
-      summary.textContent =
-        `${candidate.status === "approved" ? "Approuvé" : "En attente"} · ${formatBytes(candidate.size)}`;
+      const status = {
+        approved: "Approuvé",
+        rejected: "Rejeté",
+        pending: "En attente",
+      }[candidate.status] || "État inconnu";
+      summary.textContent = `${status} · ${formatBytes(candidate.size)}`;
       const details = document.createElement("button");
       details.type = "button";
       details.className = "secondary";
@@ -1521,7 +1525,11 @@
       ["Plateforme", candidate.platform],
       ["SHA-256 Wasm", candidate.wasm_sha256],
       ["Clé signataire", candidate.signer_key_id],
-      ["État", candidate.status === "approved" ? "Approuvé" : "En attente d’approbation"],
+      ["État", {
+        approved: "Approuvé",
+        rejected: "Rejeté",
+        pending: "En attente d’approbation",
+      }[candidate.status] || "État inconnu"],
     ];
     for (const [label, value] of fields) {
       const term = document.createElement("dt");
@@ -1531,12 +1539,41 @@
       metadata.append(term, description);
     }
     buildPackageCandidateDetail.append(title, metadata);
+    if (candidate.decision_history?.length) {
+      const historyTitle = document.createElement("h5");
+      historyTitle.textContent = "Historique des décisions";
+      const history = document.createElement("ol");
+      for (const decision of candidate.decision_history) {
+        const item = document.createElement("li");
+        const action = {
+          approve: "Approuvé",
+          reject: "Rejeté",
+          reopen: "Rouverte pour examen",
+        }[decision.action] || "Décision inconnue";
+        const at = new Date(decision.at).toLocaleString();
+        item.textContent =
+          `${action} par ${decision.actor_id} (${decision.actor_role}) le ${at}${decision.reason ? ` — Motif : ${decision.reason}` : ""}`;
+        history.append(item);
+      }
+      buildPackageCandidateDetail.append(historyTitle, history);
+    }
     if (candidate.approval) {
       const approval = document.createElement("p");
       approval.className = "muted";
       approval.textContent =
         `Approuvé par ${candidate.approval.approved_by} (${candidate.approval.approver_role}) le ${new Date(candidate.approval.approved_at).toLocaleString()}.`;
       buildPackageCandidateDetail.append(approval);
+      return;
+    }
+    if (candidate.status === "rejected") {
+      const rejectedNote = document.createElement("p");
+      rejectedNote.className = "muted";
+      rejectedNote.textContent = "Le rejet est réversible ; la réouverture sera enregistrée dans l’historique.";
+      const reopen = document.createElement("button");
+      reopen.type = "button";
+      reopen.textContent = "Rouvrir pour examen";
+      reopen.addEventListener("click", () => reopenBuildPackageCandidate(candidate.package_sha256, reopen));
+      buildPackageCandidateDetail.append(rejectedNote, reopen);
       return;
     }
     const note = document.createElement("p");
@@ -1546,7 +1583,21 @@
     approve.type = "button";
     approve.textContent = "Approuver ce package";
     approve.addEventListener("click", () => approveBuildPackageCandidate(candidate.package_sha256, approve));
-    buildPackageCandidateDetail.append(note, approve);
+    const reasonLabel = document.createElement("label");
+    reasonLabel.textContent = "Motif du rejet (obligatoire, 1 000 octets maximum)";
+    const reasonInput = document.createElement("textarea");
+    reasonInput.maxLength = 1000;
+    reasonInput.required = true;
+    reasonInput.setAttribute("aria-label", "Motif du rejet");
+    const reject = document.createElement("button");
+    reject.type = "button";
+    reject.className = "danger";
+    reject.textContent = "Rejeter ce package";
+    reject.addEventListener("click", () =>
+      rejectBuildPackageCandidate(candidate.package_sha256, reasonInput, reject)
+    );
+    reasonLabel.append(reasonInput);
+    buildPackageCandidateDetail.append(note, approve, reasonLabel, reject);
   }
 
   async function approveBuildPackageCandidate(digest, button) {
@@ -1564,6 +1615,58 @@
         body: JSON.stringify({ decision: "approve" }),
       });
       buildPackageCandidatesStatus.textContent = "Approbation enregistrée. Aucun build n’a été publié ni activé.";
+      buildPackageCandidatesStatus.dataset.kind = "info";
+      await loadBuildPackageCandidates(buildPackageCandidatesOffset, false);
+      await loadBuildPackageCandidateDetail(digest);
+    } catch (error) {
+      buildPackageCandidatesStatus.textContent = error.message;
+      buildPackageCandidatesStatus.dataset.kind = "error";
+      button.disabled = false;
+    }
+  }
+
+  async function rejectBuildPackageCandidate(digest, reasonInput, button) {
+    const reason = reasonInput.value.trim();
+    if (!reason || new TextEncoder().encode(reason).length > 1000) {
+      buildPackageCandidatesStatus.textContent = "Saisissez un motif de rejet de 1 à 1 000 octets.";
+      buildPackageCandidatesStatus.dataset.kind = "error";
+      reasonInput.focus();
+      return;
+    }
+    if (!window.confirm(
+      "Rejeter ce package ? Le motif sera conservé ; un owner ou admin pourra le rouvrir ultérieurement.",
+    )) {
+      return;
+    }
+    await submitBuildPackageCandidateDecision(
+      digest,
+      `/v1/admin/modules/build-packages/candidates/${encodeURIComponent(digest)}/rejection`,
+      { decision: "reject", reason },
+      button,
+      "Rejet enregistré. Le candidat pourra être rouvert ultérieurement.",
+    );
+  }
+
+  async function reopenBuildPackageCandidate(digest, button) {
+    if (!window.confirm("Rouvrir ce candidat pour examen ? Cette action sera ajoutée à son historique de décisions.")) {
+      return;
+    }
+    await submitBuildPackageCandidateDecision(
+      digest,
+      `/v1/admin/modules/build-packages/candidates/${encodeURIComponent(digest)}/reopen`,
+      { decision: "reopen" },
+      button,
+      "Candidat rouvert pour examen.",
+    );
+  }
+
+  async function submitBuildPackageCandidateDecision(digest, path, body, button, successMessage) {
+    button.disabled = true;
+    buildPackageCandidatesStatus.textContent = "Enregistrement de la décision…";
+    buildPackageCandidatesStatus.dataset.kind = "info";
+    try {
+      await request(path, { method: "POST", body: JSON.stringify(body) });
+      buildPackageCandidatesStatus.textContent = successMessage;
       buildPackageCandidatesStatus.dataset.kind = "info";
       await loadBuildPackageCandidates(buildPackageCandidatesOffset, false);
       await loadBuildPackageCandidateDetail(digest);

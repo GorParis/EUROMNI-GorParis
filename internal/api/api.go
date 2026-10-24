@@ -133,6 +133,8 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/modules/build-packages/candidates", withOrderWriteAuth(adminBuildPackageCandidates))
 	mux.HandleFunc("GET /v1/admin/modules/build-packages/candidates/{packageSHA256}", withOrderWriteAuth(adminBuildPackageCandidate))
 	mux.HandleFunc("POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval", withOrderWriteAuth(adminApproveBuildPackageCandidate))
+	mux.HandleFunc("POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/rejection", withOrderWriteAuth(adminRejectBuildPackageCandidate))
+	mux.HandleFunc("POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/reopen", withOrderWriteAuth(adminReopenBuildPackageCandidate))
 	mux.HandleFunc("GET /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("PUT /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("GET /v1/admin/shipping/versions/targets", withOrderWriteAuth(adminShippingRateVersionTargets))

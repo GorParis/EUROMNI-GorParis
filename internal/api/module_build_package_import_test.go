@@ -305,10 +305,17 @@ func TestBuildPackageCandidateApprovalRequiresAuthorizedAuthenticatedStaff(t *te
 	mux := http.NewServeMux()
 	Register(mux)
 	path := "/v1/admin/modules/build-packages/candidates/" + receipt.SHA256 + "/approval"
+	basePath := "/v1/admin/modules/build-packages/candidates/" + receipt.SHA256
 
 	SetStaffAuthenticator(newCatalogTestAuthenticator("support", seed.ShopID))
 	if response := performAdminRequest(mux, http.MethodPost, path, "catalog-test-support", `{"decision":"approve"}`); response.Code != http.StatusForbidden {
 		t.Fatalf("support approval status = %d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body)
+	}
+	if response := performAdminRequest(mux, http.MethodPost, basePath+"/rejection", "catalog-test-support", `{"decision":"reject","reason":"not permitted"}`); response.Code != http.StatusForbidden {
+		t.Fatalf("support rejection status = %d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body)
+	}
+	if response := performAdminRequest(mux, http.MethodPost, basePath+"/reopen", "catalog-test-support", `{"decision":"reopen"}`); response.Code != http.StatusForbidden {
+		t.Fatalf("support reopen status = %d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body)
 	}
 	if response := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates", "catalog-test-support", ""); response.Code != http.StatusForbidden {
 		t.Fatalf("support candidate list status = %d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body)
@@ -316,6 +323,13 @@ func TestBuildPackageCandidateApprovalRequiresAuthorizedAuthenticatedStaff(t *te
 	SetStaffAuthenticator(nil)
 	if response := performAdminRequest(mux, http.MethodPost, path, "", `{"decision":"approve"}`); response.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous approval status = %d, want %d; body=%s", response.Code, http.StatusUnauthorized, response.Body)
+	}
+	SetStaffAuthenticator(newCatalogTestAuthenticator("admin", seed.ShopID))
+	otherShop := newCatalogTestAuthenticator("admin", "e0e00000-0001-4000-8000-000000000099")
+	SetStaffAuthenticator(otherShop)
+	crossShop := performAdminRequest(mux, http.MethodPost, basePath+"/rejection", otherShop.token, `{"decision":"reject","reason":"cross tenant"}`)
+	if crossShop.Code != http.StatusNotFound {
+		t.Fatalf("cross-shop rejection status = %d, want %d; body=%s", crossShop.Code, http.StatusNotFound, crossShop.Body)
 	}
 	SetStaffAuthenticator(newCatalogTestAuthenticator("admin", seed.ShopID))
 	missing := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates/"+strings.Repeat("0", 64), "catalog-test-admin", "")
@@ -341,6 +355,86 @@ func TestBuildPackageCandidateApprovalRequiresAuthorizedAuthenticatedStaff(t *te
 	}
 	if approval, err := candidates.GetApproval(context.Background(), seed.ShopID, receipt.SHA256); !errors.Is(err, packagecandidate.ErrCandidateCorrupt) || approval != nil {
 		t.Fatalf("tampered candidate approval = %+v, error %v", approval, err)
+	}
+}
+
+func TestAdminRejectsAndReopensBuildPackageCandidateWithAuditHistory(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, irJSON, wasmBytes := makeSignedBuildPackageParts(t)
+	signature, err := pipeline.SignBuildPackage(manifestJSON, irJSON, wasmBytes, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signatureJSON, err := pipeline.MarshalBuildPackageSignature(signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := makeSignedBuildPackageZIP(t, map[string][]byte{
+		"signature.json": signatureJSON,
+		"manifest.json":  manifestJSON,
+		"module.ir.json": irJSON,
+		"module.wasm":    wasmBytes,
+	})
+	candidates, err := packagecandidate.NewFileStore(filepath.Join(t.TempDir(), "candidates"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := candidates.Put(context.Background(), seed.ShopID, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCandidates := moduleBuildPackageCandidates
+	oldKeys := TrustedBuildPackageKeys()
+	oldAuth := staffAuthenticator
+	SetModuleBuildPackageCandidates(candidates)
+	SetTrustedBuildPackageKeys(map[string]ed25519.PublicKey{signature.KeyID: publicKey})
+	auth := newCatalogTestAuthenticator("admin", seed.ShopID)
+	SetStaffAuthenticator(auth)
+	t.Cleanup(func() {
+		SetModuleBuildPackageCandidates(oldCandidates)
+		SetTrustedBuildPackageKeys(oldKeys)
+		SetStaffAuthenticator(oldAuth)
+	})
+	mux := http.NewServeMux()
+	Register(mux)
+	basePath := "/v1/admin/modules/build-packages/candidates/" + receipt.SHA256
+
+	missingReason := performAdminRequest(mux, http.MethodPost, basePath+"/rejection", auth.token, `{"decision":"reject","reason":" "}`)
+	if missingReason.Code != http.StatusBadRequest {
+		t.Fatalf("empty rejection reason status = %d, want %d; body=%s", missingReason.Code, http.StatusBadRequest, missingReason.Body)
+	}
+	rejected := performAdminRequest(mux, http.MethodPost, basePath+"/rejection", auth.token, `{"decision":"reject","reason":"Review source provenance"}`)
+	if rejected.Code != http.StatusOK || !strings.Contains(rejected.Body.String(), `"status":"rejected"`) {
+		t.Fatalf("rejection response = %d/%s", rejected.Code, rejected.Body)
+	}
+	detail := performAdminRequest(mux, http.MethodGet, basePath, auth.token, "")
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"reason":"Review source provenance"`) ||
+		!strings.Contains(detail.Body.String(), `"actor_id":"user-admin"`) {
+		t.Fatalf("rejected candidate detail = %d/%s", detail.Code, detail.Body)
+	}
+	listed := performAdminRequest(mux, http.MethodGet, "/v1/admin/modules/build-packages/candidates", auth.token, "")
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"status":"rejected"`) {
+		t.Fatalf("rejected candidate list = %d/%s", listed.Code, listed.Body)
+	}
+	reopened := performAdminRequest(mux, http.MethodPost, basePath+"/reopen", auth.token, `{"decision":"reopen"}`)
+	if reopened.Code != http.StatusOK || !strings.Contains(reopened.Body.String(), `"status":"pending"`) {
+		t.Fatalf("reopen response = %d/%s", reopened.Code, reopened.Body)
+	}
+	detail = performAdminRequest(mux, http.MethodGet, basePath, auth.token, "")
+	if detail.Code != http.StatusOK ||
+		!strings.Contains(detail.Body.String(), `"action":"reopen"`) ||
+		!strings.Contains(detail.Body.String(), `"reason":"Review source provenance"`) {
+		t.Fatalf("reopened candidate history = %d/%s", detail.Code, detail.Body)
+	}
+	approved := performAdminRequest(mux, http.MethodPost, basePath+"/approval", auth.token, `{"decision":"approve"}`)
+	if approved.Code != http.StatusOK || !strings.Contains(approved.Body.String(), `"status":"approved"`) {
+		t.Fatalf("approval after reopening = %d/%s", approved.Code, approved.Body)
+	}
+	if _, err := candidates.GetReview(context.Background(), seed.ShopID, receipt.SHA256); err != nil {
+		t.Fatalf("GetReview() after decision sequence: %v", err)
 	}
 }
 

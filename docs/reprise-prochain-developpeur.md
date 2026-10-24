@@ -51,15 +51,16 @@ pas une preuve que l'arbre de travail est propre.
   boutique). `GET /v1/admin/modules/build-packages/candidates/{packageSHA256}`
   permet de relire le candidat en revalidant signature et contenu ;
   `GET /v1/admin/modules/build-packages/candidates` fournit l'inventaire paginé
-  de la boutique (digest, taille et état d'approbation) sans ouvrir les archives.
-  `POST
-  /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval` enregistre une
-  approbation immuable de `owner` ou `admin`, attribuée à l'acteur, son rôle et
-  l'heure UTC. L'approbation ne crée pas de build publié et n'installe/promeut
-  rien. Interface de revue, rejet, téléchargement, suppression, rétention et
-  quotas multi-instance restent à traiter. L'admin affiche désormais la liste
-  paginée, le détail revalidé et le bouton d'approbation avec confirmation ; la
-  liste seule ne présente pas le candidat comme validé.
+  de la boutique (digest, taille et état) sans ouvrir les archives. Le détail
+  expose les décisions. `POST
+  /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval`,
+  `/rejection` et `/reopen` enregistrent des événements attribués à l'acteur,
+  son rôle et l'heure UTC ; un rejet exige un motif et peut être rouvert pour
+  revenir à `pending`. L'historique local est immuable ; ces décisions ne créent
+  aucun build publié et n'installent/promeuvent rien. L'admin affiche la liste
+  paginée, le détail revalidé et les actions avec confirmation ; la liste seule
+  ne présente pas le candidat comme validé. Téléchargement, suppression,
+  rétention et quotas multi-instance restent à traiter.
 - QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
   Selfnamed lié à son IR et le validateur de package ; le chemin de publication
   rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP
@@ -189,10 +190,11 @@ pas une preuve que l'arbre de travail est propre.
 
 1. Qualifier la primitive Ed25519 et le récepteur ZIP avec tests complets, CI
    Linux/Windows et revue de sécurité indépendante avant tout usage de production.
-2. Pour les candidats reçus, définir les décisions de rejet et la rétention
-   avant toute passerelle vers le registre global de builds. L'inventaire et la
-   revue admin sont disponibles ; l'approbation ne publie ni ne promeut, et le
-   quota local reste provisoire et non coordonné multi-instance.
+2. Pour les candidats reçus, définir la rétention avant toute passerelle vers
+   le registre global de builds. L'inventaire et la revue admin (approbation,
+   rejet avec motif, réouverture auditée) sont disponibles ; aucune action ne
+   publie ni ne promeut. Le quota local reste provisoire et non coordonné
+   multi-instance.
 3. Garder les builds locaux disponibles et le catalogue facultatif. Une
    signature prouve l'origine cryptographique seulement, jamais l'innocuité ;
    tout passage futur au registre puis toute promotion doivent rester distincts
@@ -234,10 +236,11 @@ pas une preuve que l'arbre de travail est propre.
 > `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR` active le staging privé par boutique.
 > `GET .../candidates` fournit l'inventaire paginé, `GET
 > .../candidates/{packageSHA256}` les métadonnées revalidées et `POST
-> .../candidates/{packageSHA256}/approval` enregistre l'approbation auditée
-> d'un owner/admin, sans publier, installer ni promouvoir. L'interface Modules
-> expose ce parcours ; consulte les prochaines actions pour le rejet, la
-> rétention, les quotas multi-instance et la revue sécurité indépendante. L'orientation
+> .../candidates/{packageSHA256}/approval`, `/rejection` et `/reopen` enregistrent
+> les décisions auditables owner/admin (le rejet exige un motif). L'interface
+> Modules expose ce parcours, sans publier, installer ni promouvoir. Consulte
+> les prochaines actions pour la rétention, les quotas multi-instance et la revue
+> sécurité indépendante. L'orientation
 > reste hybride : build local possible, catalogue signé facultatif.
 > QP-03 (quarantaine ZIP) est un chantier distinct. Ne lance aucune traduction
 > PHP générale avant les prérequis QP-04/05. Exécute les validations pertinentes

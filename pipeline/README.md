@@ -237,19 +237,33 @@ nécessaire avant toute décision. `GET
 `owner` ou `admin` de relire le candidat de sa boutique. La route relit le ZIP
 stocké et revalide la signature avec les clés de confiance courantes ainsi que
 le contenu du package ; elle répond avec les métadonnées et l'état `pending` ou
-`approved`. `POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval`
-accepte uniquement `{"decision":"approve"}` pour les mêmes rôles. L'approbation
-immuable conserve le digest du package, l'identifiant de l'acteur, son rôle et
-l'heure UTC dans le sidecar `<digest>.approval.json` du stockage local ; elle ne
-constitue pas un journal d'audit centralisé en base. Les répétitions répondent
-`409`. Un candidat absent répond `404`,
-et une clé retirée ou un package qui échoue désormais à la validation bloque
-l'approbation. Cette décision ne publie, n'installe et ne promeut aucun build,
-ne modifie aucun pin et ne constitue pas une preuve d'innocuité.
+`approved`. Les mêmes rôles peuvent approuver avec
+`POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval`
+et `{"decision":"approve"}` ou rejeter avec
+`POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/rejection`
+et `{"decision":"reject","reason":"…"}`. Le motif de rejet est obligatoire et
+limité à 1 000 octets. Un candidat rejeté peut être rouvert par
+`POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/reopen` avec
+`{"decision":"reopen"}` ; toute nouvelle approbation après rejet exige cette
+réouverture explicite.
 
-L'interface Modules permet à `owner` ou `admin` d'examiner ces métadonnées et
-d'enregistrer l'approbation ; aucune décision de rejet, téléchargement,
-suppression, passerelle de publication ou purge automatique n'est disponible.
+Chaque approbation, rejet et réouverture conserve l'action, l'identifiant de
+l'acteur, son rôle, l'heure UTC et, pour un rejet, son motif dans le sidecar
+local `<digest>.decisions.json`. L'historique est borné à 256 entrées et 256
+KiB. Les transitions impossibles répondent `409`, un motif absent/invalide
+`400`. L'historique local n'est pas un journal centralisé en base et ne
+constitue pas une trace inviolable contre un administrateur système ; il ne
+coordonne pas plusieurs instances et ce stockage ne doit pas être partagé entre
+instances. Une clé retirée ou un package qui échoue à la revalidation bloque
+toute transition. Ces décisions ne publient, n'installent et ne promeuvent
+aucun build, ne modifient aucun pin et ne constituent pas une preuve
+d'innocuité.
+
+L'interface Modules permet à `owner` ou `admin` d'examiner les métadonnées,
+d'approuver, de rejeter avec un motif et de rouvrir un candidat rejeté ;
+toutes les décisions demandent confirmation. Le téléchargement, la
+suppression, la passerelle de publication et la purge automatique restent
+indisponibles.
 La rétention est donc manuelle et la capacité limitée ;
 ne pas activer ce stockage pour la production avant d'avoir défini rétention,
 quota coordonné multi-instance et contrôles opérationnels. L'ingestion PHP ZIP

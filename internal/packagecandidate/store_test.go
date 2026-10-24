@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -134,5 +135,65 @@ func TestFileStoreListsCandidatesWithStablePaginationAndStatus(t *testing.T) {
 	emptyPage, emptyTotal, err := store.List(ctx, "shop-two", 50, 0)
 	if err != nil || len(emptyPage) != 0 || emptyTotal != 0 {
 		t.Fatalf("other shop list / total / error = %+v / %d / %v", emptyPage, emptyTotal, err)
+	}
+}
+
+func TestFileStoreRejectReopenAndApprovePreservesDecisionHistory(t *testing.T) {
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "candidates"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	candidate, err := store.Put(ctx, "shop-one", []byte("signed-package"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-1", "admin", DecisionReject, ""); !errors.Is(err, ErrCandidateReasonRequired) {
+		t.Fatalf("Reject(empty reason) error = %v, want %v", err, ErrCandidateReasonRequired)
+	}
+	if _, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-1", "admin", DecisionReject, strings.Repeat("x", MaxDecisionReasonBytes+1)); !errors.Is(err, ErrCandidateReasonInvalid) {
+		t.Fatalf("Reject(oversized reason) error = %v, want %v", err, ErrCandidateReasonInvalid)
+	}
+	rejected, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-1", "admin", DecisionReject, "Provenance requires clarification")
+	if err != nil {
+		t.Fatalf("Reject() returned error: %v", err)
+	}
+	if rejected.Status != "rejected" || rejected.Rejection == nil ||
+		rejected.Rejection.ActorID != "staff-1" ||
+		rejected.Rejection.Reason != "Provenance requires clarification" ||
+		len(rejected.History) != 1 {
+		t.Fatalf("rejected review = %+v", rejected)
+	}
+	if _, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-2", "owner", DecisionReject, "second rejection"); !errors.Is(err, ErrCandidateDecisionConflict) {
+		t.Fatalf("second rejection error = %v, want %v", err, ErrCandidateDecisionConflict)
+	}
+	if _, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-2", "owner", DecisionApprove, ""); !errors.Is(err, ErrCandidateDecisionConflict) {
+		t.Fatalf("approval while rejected error = %v, want %v", err, ErrCandidateDecisionConflict)
+	}
+	reopened, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-2", "owner", DecisionReopen, "")
+	if err != nil {
+		t.Fatalf("Reopen() returned error: %v", err)
+	}
+	if reopened.Status != "pending" || len(reopened.History) != 2 || reopened.History[1].Action != DecisionReopen {
+		t.Fatalf("reopened review = %+v", reopened)
+	}
+	if _, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-2", "owner", DecisionReopen, ""); !errors.Is(err, ErrCandidateDecisionConflict) {
+		t.Fatalf("reopen while pending error = %v, want %v", err, ErrCandidateDecisionConflict)
+	}
+	approved, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-3", "admin", DecisionApprove, "")
+	if err != nil {
+		t.Fatalf("Approve after reopening returned error: %v", err)
+	}
+	if approved.Status != "approved" || approved.Approval == nil || len(approved.History) != 3 {
+		t.Fatalf("approved review = %+v", approved)
+	}
+	recorded, err := store.GetReview(ctx, "shop-one", candidate.SHA256)
+	if err != nil || recorded.Status != "approved" || len(recorded.History) != 3 ||
+		recorded.History[0].Reason != "Provenance requires clarification" ||
+		recorded.History[2].ActorID != "staff-3" {
+		t.Fatalf("recorded review = %+v, error %v", recorded, err)
+	}
+	if _, err := store.Decide(ctx, "shop-one", candidate.SHA256, "staff-4", "owner", DecisionReject, "withdraw approval"); !errors.Is(err, ErrCandidateDecisionConflict) {
+		t.Fatalf("rejection after approval error = %v, want %v", err, ErrCandidateDecisionConflict)
 	}
 }
