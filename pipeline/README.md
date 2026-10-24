@@ -276,9 +276,13 @@ pas silencieusement au-delà d'une entrée corrompue. L'historique conservé res
 local, modifiable par un administrateur système et sans coordination
 multi-instance. Le nettoyage des candidats reste manuel tant qu'un ordonnanceur
 externe n'exécute pas quotidiennement la commande. Le quota reste local et
-limité ; ne pas activer ce stockage pour la production avant revue de sécurité
-indépendante et contrôles opérationnels. L'ingestion PHP ZIP de
-`/v1/admin/modules/imports` reste entièrement distincte.
+limité. Une revue de sécurité indépendante en lecture seule du parcours des
+packages signés a été effectuée le 24 octobre 2026 et consignée à 10:49:38
+(UTC+02:00) sur `df7a6a7` ; aucune vulnérabilité exploitable n'a été identifiée
+dans le périmètre examiné. La planification effective de la purge et le
+comportement multi-instance n'ont pas été vérifiés ; cette revue ne vaut pas
+autorisation de production. L'ingestion PHP ZIP de
+`/v1/admin/modules/imports` reste entièrement distincte et hors de cette revue.
 
 Les parcours `PublishModuleBuild`, `PublishModuleBuildOnly` et l'installation
 PrestaShop passent tous par `storeBuildArtifact`, qui appelle

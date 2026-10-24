@@ -66,6 +66,12 @@ pas une preuve que l'arbre de travail est propre.
   ligne d'historique consultable dans Modules sans action de réouverture.
   Candidats `pending`/`approved` non purgés automatiquement. Quota multi-instance,
   sauvegarde et restauration restent à traiter.
+- Revue de sécurité indépendante en lecture seule du parcours packages signés,
+  sur `df7a6a7` : effectuée le 24 octobre 2026, résultat consigné à 10:49:38
+  (UTC+02:00). Aucun problème exploitable identifié sur ZIP/signature, accès
+  tenant, stockage, décisions, purge et historique conservé. La planification
+  effective de la purge et le multi-instance n'ont pas été vérifiés ; ne pas
+  interpréter ce résultat comme une autorisation de production.
 - QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
   Selfnamed lié à son IR et le validateur de package ; le chemin de publication
   rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP

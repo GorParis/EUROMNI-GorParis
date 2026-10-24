@@ -169,8 +169,11 @@ leur historique local. Les candidats en attente ou approuvés ne sont jamais
 supprimés par cette commande. C'est une exécution ponctuelle : planifier son
 lancement quotidien avec `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR` et le même
 compte/répertoire privé que le CMS. Le quota reste local et non coordonné entre
-instances ; la revue de sécurité indépendante et les contrôles opérationnels
-restent préalables à un usage de production.
+instances. Une revue de sécurité indépendante du parcours de packages signés
+a été effectuée le 24 octobre 2026 et consignée à 10:49:38 (UTC+02:00) sur
+`df7a6a7` ; aucune vulnérabilité exploitable n'a été identifiée dans le
+périmètre examiné. L'ordonnancement opérationnel et le multi-instance restent
+non vérifiés et à traiter avant tout usage de production.
 
 Cette documentation décrit le paquet autonome, mais l'installation comme
 service Windows ou unité systemd, la rotation des secrets et une politique de

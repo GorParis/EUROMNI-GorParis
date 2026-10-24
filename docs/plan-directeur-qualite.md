@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.32 |
+| Version | 3.33 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-24 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -95,8 +95,21 @@ attribué ; cette trace n'est pas inviolable contre un administrateur système.
 Aucune transition ne publie ou ne promeut. L'inventaire admin paginé ne revalide
 pas les archives, ce que fait la lecture détaillée avant décision. L'interface
 Modules expose l'inventaire, le détail revalidé, l'approbation, le rejet et la
-réouverture. Rétention, nettoyage et passerelle de publication restent à
-implémenter.
+réouverture. La rétention des rejets et la conservation de l'historique sont
+implémentées ; la passerelle de publication reste à implémenter.
+
+### Revue de sécurité indépendante — packages signés
+
+Une revue indépendante en lecture seule du parcours des packages signés a été
+effectuée le 24 octobre 2026 ; son résultat a été consigné à
+**10:49:38 (UTC+02:00, Europe/Paris)**. Périmètre examiné sur le commit
+`df7a6a7` : réception et validation ZIP/signature, autorisation et isolation
+par boutique, stockage des candidats, transitions et historique des décisions,
+purge des rejets après 90 jours et API/interface de consultation de l'historique
+conservé. **Aucune vulnérabilité exploitable n'a été identifiée dans ce
+périmètre.** La planification opérationnelle de la purge et le comportement
+multi-instance n'ont pas été vérifiés ; ce résultat ne vaut ni approbation de
+production ni revue des modifications locales exclues du commit.
 
 Avant toute reprise de code, vérifier l’état réel de l’arbre de travail et
 l’historique Git. Les notes de version précédentes ne permettent pas de déduire
@@ -332,3 +345,4 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.30 | 2026-10-24 | Interface Modules pour consulter les candidats signés, ouvrir le détail revalidé et approuver explicitement avec confirmation. Pagination, états accessibles, erreurs explicites et invalidation des réponses en changement de boutique ; aucun chemin de publication/activation ajouté. `go test ./...`, `go vet ./...`, `go test ./frontend`, `node --check frontend/admin/admin.js` et `git diff --check` réussis sous Linux. Rejet, rétention, coordination multi-instance et revue sécurité indépendante restent ouverts. | En attente du responsable qualité |
 | 3.31 | 2026-10-24 | Décisions de package étendues au rejet avec motif obligatoire et à la réouverture d'un candidat rejeté. Historique local borné (256 décisions / 256 KiB), état vérifié, attribution actor/rôle/UTC ; transitions invalides refusées et détail/API exposent l'historique. L'API ne modifie pas les événements existants, mais la trace locale n'est pas inviolable contre un administrateur système et ne coordonne pas les instances. Admin permet rejeter/rouvrir avec confirmation. Tests de transitions API/store et de conservation d'historique ajoutés. Validation complète, vet, frontend et syntaxe JS réussis sous Linux ; CI Windows et revue indépendante à venir. | En attente du responsable qualité |
 | 3.32 | 2026-10-24 | Politique de rétention validée par le responsable produit : purger après 90 jours le payload des candidats dont le dernier état est rejeté ; préserver pending/approved et le sidecar des décisions. `PurgeRejectedBefore` vérifie le digest avant suppression ; la liste et le détail exposent l'historique conservé avec `payload_available:false`, sans action de réouverture. `cmd/build-package-candidate-reconciler` fournit le passage ponctuel à planifier quotidiennement et est inclus dans les paquets Linux/Windows. Tests couvrent expiration, rejeu après réouverture, états conservés, historique consultable et annulation. `go test ./...`, `go vet ./...`, `go test ./frontend`, `node --check frontend/admin/admin.js`, compilation du reconciler et `git diff --check` réussis sous Linux ; ordonnanceur externe, CI Windows, multi-instance et revue de sécurité indépendante restent à faire. | En attente du responsable qualité |
+| 3.33 | 2026-10-24, 10:49:38 UTC+02:00 | Revue de sécurité indépendante en lecture seule du parcours des packages signés, sur `df7a6a7` : ZIP/signature, authentification et scope boutique, stockage, décisions, purge et historique retenu. Aucun problème de sécurité exploitable identifié dans le périmètre. L'ordonnancement opérationnel de la purge et le multi-instance n'ont pas été vérifiés ; aucune approbation de production n'en découle. | Résultat à examiner par le responsable qualité |
