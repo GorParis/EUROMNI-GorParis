@@ -105,7 +105,7 @@ $shipping = new WC_Order_Item_Shipping();
 $shipping->set_method_title( 'Synthetic Selfnamed delivery' );
 $shipping->set_method_id( 'selfnamed_shipping' );
 $shipping->set_total( '3.00' );
-$shipping->add_meta_data( '_selfnamed_method_shipping_group', 'pilot-eu-standard', true );
+$shipping->add_meta_data( '_selfnamed_method_shipping_group', 'pilot-fr-standard', true );
 $order->add_item( $shipping );
 $order->calculate_totals( false );
 $order->save();
@@ -321,9 +321,8 @@ function pilot_assert_shipping_behavior(): void {
 	$shipping_zones = ( new Selfnamed\Model\Api() )->get_all_shipping_zones();
 	pilot_assert(
 		! $shipping_zones->error &&
-		1 === count( $shipping_zones->data ) &&
-		array( 'FR', 'BE' ) === $shipping_zones->data[0]->countries,
-		'Selfnamed mock shipping zones were not returned with the expected countries.'
+		6 === count( $shipping_zones->data ),
+		'Selfnamed mock shipping zones did not return all six synthetic country/service scenarios.'
 	);
 
 	$rates = $shipping_method->get_rates_for_package( $selfnamed_package );
@@ -332,11 +331,29 @@ function pilot_assert_shipping_behavior(): void {
 		$rate instanceof WC_Shipping_Rate,
 		sprintf( 'No Selfnamed rate was returned for the synthetic FR package (%s).', wp_json_encode( $rates ) )
 	);
-	pilot_assert( '7.25' === $rate->get_cost(), '1,002 g package did not select the expected weight-band price.' );
+	pilot_assert( '6.15' === $rate->get_cost(), '1,002 g package did not select the expected synthetic standard rate.' );
+	$express_rate = $rates['selfnamed_shipping_72'] ?? null;
 	pilot_assert(
-		'PILOT-EU-STANDARD' === $rate->get_meta_data()['_selfnamed_method_shipping_group'],
+		$express_rate instanceof WC_Shipping_Rate && '14.8' === $express_rate->get_cost(),
+		'France package did not expose the matching synthetic express service.'
+	);
+	pilot_assert(
+		'PILOT-FR-STANDARD' === $rate->get_meta_data()['_selfnamed_method_shipping_group'],
 		'Selfnamed shipping group was not retained on the rate.'
 	);
+	pilot_assert_shipping_scenario( $shipping_method, 'FR', 150, array( 71 => '4.1', 72 => '12.1' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'FR', 350, array( 71 => '4.75', 72 => '12.1' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'FR', 750, array( 71 => '5.2', 72 => '13.25' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'FR', 1500, array( 71 => '6.15', 72 => '14.8' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'FR', 2500, array( 71 => '7.4', 72 => '17.1' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'FR', 4000, array( 71 => '8.95', 72 => '22.3' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'FR', 7500, array( 71 => '12.5', 72 => '35' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'FR', 12000, array( 71 => '18.2', 72 => '62' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'BE', 750, array( 71 => '5.2' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'DE', 750, array( 73 => '6.8' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'GB', 1500, array( 74 => '7.2' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'US', 750, array( 75 => '10.5', 76 => '26.8' ) );
+	pilot_assert_shipping_scenario( $shipping_method, 'US', 4000, array( 75 => '14.7' ) );
 
 	$existing_products = wc_get_products(
 		array(
@@ -369,13 +386,44 @@ function pilot_assert_shipping_behavior(): void {
 	$boundary_rates = $shipping_method->get_rates_for_package( $boundary_package );
 	$boundary_rate = $boundary_rates['selfnamed_shipping_71'] ?? null;
 	pilot_assert( $boundary_rate instanceof WC_Shipping_Rate, 'No Selfnamed rate was returned at the 1,000 g boundary.' );
-	pilot_assert( '4.5' === $boundary_rate->get_cost(), '1,000 g package did not match the inclusive lower shipping band.' );
+	pilot_assert( '5.2' === $boundary_rate->get_cost(), '1,000 g package did not match the synthetic 501–1,000 g shipping band.' );
 
-	$unsupported_package = $boundary_package;
-	$unsupported_package['destination']['country'] = 'US';
+	pilot_assert_shipping_scenario( $shipping_method, 'CA', 750, array() );
+	pilot_assert_shipping_scenario( $shipping_method, 'FR', 16000, array() );
+}
+
+function pilot_assert_shipping_scenario( Selfnamed\Model\Shipping_Method $shipping_method, string $country, int $weight_grams, array $expected_costs ): void {
+	static $scenario_product_id = 100000;
+	$product = new WC_Product_Simple();
+	$product->set_name( sprintf( 'Synthetic %s %d g shipping scenario', $country, $weight_grams ) );
+	$product->set_weight( number_format( $weight_grams / 1000, 3, '.', '' ) );
+	$package = array(
+		'contents' => array(
+			'scenario' => array(
+				'product_id' => $scenario_product_id++,
+				'data'       => $product,
+				'quantity'   => 1,
+				'line_total' => 10.00,
+			),
+		),
+		'destination' => array( 'country' => $country ),
+	);
+	$rates = $shipping_method->get_rates_for_package( $package );
+	$actual_costs = array();
+	foreach ( $rates as $rate ) {
+		$actual_costs[ (int) substr( $rate->get_id(), strrpos( $rate->get_id(), '_' ) + 1 ) ] = (string) $rate->get_cost();
+	}
+	ksort( $actual_costs );
+	ksort( $expected_costs );
 	pilot_assert(
-		0 === count( $shipping_method->get_rates_for_package( $unsupported_package ) ),
-		'Selfnamed returned a shipping rate for an unsupported destination.'
+		$expected_costs === $actual_costs,
+		sprintf(
+			'Shipping scenario %s/%d g returned %s, expected %s.',
+			$country,
+			$weight_grams,
+			wp_json_encode( $actual_costs ),
+			wp_json_encode( $expected_costs )
+		)
 	);
 }
 

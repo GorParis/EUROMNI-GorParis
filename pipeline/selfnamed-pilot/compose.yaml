@@ -67,6 +67,7 @@ services:
     volumes:
       - ./mock_api.py:/app/mock_api.py:ro,z
       - ./catalog-products.json:/app/catalog-products.json:ro,z
+      - ./shipping-zones.json:/app/shipping-zones.json:ro,z
     read_only: true
     cap_drop:
       - ALL

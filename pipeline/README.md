@@ -291,10 +291,18 @@ volume et stock), les tags, le refus HTTP 401, le réimport sans doublon, puis
 les appels de commande et le groupe de livraison ; les courriels sont
 désactivés. Il vérifie aussi les notifications `PRODUCT`, `ORDER` (`SHIPPED`
 et `CANCELLED`) et `STORE`, le rejet d'un token de callback invalide, la
-séparation d'un panier mixte et les tarifs de livraison sur 1 000 g, 1 002 g
-et une destination non desservie. Le cas de 1 001 g n'obtient pas de tarif
-avec le calcul flottant kg→g du plugin 2.0.19 ; le scénario supérieur utilise
-1 002 g et cette limite reste à traiter. Le test oracle Go est
+séparation d'un panier mixte et six zones synthétiques pour FR/BE, DE, GB et US,
+avec des options standard/express et des tranches allant de 0 à 15 kg. Les cas
+exécutés couvrent huit tranches françaises, plusieurs destinations, deux
+options simultanées aux États-Unis, une limite de service express, un poids
+hors barème et un pays non desservi. La matrice versionnée est
+[`shipping-zones.json`](selfnamed-pilot/shipping-zones.json) ; sa structure
+s'inspire des scénarios de l'article d'aide Selfnamed, mais tous ses tarifs sont
+fictifs et ne représentent ni les prix publics ni ceux d'une boutique réelle
+([article de référence](https://help.selfnamed.com/en/articles/10009962-what-is-selfnamed-s-shipping-time-and-costs)).
+Le cas de 1 001 g n'obtient pas de tarif avec le calcul flottant kg→g du plugin
+2.0.19 ; le test inclut le poids 1 000 g et une valeur intérieure de tranche à
+1 002 g, et cette limite reste à traiter. Le test oracle Go est
 `TestSelfnamedCatalogProductMappingCharacterization`. Les fixtures n’ont pas
 d’image afin d’exclure les téléchargements.
 La base et les sources temporaires sont supprimées au nettoyage. Aucun trafic

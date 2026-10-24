@@ -225,11 +225,21 @@ livraison ; le test confirme les champs attendus, l’identifiant et le statut
 retournés, ainsi que l’absence de doublon lors d’une deuxième synchronisation.
 Le pilote couvre maintenant aussi les notifications `PRODUCT`, `ORDER`
 (`SHIPPED`, `CANCELLED`) et `STORE`, le rejet d’un token de callback invalide,
-la séparation d’un panier mixte, les tarifs à 1 000 g et 1 002 g et l’absence
-de tarif pour une destination non desservie. Le token du profil retourné par
-le mock correspond au token synthétique utilisé pour le callback. Le scénario
-à 1 001 g n’obtient pas de tarif avec le calcul flottant kg→g du plugin 2.0.19 ;
-ce cas de limite est documenté et le test de tranche supérieure utilise 1 002 g.
+la séparation d’un panier mixte et les calculs de livraison en WordPress /
+WooCommerce pour six zones synthétiques : FR/BE, DE, GB et US, avec des options
+standard et express et des tranches de poids jusqu’à 15 kg. Les assertions
+couvrent huit tranches françaises, des pays avec différentes offres, deux
+options simultanées aux États-Unis, la limite supérieure d’une offre express,
+un poids hors barème et un pays non desservi. La matrice du mock est
+[`shipping-zones.json`](../pipeline/selfnamed-pilot/shipping-zones.json) ;
+elle reprend l’organisation par pays, service et poids de l’[article d’aide
+Selfnamed](https://help.selfnamed.com/en/articles/10009962-what-is-selfnamed-s-shipping-time-and-costs)
+comme exemple de scénarios, mais les montants sont fictifs et ne représentent
+pas les prix publics ou une boutique réelle. Le token du profil retourné par le
+mock correspond au token synthétique utilisé pour le callback.
+Le scénario à 1 001 g n’obtient pas de tarif avec le calcul flottant kg→g du
+plugin 2.0.19 ; le test confirme 1 000 g et 1 002 g, et cette limite reste à
+traiter.
 C’est une preuve d’intégration native WordPress/WooCommerce, pas une importation
 ou traduction EUROMNI, pas un test Wasm et pas une véritable commande,
 expédition ou synchronisation Selfnamed. Toute expérience ultérieure avec des

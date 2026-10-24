@@ -1,0 +1,74 @@
+[
+  {
+    "id": 71,
+    "shippingGroup": "PILOT-FR-STANDARD",
+    "countries": ["FR", "BE"],
+    "rates": [
+      {"totalWeightFrom": 0, "totalWeightTo": 224, "price": 4.1},
+      {"totalWeightFrom": 225, "totalWeightTo": 500, "price": 4.75},
+      {"totalWeightFrom": 501, "totalWeightTo": 1000, "price": 5.2},
+      {"totalWeightFrom": 1001, "totalWeightTo": 2000, "price": 6.15},
+      {"totalWeightFrom": 2001, "totalWeightTo": 3000, "price": 7.4},
+      {"totalWeightFrom": 3001, "totalWeightTo": 5000, "price": 8.95},
+      {"totalWeightFrom": 5001, "totalWeightTo": 10000, "price": 12.5},
+      {"totalWeightFrom": 10001, "totalWeightTo": 15000, "price": 18.2}
+    ]
+  },
+  {
+    "id": 72,
+    "shippingGroup": "PILOT-FR-EXPRESS",
+    "countries": ["FR"],
+    "rates": [
+      {"totalWeightFrom": 0, "totalWeightTo": 500, "price": 12.1},
+      {"totalWeightFrom": 501, "totalWeightTo": 1000, "price": 13.25},
+      {"totalWeightFrom": 1001, "totalWeightTo": 2000, "price": 14.8},
+      {"totalWeightFrom": 2001, "totalWeightTo": 3000, "price": 17.1},
+      {"totalWeightFrom": 3001, "totalWeightTo": 5000, "price": 22.3},
+      {"totalWeightFrom": 5001, "totalWeightTo": 10000, "price": 35},
+      {"totalWeightFrom": 10001, "totalWeightTo": 15000, "price": 62}
+    ]
+  },
+  {
+    "id": 73,
+    "shippingGroup": "PILOT-DE-STANDARD",
+    "countries": ["DE"],
+    "rates": [
+      {"totalWeightFrom": 0, "totalWeightTo": 500, "price": 5.4},
+      {"totalWeightFrom": 501, "totalWeightTo": 2000, "price": 6.8},
+      {"totalWeightFrom": 2001, "totalWeightTo": 5000, "price": 9.3},
+      {"totalWeightFrom": 5001, "totalWeightTo": 15000, "price": 15.6}
+    ]
+  },
+  {
+    "id": 74,
+    "shippingGroup": "PILOT-GB-STANDARD",
+    "countries": ["GB"],
+    "rates": [
+      {"totalWeightFrom": 0, "totalWeightTo": 500, "price": 5.1},
+      {"totalWeightFrom": 501, "totalWeightTo": 2000, "price": 7.2},
+      {"totalWeightFrom": 2001, "totalWeightTo": 5000, "price": 10.4},
+      {"totalWeightFrom": 5001, "totalWeightTo": 15000, "price": 17.9}
+    ]
+  },
+  {
+    "id": 75,
+    "shippingGroup": "PILOT-US-STANDARD",
+    "countries": ["US"],
+    "rates": [
+      {"totalWeightFrom": 0, "totalWeightTo": 500, "price": 8.2},
+      {"totalWeightFrom": 501, "totalWeightTo": 2000, "price": 10.5},
+      {"totalWeightFrom": 2001, "totalWeightTo": 5000, "price": 14.7},
+      {"totalWeightFrom": 5001, "totalWeightTo": 15000, "price": 24.6}
+    ]
+  },
+  {
+    "id": 76,
+    "shippingGroup": "PILOT-US-EXPRESS",
+    "countries": ["US"],
+    "rates": [
+      {"totalWeightFrom": 0, "totalWeightTo": 500, "price": 19.5},
+      {"totalWeightFrom": 501, "totalWeightTo": 2000, "price": 26.8},
+      {"totalWeightFrom": 2001, "totalWeightTo": 3000, "price": 39.2}
+    ]
+  }
+]

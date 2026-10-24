@@ -7,6 +7,8 @@ from urllib.parse import parse_qs, urlparse
 TEST_TOKEN = "EUROMNI_LOCAL_FAKE_TOKEN_NOT_A_CREDENTIAL"
 with open("/app/catalog-products.json", encoding="utf-8") as fixture_file:
     catalog_products = json.load(fixture_file)
+with open("/app/shipping-zones.json", encoding="utf-8") as fixture_file:
+    shipping_zones = json.load(fixture_file)
 state = {
     "product_lookups": 0,
     "product_lookup_ids": {},
@@ -69,22 +71,12 @@ class Handler(BaseHTTPRequestHandler):
             state["shipping_zone_lookups"] += 1
             self.send_json(
                 200,
-                [
-                    {
-                        "id": 71,
-                        "shippingGroup": "PILOT-EU-STANDARD",
-                        "countries": ["FR", "BE"],
-                        "rates": [
-                            {"totalWeightFrom": 0, "totalWeightTo": 1000, "price": 4.5},
-                            {"totalWeightFrom": 1001, "totalWeightTo": 5000, "price": 7.25},
-                        ],
-                    }
-                ],
+                shipping_zones,
                 {
                     "X-Pagination-Current-Page": "1",
                     "X-Pagination-Page-Count": "1",
                     "X-Pagination-Total-Count": "1",
-                    "X-Pagination-Per-Page": "50",
+                    "X-Pagination-Per-Page": str(len(shipping_zones)),
                 },
             )
             return
@@ -212,7 +204,7 @@ class Handler(BaseHTTPRequestHandler):
         state["payload_valid"] = (
             field("orderItems[0][productId]") == "842001"
             and field("orderItems[0][quantity]") == "2"
-            and field("shippingGroup") == "pilot-eu-standard"
+            and field("shippingGroup") == "pilot-fr-standard"
             and field("invoice[buyer][firstName]") == "Synthetic"
             and field("invoice[buyer][lastName]") == "Buyer"
             and field("invoice[buyer][email]") == "buyer@example.invalid"
