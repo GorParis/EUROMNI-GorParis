@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  unit:
-    name: Vet and unit tests on ${{ matrix.os }}
+  go-tests:
+    name: Go tests on ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +48,22 @@ jobs:
 
       - name: Unit tests
         run: go test -count=1 ./...
+
+      - name: Install PostgreSQL 16 client from PGDG
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | gpg --dearmor \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-16
+
+      - name: PostgreSQL integration tests
+        run: go test -p 1 -tags=integration -count=1 ./...
 
   wasm-toolchain-spike:
     name: Rust guest on ${{ matrix.os }}
