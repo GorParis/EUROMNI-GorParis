@@ -1,8 +1,14 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,6 +72,58 @@ func TestModuleArchiveQuarantineIsOptInAndUsesPrivateStore(t *testing.T) {
 	t.Setenv("EUROMNI_QUARANTINE_DIR", filepath.Join(t.TempDir(), "quarantine"))
 	if err := configureModuleArchiveQuarantine(); err != nil {
 		t.Fatalf("configure module archive quarantine: %v", err)
+	}
+}
+
+func TestTrustedBuildPackageKeysLoadFromExplicitFile(t *testing.T) {
+	t.Cleanup(func() { api.SetTrustedBuildPackageKeys(nil) })
+	t.Setenv("EUROMNI_BUILD_TRUST_FILE", "")
+	if err := configureTrustedBuildPackageKeys(); err != nil {
+		t.Fatalf("disable trusted build keys: %v", err)
+	}
+	if keys := api.TrustedBuildPackageKeys(); len(keys) != 0 {
+		t.Fatalf("trusted key count without configuration = %d, want 0", len(keys))
+	}
+
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyID := fmt.Sprintf("%x", sha256.Sum256(publicKey))
+	document := fmt.Sprintf(
+		`{"version":"euromni.trusted-build-keys.v1","keys":[{"key_id":%q,"public_key":%q}]}`,
+		keyID, base64.StdEncoding.EncodeToString(publicKey),
+	)
+	path := filepath.Join(t.TempDir(), "trusted-keys.json")
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EUROMNI_BUILD_TRUST_FILE", path)
+	if err := configureTrustedBuildPackageKeys(); err != nil {
+		t.Fatalf("configure trusted build keys: %v", err)
+	}
+	if keys := api.TrustedBuildPackageKeys(); len(keys) != 1 || string(keys[keyID]) != string(publicKey) {
+		t.Fatalf("loaded trusted keys = %v, want configured key %q", len(keys), keyID)
+	}
+
+	t.Setenv("EUROMNI_BUILD_TRUST_FILE", filepath.Join(t.TempDir(), "missing.json"))
+	if err := configureTrustedBuildPackageKeys(); err == nil {
+		t.Fatal("configureTrustedBuildPackageKeys() accepted a missing trust file")
+	}
+	if keys := api.TrustedBuildPackageKeys(); len(keys) != 0 {
+		t.Fatalf("trusted key count after invalid configuration = %d, want 0", len(keys))
+	}
+}
+
+func TestBuildPackageCandidateStorageIsOptIn(t *testing.T) {
+	t.Cleanup(func() { api.SetModuleBuildPackageCandidates(nil) })
+	t.Setenv("EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR", "")
+	if err := configureBuildPackageCandidates(); err != nil {
+		t.Fatalf("disable build package candidate storage: %v", err)
+	}
+	t.Setenv("EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR", filepath.Join(t.TempDir(), "candidates"))
+	if err := configureBuildPackageCandidates(); err != nil {
+		t.Fatalf("configure build package candidate storage: %v", err)
 	}
 }
 

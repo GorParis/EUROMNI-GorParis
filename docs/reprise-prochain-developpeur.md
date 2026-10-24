@@ -22,17 +22,39 @@ pas une preuve que l'arbre de travail est propre.
   `pipeline.ValidateBuildPackage` vérifie leur cohérence, les versions
   approuvées et l'interface Wasm (import `euromni.call`, exports `memory`/`run`,
   signatures et limites mémoire). Les parcours existants de publication et
-  d'installation passent par ce validateur avant `artifact.Store.Put`. Aucun
-  workflow de réception/distribution n'est encore branché.
+  d'installation passent par ce validateur avant `artifact.Store.Put`. La
+  réception de packages signés et leur approbation humaine backend existent
+  maintenant ; elles ne déclenchent toujours aucune publication ni promotion.
 - Les hashes prouvent l'intégrité, pas l'identité de l'éditeur. Le prototype
   Ed25519 approuvé signe les digests exacts des trois blobs via une enveloppe
   détachée ; `ValidateSignedBuildPackage` exige une clé publique explicitement
   fournie hors package. La clé privée vient du signataire et n'est jamais
-  stockée par ces helpers. Cette primitive n'est reliée ni à l'import ZIP, ni
-  à la publication, ni à la promotion ; elle ne constitue pas une politique de
-  production. Provisionnement/rotation/révocation des clés, limites de
-  transfert et politique d'approbation restent ouverts ; aucun choix n'est
-  fait entre catalogue central et builds privés locaux.
+  stockée par ces helpers. Le 24 octobre 2026, le choix d'orientation est
+  devenu hybride : les builds locaux restent possibles et un catalogue de
+  packages signés est facultatif. La base de politique retenue est : signature
+  par l'éditeur du module, clés de confiance configurées explicitement pour
+  chaque installation, validation des packages reçus avant leur enregistrement
+  comme candidats et promotion humaine explicite ; la signature d'un build
+  local n'est pas obligatoire. Cette politique n'est pas encore opérationnelle :
+  protection des clés, rotation/retrait, identité affichée, durée de validité
+  et rôles autorisés à promouvoir restent à spécifier. Le socle comprend
+  maintenant
+  `pipeline.LoadTrustedBuildPackageKeys(path)`, qui lit un JSON versionné strict
+  (64 KiB maximum, 256 clés maximum, Base64 canonique, ID SHA-256 vérifié,
+  doublons refusés). Le CMS le charge au démarrage via
+  `EUROMNI_BUILD_TRUST_FILE` ; le fichier configuré invalide fait échouer le
+  démarrage.
+- La route admin `POST /v1/admin/modules/build-packages` reçoit un ZIP signé
+  exact sous 64 MiB, vérifie la confiance et le package sans extraction, puis
+  stocke l'archive originale comme candidat dans un FileStore privé par boutique
+  (`EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`, quota provisoire de 256 MiB par
+  boutique). `GET /v1/admin/modules/build-packages/candidates/{packageSHA256}`
+  permet de relire le candidat en revalidant signature et contenu ; `POST
+  /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval` enregistre une
+  approbation immuable de `owner` ou `admin`, attribuée à l'acteur, son rôle et
+  l'heure UTC. L'approbation ne crée pas de build publié et n'installe/promeut
+  rien. Inventaire, interface de revue, rejet, téléchargement, suppression,
+  rétention et quotas multi-instance restent à traiter.
 - QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
   Selfnamed lié à son IR et le validateur de package ; le chemin de publication
   rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP
@@ -160,20 +182,21 @@ pas une preuve que l'arbre de travail est propre.
 
 ## Prochaines actions recommandées
 
-1. Qualifier la primitive Ed25519 avec tests complets, CI Linux/Windows et
-    revue ciblée de l'implémentation avant tout usage opérationnel.
-2. Décider le périmètre d'une politique de production : provisionnement,
-    rotation/révocation et administration des clés de confiance, signataires,
-    durée de validité, approbation avant promotion et limites de transfert.
-    L'approbation du prototype ne vaut pas approbation de cette politique.
-3. Avant de construire un récepteur, décider les limites de taille/transfert
-    et l'endroit où la liste de clés de confiance est administrée.
-    `ValidateBuildPackage` protège les publications internes, mais l'import ZIP
-    de quarantaine n'accepte pas encore le package Wasm distribuable ; le
-    vérificateur de signature n'est pas relié à un flux d'import ou de promotion.
-4. Garder le contrat de package neutre quant au mode de livraison jusqu'à une
-    décision explicite entre catalogue central et traitement local ; ne pas
-    présenter un hash seul comme une preuve d'authenticité.
+1. Qualifier la primitive Ed25519 et le récepteur ZIP avec tests complets, CI
+   Linux/Windows et revue de sécurité indépendante avant tout usage de production.
+2. Pour les candidats reçus, compléter l'inventaire et l'interface de revue
+   admin, puis définir les décisions de rejet et la rétention avant toute
+   passerelle vers le registre global de builds. L'approbation backend existante
+   ne publie ni ne promeut ; le quota local de stockage est provisoire et non
+   coordonné multi-instance.
+3. Garder les builds locaux disponibles et le catalogue facultatif. Une
+   signature prouve l'origine cryptographique seulement, jamais l'innocuité ;
+   tout passage futur au registre puis toute promotion doivent rester distincts
+   et explicites.
+4. Documenter et tester le déploiement de `EUROMNI_BUILD_TRUST_FILE` et
+   `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`, notamment les droits d'accès.
+   Compléter la politique : rotation/retrait, identité affichée, validité et
+   rôles autorisés à promouvoir.
 5. Obtenir une revue de sécurité indépendante du validateur ZIP, de l'endpoint
    d'upload et du stockage en quarantaine ; traiter les findings avant toute
    activation hors environnement de test. Le contrôle local du 21 octobre était
@@ -202,10 +225,15 @@ pas une preuve que l'arbre de travail est propre.
 > `pipeline/README.md`. Vérifie ensuite `git status --short --branch`, le dernier
 > commit et l'état du run GitHub Actions correspondant. Ne touche pas à
 > `.vscode/` ni aux modifications locales préexistantes non liées. Le contrat
-> prototype de package manifeste/IR/Wasm est validé avant le stockage des builds
-> publiés ; consulte les prochaines actions ci-dessus, notamment l'absence de
-> réception de packages distribuables et les décisions d'authenticité encore
-> ouvertes.
+> prototype manifeste/IR/Wasm et la réception ZIP signée sont implémentés :
+> `EUROMNI_BUILD_TRUST_FILE` configure la confiance, et
+> `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR` active le staging privé par boutique.
+> `GET .../candidates/{packageSHA256}` fournit les métadonnées du candidat
+> revalidé et `POST .../candidates/{packageSHA256}/approval` enregistre l'approbation auditée d'un
+> owner/admin, sans publier, installer ni promouvoir. Consulte les prochaines
+> actions pour l'inventaire UI, le rejet, la rétention, les quotas multi-instance
+> et la revue sécurité indépendante. L'orientation
+> reste hybride : build local possible, catalogue signé facultatif.
 > QP-03 (quarantaine ZIP) est un chantier distinct. Ne lance aucune traduction
 > PHP générale avant les prérequis QP-04/05. Exécute les validations pertinentes
 > et mets à jour le suivi avant tout commit/push non expressément demandé.

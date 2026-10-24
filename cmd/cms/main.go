@@ -11,7 +11,9 @@ import (
 	"euromni/internal/api"
 	"euromni/internal/artifact"
 	"euromni/internal/dbdialect"
+	"euromni/internal/packagecandidate"
 	"euromni/internal/payment"
+	"euromni/internal/pipeline"
 	"euromni/internal/quarantine"
 	"euromni/internal/store"
 	"euromni/internal/supplier/selfnamed"
@@ -40,6 +42,12 @@ func main() {
 	}
 	defer closeWidget()
 	if err := configureModuleArchiveQuarantine(); err != nil {
+		log.Fatal(err)
+	}
+	if err := configureTrustedBuildPackageKeys(); err != nil {
+		log.Fatal(err)
+	}
+	if err := configureBuildPackageCandidates(); err != nil {
 		log.Fatal(err)
 	}
 	closePolicy, err := configureShippingPricingPolicy(reader)
@@ -78,6 +86,34 @@ func configureModuleArchiveQuarantine() error {
 		return fmt.Errorf("configure module archive quarantine: %w", err)
 	}
 	api.SetModuleArchiveQuarantine(quarantineStore)
+	return nil
+}
+
+func configureTrustedBuildPackageKeys() error {
+	api.SetTrustedBuildPackageKeys(nil)
+	path := strings.TrimSpace(os.Getenv("EUROMNI_BUILD_TRUST_FILE"))
+	if path == "" {
+		return nil
+	}
+	keys, err := pipeline.LoadTrustedBuildPackageKeys(path)
+	if err != nil {
+		return fmt.Errorf("configure trusted build package keys: %w", err)
+	}
+	api.SetTrustedBuildPackageKeys(keys)
+	return nil
+}
+
+func configureBuildPackageCandidates() error {
+	api.SetModuleBuildPackageCandidates(nil)
+	root := strings.TrimSpace(os.Getenv("EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR"))
+	if root == "" {
+		return nil
+	}
+	candidates, err := packagecandidate.NewFileStore(root)
+	if err != nil {
+		return fmt.Errorf("configure build package candidate storage: %w", err)
+	}
+	api.SetModuleBuildPackageCandidates(candidates)
 	return nil
 }
 

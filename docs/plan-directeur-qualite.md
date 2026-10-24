@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.23 |
+| Version | 3.28 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-24 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -60,8 +60,38 @@ reste ouvert sur le processus de build/promotion métier.
 Un prototype Ed25519 détaché des trois digests est implémenté : la clé publique
 de confiance est injectée hors package par l’appelant. Ce périmètre a été
 approuvé pour le prototype le 24 octobre 2026 ; ce n’est pas une politique de
-production. La gestion durable des clés, les responsabilités de signature et
-la politique d’approbation restent à décider.
+production. La base de politique de confiance est décidée ci-dessous ; son
+administration opérationnelle et les règles détaillées restent à spécifier.
+
+Le 24 octobre 2026, l'orientation de distribution hybride a été retenue :
+les builds locaux restent possibles et un catalogue central de packages signés
+est facultatif. Ce choix ne rend pas le CMS dépendant d'un service central et
+est indépendant de sa disponibilité.
+
+La base de politique de confiance a été décidée : l'éditeur signe ses propres
+packages ; chaque installation configure explicitement ses clés de confiance ;
+un package reçu, après vérification cryptographique et structurelle, reste un
+candidat ; sa promotion exige une action humaine explicite par un rôle autorisé.
+La signature d'un build local n'est pas obligatoire. Cette décision produit
+n'autorise pas encore un déploiement opérationnel : le canal et la protection
+des clés, leur rotation/retrait, l'identité affichée et les rôles exacts de
+promotion restent à spécifier. Le prototype de réception utilise un ZIP exact
+plafonné à 64 MiB et un staging séparé de 256 MiB par boutique ; ces plafonds
+provisoires ne qualifient pas le déploiement de production.
+
+Le lecteur `pipeline.LoadTrustedBuildPackageKeys(path)` établit le premier
+contrat de configuration de clés par installation : JSON versionné strict,
+taille maximale 64 KiB, maximum 256 clés, encodage Base64 canonique, ID égal à
+l'empreinte SHA-256 de la clé Ed25519 et rejet des doublons. Le CMS le charge
+au démarrage via `EUROMNI_BUILD_TRUST_FILE` et échoue explicitement si le
+fichier configuré est invalide. La route authentifiée de réception vérifie
+désormais le ZIP, la signature et le package, puis stocke l'archive comme
+candidat privé par boutique via `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`. Les routes
+de lecture par digest revalident le package ; l'approbation backend `owner` ou
+`admin` est attribuée et horodatée, immuable et distincte de la publication ou
+promotion. Aucun build publié ni pin n'est modifié. Inventaire, interface,
+décision de rejet, rétention, nettoyage et passerelle de publication restent à
+implémenter.
 
 Avant toute reprise de code, vérifier l’état réel de l’arbre de travail et
 l’historique Git. Les notes de version précédentes ne permettent pas de déduire
@@ -288,3 +318,8 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.21 | 2026-10-24 | QP-02/07 : `ValidateBuildPackage` est maintenant exécuté par les parcours de publication avant `artifact.Store.Put`; un module avec import Wasm additionnel est refusé sans stockage. `go test ./...`, `go vet ./...`, test de reproductibilité `-tags=wasmtoolchain`, intégrations PostgreSQL 16/Wasmtime ciblées et `git diff --check` passent localement sous Linux/amd64. Le run CI Go #76 du commit `60178f5` passe sur Linux/Windows, tests/vet et guest Rust ; le run #77 du commit `fe4e90b` passe également. Réception de package, authenticité et distribution restent hors périmètre. | En attente du responsable qualité |
 | 3.22 | 2026-10-24 | Cadrage de confiance sans choix de transport : proposition non approuvée de signature Ed25519 détachée sur les digests exacts du manifeste, de l’IR et du Wasm ; clés publiques identifiées par empreinte et approuvées hors package ; vérification distincte de la validation structurelle et de la promotion. Rotation, révocation, provisionnement, rôle des signataires, approbation métier, limites de transfert et décision catalogue central/import local restent ouverts. Aucun code de signature ajouté. | En attente du responsable qualité |
 | 3.23 | 2026-10-24 | Prototype Ed25519 détaché implémenté après approbation explicite du périmètre : message domain-separated contenant les trois SHA-256, enveloppe JSON canonique plafonnée à 4 KiB, ID de clé par empreinte, clé de confiance injectée hors package, pas d’horodatage/expiration ; tests d’altération, signature non fiable/malformée et package structurellement invalide. Aucun service de signature ni branchement import/publication/promotion ; gestion des clés et politique de production restent ouvertes. | En attente du responsable qualité |
+| 3.24 | 2026-10-24 | Orientation de distribution hybride retenue : builds locaux possibles et catalogue central signé facultatif. La prochaine tranche doit définir la politique minimale de confiance et les limites de transfert avant de relier le vérificateur à une réception de packages ; package reçu candidat seulement, promotion explicite conservée. | En attente du responsable qualité |
+| 3.25 | 2026-10-24 | Base de politique de confiance retenue : l'éditeur signe, chaque installation configure ses clés de confiance explicitement, un package distribué validé devient candidat et sa promotion reste humaine/explicite ; les builds locaux restent possibles sans catalogue et sans signature obligatoire. Canal/protection/rotation des clés, limites de transfert et rôles de promotion à spécifier avant tout flux opérationnel. | En attente du responsable qualité |
+| 3.26 | 2026-10-24 | Premier socle de configuration des clés implémenté : lecteur de fichier JSON strict et versionné, borné à 64 KiB/256 clés, validant Base64, empreintes et doublons ; chargé au démarrage par `EUROMNI_BUILD_TRUST_FILE` avec échec explicite si invalide. Tests pipeline et configuration CMS ciblés réussis. Pas encore relié à un récepteur de packages ; protection opérationnelle et limites de transfert restent à faire. | En attente du responsable qualité |
+| 3.27 | 2026-10-24 | Réception prototype `POST /v1/admin/modules/build-packages` : ZIP signé exact plafonné à 64 MiB, lecture bornée sans extraction, validation clé Ed25519 + package ABI/manifeste, staging privé content-addressed par boutique plafonné provisoirement à 256 MiB. Tests ciblés pipeline/API/store passent. Aucun build publié, pin, installation ni promotion n'est modifié ; liste/revue/rétention, quota multi-instance et revue sécurité indépendante restent ouverts. | En attente du responsable qualité |
+| 3.28 | 2026-10-24 | Approbation humaine backend : lecture par digest et approbation après revalidation de la signature avec les clés courantes ; autorisation `owner`/`admin`, scope boutique et attribution utilisateur/rôle/heure UTC. Le sidecar local est immuable via l'API mais n'est pas un journal d'audit centralisé ; aucun build/pin/installation/promotion ne change. Tests ajoutés pour les deux rôles, rôle refusé, non-authentifié, candidat absent/altéré, clé retirée, répétition et isolation boutique. `go test ./...`, `go vet ./...` et `git diff --check` réussis sous Linux ; CI Windows et revue sécurité indépendante non exécutées. Inventaire, UI, rejet, rétention et quota multi-instance restent ouverts. | En attente du responsable qualité |

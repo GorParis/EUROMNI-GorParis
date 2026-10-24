@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +18,7 @@ import (
 )
 
 var productReader store.ProductReader = store.ProductReaderFromEnv()
+var trustedBuildPackageKeys map[string]ed25519.PublicKey
 var newProductsWidgetRunner interface {
 	RunNewProducts(context.Context, string) ([]store.ProductView, bool, error)
 }
@@ -30,6 +32,25 @@ var moduleManager interface {
 
 func SetProductReader(r store.ProductReader) {
 	productReader = r
+}
+
+func SetTrustedBuildPackageKeys(keys map[string]ed25519.PublicKey) {
+	trustedBuildPackageKeys = cloneTrustedBuildPackageKeys(keys)
+}
+
+func TrustedBuildPackageKeys() map[string]ed25519.PublicKey {
+	return cloneTrustedBuildPackageKeys(trustedBuildPackageKeys)
+}
+
+func cloneTrustedBuildPackageKeys(keys map[string]ed25519.PublicKey) map[string]ed25519.PublicKey {
+	if keys == nil {
+		return nil
+	}
+	cloned := make(map[string]ed25519.PublicKey, len(keys))
+	for keyID, publicKey := range keys {
+		cloned[keyID] = append(ed25519.PublicKey(nil), publicKey...)
+	}
+	return cloned
 }
 
 func SetNewProductsWidgetRunner(runner interface {
@@ -108,6 +129,9 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/admin/modules/{name}/installation", withOrderWriteAuth(adminUninstallModule))
 	mux.HandleFunc("POST /v1/admin/modules/{name}/build", withOrderWriteAuth(adminPromoteModuleBuild))
 	mux.HandleFunc("POST /v1/admin/modules/imports", withOrderWriteAuth(adminQuarantineModuleArchive))
+	mux.HandleFunc("POST /v1/admin/modules/build-packages", withOrderWriteAuth(adminImportSignedBuildPackage))
+	mux.HandleFunc("GET /v1/admin/modules/build-packages/candidates/{packageSHA256}", withOrderWriteAuth(adminBuildPackageCandidate))
+	mux.HandleFunc("POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval", withOrderWriteAuth(adminApproveBuildPackageCandidate))
 	mux.HandleFunc("GET /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("PUT /v1/admin/modules/{name}/config", withOrderWriteAuth(adminNewProductsSettings))
 	mux.HandleFunc("GET /v1/admin/shipping/versions/targets", withOrderWriteAuth(adminShippingRateVersionTargets))

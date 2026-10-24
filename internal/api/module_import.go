@@ -7,14 +7,20 @@ import (
 	"mime"
 	"net/http"
 
+	"euromni/internal/packagecandidate"
 	"euromni/internal/pipeline"
 	"euromni/internal/quarantine"
 )
 
 var moduleArchiveQuarantine quarantine.Store
+var moduleBuildPackageCandidates packagecandidate.Store
 
 func SetModuleArchiveQuarantine(store quarantine.Store) {
 	moduleArchiveQuarantine = store
+}
+
+func SetModuleBuildPackageCandidates(store packagecandidate.Store) {
+	moduleBuildPackageCandidates = store
 }
 
 func adminQuarantineModuleArchive(w http.ResponseWriter, r *http.Request) {

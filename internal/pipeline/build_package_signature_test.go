@@ -51,7 +51,17 @@ func TestValidateSignedBuildPackageRejectsUntrustedOrChangedInputs(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	trustedKeys := map[string]ed25519.PublicKey{envelope.KeyID: publicKey}
+	trustFile := writeTrustedBuildKeysFile(t, trustedBuildKeysDocument{
+		Version: trustedBuildKeysVersion,
+		Keys: []trustedBuildPackageKey{{
+			KeyID:     envelope.KeyID,
+			PublicKey: base64.StdEncoding.EncodeToString(publicKey),
+		}},
+	})
+	trustedKeys, err := LoadTrustedBuildPackageKeys(trustFile)
+	if err != nil {
+		t.Fatalf("LoadTrustedBuildPackageKeys() returned error: %v", err)
+	}
 
 	modifiedWasm := append([]byte(nil), wasmBytes...)
 	modifiedWasm[len(modifiedWasm)-1] ^= 1

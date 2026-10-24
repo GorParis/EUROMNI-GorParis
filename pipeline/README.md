@@ -147,12 +147,107 @@ est sûr, compatible avec un CMS réel ou approuvé pour installation. Cette
 primitive n’est pas reliée à un service de signature, à l’import ZIP, à la
 publication de build ou à la promotion.
 
-L’utilisateur a approuvé ce périmètre de prototype le 24 octobre 2026. Il ne
-constitue pas une politique de production. Le responsable produit/exploitation
-doit encore choisir le périmètre des clés de confiance, leur provisionnement,
-rotation/révocation opérationnelle, durée de validité, identité affichée du
-signataire, éventuels seuils multi-signatures et limites de transfert. Aucun
-choix n’est fait entre catalogue central et traitement local.
+Le prototype a été approuvé le 24 octobre 2026. Le même jour, l'orientation
+de distribution hybride a été retenue : les builds locaux restent possibles
+et un catalogue central de packages signés est facultatif. La politique de
+confiance suivante a été décidée comme base de conception :
+
+- l'éditeur du module signe ses propres packages ; la signature atteste
+  l'origine cryptographique du package, pas son innocuité ni sa compatibilité ;
+- chaque installation configure explicitement les clés publiques auxquelles
+  elle fait confiance ; aucune clé fournie par le package ni aucune racine
+  implicite du catalogue ne crée de confiance ;
+- un package reçu doit passer la vérification de signature et la validation
+  structurelle avant d'être enregistré comme candidat ;
+- la réception ou la vérification ne promeut jamais un build et ne modifie pas
+  les installations actives ; un rôle autorisé doit lancer explicitement la
+  promotion selon le flux existant ;
+- les builds locaux ne dépendent pas de la disponibilité d'un catalogue. Cette
+  politique de signature vise les packages distribués/reçus et ne rend pas
+  obligatoire la signature d'un build local.
+
+Ce sont des règles produit retenues, pas encore une politique de production
+opérationnelle. Le canal prototype est fixé à un fichier explicite par
+installation. Restent à fixer le déploiement et la protection de ce fichier, la
+rotation et le retrait, l'identité présentée à l'administrateur, la durée de
+validité, les éventuelles multi-signatures et l'autorisation précise de
+promotion. Le prototype de réception décrit ci-dessous est limité à la
+vérification et au staging privé ; il ne constitue pas une autorisation
+d'activation ou de production.
+
+#### Fichier explicite de clés approuvées
+
+Le premier incrément de cette politique est un lecteur strict,
+`pipeline.LoadTrustedBuildPackageKeys(path)`. Le CMS le charge au démarrage si
+`EUROMNI_BUILD_TRUST_FILE` pointe vers le fichier de l'installation ; en
+l'absence de cette variable, aucune clé n'est approuvée. Un fichier manquant ou
+mal formé fait échouer le démarrage au lieu de continuer avec une confiance
+partielle. Les clés publiques sont les octets bruts Ed25519 encodés en Base64
+standard paddé et `key_id` est leur SHA-256 hexadécimal minuscule :
+
+```json
+{
+  "version": "euromni.trusted-build-keys.v1",
+  "keys": [
+    {
+      "key_id": "<sha256-hex-de-la-cle-publique>",
+      "public_key": "<base64-de-32-octets>"
+    }
+  ]
+}
+```
+
+Le lecteur refuse les champs JSON inconnus, les versions non reconnues, les
+clés mal encodées, les identifiants incohérents et les doublons ; le fichier est
+plafonné à 64 KiB et à 256 clés. Une liste vide représente une installation qui
+n'accorde confiance à aucun signataire. Le fichier et ses répertoires parents
+doivent être protégés contre les modifications par des utilisateurs non
+autorisés.
+
+#### Réception de packages signés
+
+`POST /v1/admin/modules/build-packages` accepte le transport ZIP plafonné à
+64 MiB avec exactement quatre fichiers racine : `manifest.json`,
+`module.ir.json`, `module.wasm` et `signature.json`. Le manifeste est limité à
+64 KiB, l'IR à 1 MiB, le Wasm à 64 MiB et l'enveloppe de signature à 4 KiB.
+Seuls les fichiers ordinaires utilisant ZIP Store ou Deflate sont acceptés ;
+entrées manquantes, répétées, supplémentaires, chemins et répertoires sont
+refusés. Le serveur lit les entrées en mémoire avec limites et CRC ZIP, sans
+extraire de fichier. Il valide ensuite la signature avec la liste de confiance
+et appelle `ValidateBuildPackage` avant toute écriture.
+
+La route exige `owner` ou `admin` et stocke l'archive originale comme candidat
+dans le répertoire privé configuré par `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`,
+sous un chemin adressé par boutique et SHA-256. La limite provisoire est
+256 MiB par boutique ; elle est comptée par processus et ne coordonne pas les
+instances. Une seule validation d'import est exécutée à la fois par processus ;
+les demandes concurrentes reçoivent `503`. Un package accepté répond `202` avec son digest, son signataire,
+son module et son état `candidate`. Il ne crée pas de build dans le registre,
+ne change aucun pin et ne déclenche aucune installation ni promotion.
+L'absence de configuration du répertoire désactive cette route (`503`) ; une
+liste de confiance absente la désactive également. Une liste explicitement
+vide ne fait confiance à aucun signataire.
+
+Après réception, `GET /v1/admin/modules/build-packages/candidates/{packageSHA256}` permet
+à `owner` ou `admin` de relire le candidat de sa boutique. La route relit le ZIP
+stocké et revalide la signature avec les clés de confiance courantes ainsi que
+le contenu du package ; elle répond avec les métadonnées et l'état `pending` ou
+`approved`. `POST /v1/admin/modules/build-packages/candidates/{packageSHA256}/approval`
+accepte uniquement `{"decision":"approve"}` pour les mêmes rôles. L'approbation
+immuable conserve le digest du package, l'identifiant de l'acteur, son rôle et
+l'heure UTC dans le sidecar `<digest>.approval.json` du stockage local ; elle ne
+constitue pas un journal d'audit centralisé en base. Les répétitions répondent
+`409`. Un candidat absent répond `404`,
+et une clé retirée ou un package qui échoue désormais à la validation bloque
+l'approbation. Cette décision ne publie, n'installe et ne promeut aucun build,
+ne modifie aucun pin et ne constitue pas une preuve d'innocuité.
+
+Il n'existe pas encore de liste/inventaire, d'interface de revue, de décision
+de rejet, de téléchargement, de suppression, de passerelle de publication ou
+de purge automatique. La rétention est donc manuelle et la capacité limitée ;
+ne pas activer ce stockage pour la production avant d'avoir défini rétention,
+quota coordonné multi-instance et contrôles opérationnels. L'ingestion PHP ZIP
+de `/v1/admin/modules/imports` reste entièrement distincte.
 
 Les parcours `PublishModuleBuild`, `PublishModuleBuildOnly` et l'installation
 PrestaShop passent tous par `storeBuildArtifact`, qui appelle

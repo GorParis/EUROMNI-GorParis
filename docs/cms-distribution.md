@@ -141,6 +141,28 @@ Le FileStore des artefacts est un stockage distinct : le réconciliateur exige
 utilisé par le processus qui publie les artefacts. Les permissions de ce
 répertoire doivent respecter les exigences de sécurité de la plateforme.
 
+La réception prototype de builds signés est désactivée tant que
+`EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR` n'est pas configuré. Pour l'activer,
+fournir également `EUROMNI_BUILD_TRUST_FILE`, un JSON de clés publiques
+approuvées propre à cette installation ; une liste vide n'approuve aucun
+signataire. Exemple Linux :
+
+```sh
+export EUROMNI_BUILD_TRUST_FILE='/etc/euromni/trusted-build-keys.json'
+export EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR='/var/lib/euromni/build-package-candidates'
+./euromni-cms
+```
+
+Protéger le fichier de confiance et les deux répertoires avec les droits du
+compte de service. Le stockage de candidats est privé et séparé du FileStore
+des artefacts publiés, plafonné provisoirement à 256 MiB par boutique et non
+coordonné entre instances. Un `owner` ou `admin` peut relire un candidat par son
+digest et lui attribuer une approbation humaine via l'API ; cette décision est
+immuable et auditée par utilisateur, rôle et horodatage, mais ne publie,
+n'installe ni ne promeut le build. L'inventaire, la purge automatique et le
+passage au registre restent absents. La trace est un sidecar local, pas un
+journal d'audit centralisé ; ne pas activer ce prototype en production.
+
 Cette documentation décrit le paquet autonome, mais l'installation comme
 service Windows ou unité systemd, la rotation des secrets et une politique de
 sauvegarde protégée restent à valider avant un usage client.
