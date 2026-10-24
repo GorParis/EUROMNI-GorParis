@@ -24,10 +24,14 @@ pas une preuve que l'arbre de travail est propre.
   signatures et limites mémoire). Les parcours existants de publication et
   d'installation passent par ce validateur avant `artifact.Store.Put`. Aucun
   workflow de réception/distribution n'est encore branché.
-- Les hashes prouvent l'intégrité, pas l'identité de l'éditeur. Signature,
-  politique de confiance, limites de transfert et critères de validation avant
-  promotion restent à décider avant toute distribution de builds tiers.
-  Aucun choix n'est fait entre catalogue central et builds privés locaux.
+- Les hashes prouvent l'intégrité, pas l'identité de l'éditeur. Une proposition
+  non approuvée décrit une signature Ed25519 détachée sur les digests exacts
+  des trois blobs, vérifiée par une liste de clés publiques de confiance
+  fournie hors package. Elle est documentée dans `pipeline/README.md`, mais
+  n'est pas implémentée. Le périmètre/provisionnement/rotation/révocation des
+  clés, les limites de transfert et la politique d'approbation avant promotion
+  restent à décider ; aucun choix n'est fait entre catalogue central et builds
+  privés locaux.
 - QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
   Selfnamed lié à son IR et le validateur de package ; le chemin de publication
   rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP
@@ -100,6 +104,8 @@ pas une preuve que l'arbre de travail est propre.
 - Le run GitHub Actions Go CI #76 du commit `60178f5` est vert : tests/vet Go
   sous Linux/amd64 et Windows/amd64, plus exécution du guest Rust sur les deux
   runners. [Détails du run](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/40069691917).
+- Le run GitHub Actions Go CI #77 du commit `fe4e90b` est vert après ajout du
+  validateur avant publication. [Détails du run](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/40073494999).
 - Après le run #76, la validation avant publication passe :
   `go test ./...`, `go vet ./...`, le test de reproductibilité
   `go test -tags=wasmtoolchain ./internal/pipeline -run
@@ -153,16 +159,15 @@ pas une preuve que l'arbre de travail est propre.
 
 ## Prochaines actions recommandées
 
-1. Exécuter les validations complètes de l'intégration `ValidateBuildPackage`
-    au chemin de publication : `go test ./...`, `go vet ./...`, le test de
-    reproductibilité `-tags=wasmtoolchain`, l'intégration PostgreSQL/Wasmtime
-    ciblée et `git diff --check`, puis vérifier la CI Windows/Linux du nouveau
-    commit.
-2. Définir les décisions de confiance/signature, de taille/transfert et de
-    validation avant promotion avant d'implémenter la réception d'un package.
-    `ValidateBuildPackage` protège désormais les flux de publication internes,
-    mais l'import ZIP de quarantaine n'accepte pas encore le package Wasm
-    distribuable.
+1. Faire approuver ou ajuster la proposition Ed25519 de
+    `pipeline/README.md` : périmètre/provisionnement des clés de confiance,
+    rotation/révocation, validité, signataires autorisés et approbation avant
+    promotion. Ne pas commencer l'intégration de signature tant que la politique
+    n'est pas validée.
+2. Avant de construire un récepteur, décider les limites de taille/transfert et
+    l'endroit où la liste de clés de confiance est administrée.
+    `ValidateBuildPackage` protège les publications internes, mais l'import ZIP
+    de quarantaine n'accepte pas encore le package Wasm distribuable.
 3. Garder le contrat de package neutre quant au mode de livraison jusqu'à une
     décision explicite entre catalogue central et traitement local ; ne pas
     présenter un hash seul comme une preuve d'authenticité.

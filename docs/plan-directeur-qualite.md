@@ -3,7 +3,7 @@
 | Champ | Valeur |
 |---|---|
 | Identifiant | EUROMNI-QP-001 |
-| Version | 3.21 |
+| Version | 3.22 |
 | État | Brouillon contrôlé, approbation humaine à renseigner |
 | Date de révision | 2026-10-24 |
 | Responsable du document | Responsable produit/technique, à désigner |
@@ -55,6 +55,12 @@ dépose uniquement des ZIP validés en quarantaine privée ; elle ne compile,
 n'extrait ni n'exécute le PHP.
 Voir [`portability.md`](portability.md) pour les limites et preuves ; QP-01
 reste ouvert sur le processus de build/promotion métier.
+
+Une signature Ed25519 détachée des trois digests, vérifiée contre des clés
+publiques de confiance injectées hors package, est proposée comme modèle
+d’authenticité. Cette proposition n’est ni approuvée ni implémentée ; la gestion
+des clés, les responsabilités de signature et la politique d’approbation
+restent à décider.
 
 Avant toute reprise de code, vérifier l’état réel de l’arbre de travail et
 l’historique Git. Les notes de version précédentes ne permettent pas de déduire
@@ -278,4 +284,5 @@ IONOS ne sera évalué que si le besoin est confirmé.
 | 3.18 | 2026-10-21 | Garde-fou ajouté : le store applicatif refuse `default_query_exec_mode=simple_protocol` dans `DATABASE_URL`, avec test sans connexion ; le migrateur conserve son usage simple uniquement pour le SQL embarqué. `go test`/`go vet` Go 1.25, intégrations PostgreSQL Compose, CMS et Playwright passent ; govulncheck ne trouve aucune vulnérabilité atteignable. Reste la CI Windows sous Go 1.25, l’audit indépendant et le tri des 22 alertes gosec restantes. | En attente du responsable qualité |
 | 3.19 | 2026-10-23 | CMS-08 démarré : outbox de confirmation créée dans la transaction checkout, worker SMTP séparé, STARTTLS/TLS implicite et retries, profil Mailpit pour développement. L’envoi réel et l’exploitation du MTA attendent un choix de domaine et d’hébergement. | En attente du responsable qualité |
 | 3.20 | 2026-10-24 | QP-01/02/06/07 : build Selfnamed `no_std` lié à l’IR et reproductible, puis contrat transport-indépendant manifeste/IR canonique/Wasm avec validation structurelle ABI/imports/exports/mémoire. `go test ./...`, `go vet ./...`, test de reproductibilité `-tags=wasmtoolchain` et intégration PostgreSQL 16/Wasmtime isolée passent localement sous Linux/amd64. Les hashes démontrent l’intégrité, pas l’authenticité ; aucune signature, politique de confiance ni distribution n’est encore définie. La traduction PHP générale et le worker de production ne sont pas qualifiés. | En attente du responsable qualité |
-| 3.21 | 2026-10-24 | QP-02/07 : `ValidateBuildPackage` est maintenant exécuté par les parcours de publication avant `artifact.Store.Put`; un module avec import Wasm additionnel est refusé sans stockage. `go test ./...`, `go vet ./...`, test de reproductibilité `-tags=wasmtoolchain`, intégrations PostgreSQL 16/Wasmtime ciblées et `git diff --check` passent localement sous Linux/amd64. Le run CI Go #76 du commit `60178f5` passe sur Linux/Windows, tests/vet et guest Rust. Réception de package, authenticité et distribution restent hors périmètre. | En attente du responsable qualité |
+| 3.21 | 2026-10-24 | QP-02/07 : `ValidateBuildPackage` est maintenant exécuté par les parcours de publication avant `artifact.Store.Put`; un module avec import Wasm additionnel est refusé sans stockage. `go test ./...`, `go vet ./...`, test de reproductibilité `-tags=wasmtoolchain`, intégrations PostgreSQL 16/Wasmtime ciblées et `git diff --check` passent localement sous Linux/amd64. Le run CI Go #76 du commit `60178f5` passe sur Linux/Windows, tests/vet et guest Rust ; le run #77 du commit `fe4e90b` passe également. Réception de package, authenticité et distribution restent hors périmètre. | En attente du responsable qualité |
+| 3.22 | 2026-10-24 | Cadrage de confiance sans choix de transport : proposition non approuvée de signature Ed25519 détachée sur les digests exacts du manifeste, de l’IR et du Wasm ; clés publiques identifiées par empreinte et approuvées hors package ; vérification distincte de la validation structurelle et de la promotion. Rotation, révocation, provisionnement, rôle des signataires, approbation métier, limites de transfert et décision catalogue central/import local restent ouverts. Aucun code de signature ajouté. | En attente du responsable qualité |

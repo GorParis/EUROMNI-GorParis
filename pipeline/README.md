@@ -105,11 +105,45 @@ hash du Wasm et taille. La compatibilité de runtime est actuellement une
 égalité stricte de version ABI, pas une plage de versions implicite.
 
 Ce contrôle prouve la cohérence et l’intégrité par hash, pas l’identité du
-producteur : ni le manifeste ni le Wasm ne sont signés. Avant toute distribution
-de builds provenant d’un tiers, une politique de confiance/signature, les
-limites du transfert et la validation avant promotion devront être définies.
-L’activation d’un hash reste distincte de sa distribution et requiert la
-promotion explicite existante.
+producteur : ni le manifeste ni le Wasm ne sont signés. L’activation d’un hash
+reste distincte de sa distribution et requiert la promotion explicite existante.
+
+### Authenticité des packages — modèle proposé, à approuver
+
+Avant d’accepter un build provenant d’un tiers, la proposition est une
+signature Ed25519 détachée, séparée des trois blobs de build. Le message signé
+serait une concaténation binaire versionnée et domain-separated :
+
+```text
+euromni.build-package-signature.v1\0
+SHA-256(manifest.json)[32 octets]
+SHA-256(module.ir.json)[32 octets]
+SHA-256(module.wasm)[32 octets]
+```
+
+L’enveloppe détachée contiendrait la version du protocole, l’identifiant de clé
+et la signature Ed25519 encodée. L’identifiant serait l’empreinte SHA-256 de la
+clé publique Ed25519 brute. Signer les digests des octets exacts lie tous les
+composants sans imposer de format d’archive ni de sérialisation canonique
+supplémentaire au manifeste ; le validateur existant continue d’exiger l’IR
+canonique et de comparer les valeurs du manifeste aux composants.
+
+La vérification proposée est ordonnée ainsi : plafonner les tailles et parser
+l’enveloppe ; chercher l’identifiant exclusivement dans une liste de clés
+publiques de confiance fournie hors package ; vérifier la signature ; appeler
+`ValidateBuildPackage` ; appliquer ensuite la politique de capabilities et
+d’approbation avant toute promotion. Une clé publique incluse dans le package
+ne crée jamais sa propre confiance. Les clés privées restent hors du CMS, du
+runtime Wasm, du dépôt et des packages ; leur usage relève d’un environnement
+de signature contrôlé. Une signature prouve qu’une clé autorisée a signé ces
+octets, pas que le code est sûr, compatible avec un CMS réel ou approuvé pour
+installation.
+
+Cette proposition n’est ni implémentée ni approuvée. Le responsable produit/
+exploitation doit encore choisir le périmètre des clés de confiance, leur
+provisionnement, rotation/révocation, durée de validité, identité affichée du
+signataire, éventuels seuils multi-signatures et limites de transfert. Aucun
+choix n’est fait entre catalogue central et traitement local.
 
 Les parcours `PublishModuleBuild`, `PublishModuleBuildOnly` et l'installation
 PrestaShop passent tous par `storeBuildArtifact`, qui appelle

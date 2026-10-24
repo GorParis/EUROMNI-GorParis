@@ -350,13 +350,14 @@ générale du plugin ni une décision sur son mode de distribution.
    dépendances verrouillées, lier le hash exact de l’IR et l’identité du
    compilateur au Wasm, choisir le compilateur du manifeste selon l’artefact,
    puis démontrer deux builds identiques et l’exécution de l’artefact publié.
-6. Prochaine étape : définir le contrat du build distribuable (provenance,
-   versions compatibles, capacités, hash et validation). Le prototype définit
-   désormais trois blobs transport-indépendants (`manifest.json`,
-   `module.ir.json`, `module.wasm`) et une validation stricte de cohérence/
-   compatibilité. L’authenticité/signature, les limites de transfert et le
-   mécanisme de distribution restent à définir ; le choix entre catalogue
-   central et traitement local est différé.
+6. Contrat du build distribuable cadré : trois blobs transport-indépendants
+   (`manifest.json`, `module.ir.json`, `module.wasm`), validateur strict et
+   validation pré-publication. Proposition d'authenticité : signature Ed25519
+   détachée sur les trois digests, clé publique identifiée par son empreinte et
+   approuvée hors package. Cette proposition reste à approuver et implémenter ;
+   provisionnement/rotation/révocation, limites de transfert et politique
+   d'approbation restent ouvertes. Le choix entre catalogue central et
+   traitement local est différé.
 
 Devise, locale et unité de volume restent non résolues : ne pas les inventer
 pour faire passer l’oracle. La cible est une transformation métier contrôlée et
