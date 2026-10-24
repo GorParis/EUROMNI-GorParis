@@ -297,18 +297,17 @@ vérifie que l’import Wasm est limité à `euromni.call`, publie puis charge l
 module installé dans Wasmtime et compare la sortie attendue pour les trois
 fixtures partagées avec le pilote natif : nominal, rupture de stock avec poids
 de 1 001 g et tags, et prix `0.10` avec description vide. Le nombre de produits
-en base reste identique après les trois appels. Les tests d’hôte couvrent les
-entrées invalides, la limite de taille et l’absence de capability.
+en base reste identique après les trois appels. Le même module Wasmtime rejette
+aussi un JSON produit malformé et une entrée produit dépassant 8 KiB avec
+l’erreur ABI `invalid` ; le nombre de produits persistant reste inchangé après
+les appels valides et invalides. Les tests d’hôte couvrent aussi l’absence de
+capability.
 
-**Prochaine tranche Wasm convenue :** garder le périmètre sur cette seule
-prévisualisation catalogue. Renforcer le test d’intégration Wasmtime pour
-exécuter aussi des entrées malformées et au-delà de la limite de 8 KiB, vérifier
-leur rejet avec une erreur ABI `invalid`, et confirmer que les appels valides
-comme invalides ne changent pas le catalogue persistant. La comparaison aux
-trois fixtures et la restriction d’import à `euromni.call` restent des critères
-de passage. Aucun accès réseau, pagination, commande, livraison ou modification
-de produit n’entre dans ce call Wasm ; devise, locale et unité de volume restent
-non résolues. Le travail ne vise pas la traduction générale du plugin PHP.
+Cette tranche Wasm reste limitée à la prévisualisation catalogue : aucun accès
+réseau, pagination, commande, livraison ou modification de produit n’entre dans
+ce call. La restriction d’import à `euromni.call` et les trois sorties oracle
+restent vérifiées ; devise, locale et unité de volume restent non résolues. Le
+travail ne vise pas la traduction générale du plugin PHP.
 
 Cette preuve valide une frontière ABI Wasm → hôte et un aperçu non persistant,
 pas la traduction de PHP ni l’équivalence complète du plugin Selfnamed. La
@@ -316,6 +315,35 @@ caractérisation du plugin natif et le mapper hôte sont deux implémentations
 distinctes. Devise, locale et unité du volume doivent encore être décidées ;
 images/téléchargements, catégories, mise à jour de produits existants et
 publication active restent hors périmètre.
+
+### Suite recommandée pour le chantier Wasm
+
+L’objectif immédiat est une preuve verticale limitée, pas la traduction
+générale du plugin ni une décision sur son mode de distribution.
+
+1. Définir le contrat métier pur de prévisualisation : JSON produit accepté,
+   DTO produit attendu, champs connus et champs explicitement non résolus. Les
+   trois fixtures Selfnamed et leur oracle restent la référence.
+2. Déplacer le calcul de cette projection dans le guest Wasm. À l’état actuel,
+   le module compilé appelle `euromni.call` et c’est le handler hôte qui
+   construit le DTO ; cela prouve le transport ABI et l’exécution Wasmtime, pas
+   un mapping métier exécuté dans le guest.
+3. Comparer la sortie du guest au même oracle pour les trois fixtures ; vérifier
+   le rejet explicite des entrées malformées ou trop grandes, l’import limité à
+   `euromni.call`, et l’absence de mutation persistante. Aucun accès réseau,
+   pagination, commande, livraison ou écriture CMS ne doit être ajouté au guest.
+4. Garder l’hôte comme frontière CMS : il valide la réponse et reste seul
+   responsable d’afficher la prévisualisation ou, dans une étape ultérieure,
+   d’effectuer une action d’import explicitement autorisée.
+5. Après cette preuve, définir le contrat du build distribuable (provenance,
+   versions compatibles, capacités, hash et validation). Ce contrat pourra
+   servir aussi bien à un catalogue central de builds qu’à des imports privés ;
+   le choix entre distribution centrale et traitement local est différé.
+
+Devise, locale et unité de volume restent non résolues : ne pas les inventer
+pour faire passer l’oracle. La cible est une transformation métier contrôlée et
+reproductible, pas une promesse de performance ni l’exécution/traduction du PHP
+source.
 
 ## Copie locale WooCommerce de référence — 23 octobre 2026
 

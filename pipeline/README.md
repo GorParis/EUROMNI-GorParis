@@ -123,8 +123,10 @@ Le prototype `catalog.supplier.product.preview` exerce aussi un trigger IR
 dynamique avec les trois fixtures Selfnamed synthétiques, communes au pilote
 natif et au test oracle. Le test d’intégration compile, publie et charge le
 module Wasm dans Wasmtime, puis vérifie chaque projection de prévisualisation
-et l’absence d’écriture catalogue. Ce n’est pas une traduction du PHP
-Selfnamed : aucune image ni requête réseau n’est impliquée. Les limites et champs encore indéterminés sont
+ainsi que le rejet ABI `invalid` d’un produit malformé ou supérieur à 8 KiB ; le
+catalogue persistant reste inchangé après tous les appels. Ce n’est pas une
+traduction du PHP Selfnamed : aucune image ni requête réseau n’est impliquée.
+Les limites et champs encore indéterminés sont
 documentés dans [le contrat ABI](../docs/abi.md#prévisualisation-catalogue-selfnamed-prototype).
 
 ### Ingestion bornée du ZIP amont `ps_newproducts`

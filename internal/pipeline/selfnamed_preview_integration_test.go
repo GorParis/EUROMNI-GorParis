@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"euromni/internal/abi"
@@ -175,6 +176,35 @@ func TestSelfnamedProductPreviewWasmRunsWithoutPersistence(t *testing.T) {
 	}
 	if len(seen) != len(expectedByID) {
 		t.Fatalf("Wasm fixtures exercised = %d, want %d", len(seen), len(expectedByID))
+	}
+	for _, test := range []struct {
+		name        string
+		productJSON string
+	}{
+		{name: "malformed product", productJSON: `{"id":`},
+		{name: "oversized product", productJSON: strings.Repeat("x", 8<<10+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			trigger, err := json.Marshal(map[string]string{"product_json": test.productJSON})
+			if err != nil {
+				t.Fatalf("encode invalid trigger: %v", err)
+			}
+			input, err := BuildIRCallEnvelope(ir, trigger)
+			if err != nil {
+				t.Fatalf("build invalid ABI envelope: %v", err)
+			}
+			response, err := runtime.RunInstalledWithInputAndResponse(ctx, moduleStore, seed.ShopID, seed.ModuleID, "run", input)
+			if err != nil {
+				t.Fatalf("run invalid preview input: %v", err)
+			}
+			var actualResponse abi.Response
+			if err := json.Unmarshal(response, &actualResponse); err != nil {
+				t.Fatalf("decode invalid preview response: %v", err)
+			}
+			if actualResponse.OK || actualResponse.Error == nil || actualResponse.Error.Code != abi.CodeInvalid {
+				t.Fatalf("invalid preview response = %s, want ABI invalid error", response)
+			}
+		})
 	}
 	var productCountAfter int
 	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM products WHERE shop_id = $1`, seed.ShopID).Scan(&productCountAfter); err != nil {
