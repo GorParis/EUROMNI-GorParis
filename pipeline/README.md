@@ -477,11 +477,11 @@ go test -tags=integration ./internal/pipeline -run TestRealPrestaShopNewProducts
    le PHP et extraire hooks, appels de données, effets de bord et dépendances.
    WooCommerce et PrestaShop ont des adaptateurs séparés ; leurs concepts sont
    convertis vers un modèle intermédiaire commun.
-4. **Modèle intermédiaire (IR)** : première version à un appel et capabilities
-   dérivées de l’allowlist ; restent à représenter les opérations métier,
-   expressions et schémas de déclenchement. Tout code non pris en charge produit
-   un diagnostic ou une demande de revue, jamais une capability supplémentaire
-   implicite.
+4. **Modèle intermédiaire (IR)** : IR v3 à un déclencheur et un appel hôte
+   allowlisté. Les capabilities sont dérivées du mapping hôte, jamais fournies
+   par le package. Les expressions, chaînes d’opérations et comportements
+   métier non explicitement listés restent hors périmètre ; ils sont refusés,
+   sans capability implicite.
 5. **Traduction** : produire du code invité depuis l’IR. Un LLM peut proposer
    une extraction structurée, mais sa sortie n’est jamais exécutée ni publiée
    sans validation déterministe et revue des capabilities.
@@ -500,6 +500,39 @@ go test -tags=integration ./internal/pipeline -run TestRealPrestaShopNewProducts
 9. **Chargement et exécution** : `LoadInstalled` vérifie le hash, l’ABI et les
    capabilities ; `Run` les relit depuis PostgreSQL à chaque appel. Une
    modification du hash impose un rechargement explicite.
+
+### Contrat de l’IR v3
+
+La version courante est `euromni.ir.v3`. Un document valide contient exactement
+un déclencheur (`hook` ou `manual`) et une opération. Le nom du déclencheur est
+obligatoire et sans espaces périphériques. Ses champs, s’il y en a, sont des
+valeurs typées (`string`, `uuid` ou `integer`) ; les références d’opération
+doivent viser un champ déclaré du type attendu. Les littéraux sont validés
+contre le même schéma. Toute autre forme est rejetée avant génération Wasm.
+
+Les schémas d’opération v3 actuellement implémentés sont :
+
+| Appel hôte | Entrée IR requise | Capability |
+|---|---|---|
+| `catalog.product.list` | aucune | dérivée de `wasm.Mapping` |
+| `catalog.category.list` | aucune | dérivée de `wasm.Mapping` |
+| `catalog.product.newest` | aucune | dérivée de `wasm.Mapping` |
+| `catalog.product.get` | `product_id: uuid` | dérivée de `wasm.Mapping` |
+| `catalog.product.sort` | `locale: string`, `orderby: string` | dérivée de `wasm.Mapping` |
+| `catalog.supplier.product.preview` | `product_json: string` | dérivée de `wasm.Mapping` |
+
+Un appel hôte connu mais sans schéma IR explicite est refusé. Les capacités
+effectives et les codes d’erreur à l’exécution restent ceux du mapping et du
+contrat ABI décrit dans [`../docs/abi.md`](../docs/abi.md) ; la validation IR
+ne crée pas de nouveau droit. Les versions, champs, appels, types et formes
+qui ne figurent pas dans ce contrat ne sont pas pris en charge.
+
+La compilation du guest Selfnamed épinglé est vérifiée et liée au hash exact
+de l’IR par `TestCompileSelfnamedPreviewIRToWasmIsReproducibleAndBoundToIR`.
+Le test compare deux builds indépendants, inspecte les sections de provenance
+et valide le Wasm avec Wasmtime. Il requiert Rust/Cargo 1.99.1 et les
+dépendances du `Cargo.lock` ; il est exécuté dans le job CI
+`wasm-toolchain-spike` sur Linux et Windows.
 
 ## Frontières de confiance
 

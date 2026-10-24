@@ -153,6 +153,35 @@ func TestValidateIRRejectsMismatchedProvenance(t *testing.T) {
 	}
 }
 
+func TestValidateIRRejectsUnsupportedTriggerDescriptors(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*ModuleIR)
+	}{
+		{
+			name: "unknown trigger kind",
+			edit: func(ir *ModuleIR) { ir.Triggers[0].Kind = "filesystem" },
+		},
+		{
+			name: "untrimmed trigger name",
+			edit: func(ir *ModuleIR) { ir.Triggers[0].Name += " " },
+		},
+		{
+			name: "invalid trigger field type",
+			edit: func(ir *ModuleIR) { ir.Triggers[0].Fields = map[string]string{"product_id": "json"} },
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ir := testDynamicCatalogIR()
+			test.edit(&ir)
+			if _, err := ValidateIR(ir); err == nil {
+				t.Fatal("ValidateIR() accepted an unsupported trigger descriptor")
+			}
+		})
+	}
+}
+
 func TestValidateIRRejectsUnknownCallsAndInvalidInputs(t *testing.T) {
 	tests := []struct {
 		name string

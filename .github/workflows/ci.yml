@@ -52,6 +52,9 @@ jobs:
       - name: Install pinned Rust guest target
         run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
 
+      - name: Select pinned Rust guest toolchain
+        run: rustup default 1.99.1
+
       - name: Fetch pinned Selfnamed guest dependencies
         run: cargo fetch --locked
         working-directory: pipeline/testdata/rust-selfnamed-preview
@@ -95,6 +98,13 @@ jobs:
       - name: Install pinned Rust guest target
         run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
 
+      - name: Select pinned Rust guest toolchain
+        run: rustup default 1.99.1
+
+      - name: Fetch pinned Selfnamed guest dependencies
+        run: cargo fetch --locked
+        working-directory: pipeline/testdata/rust-selfnamed-preview
+
       - name: Set up Windows C toolchain
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
@@ -105,3 +115,6 @@ jobs:
 
       - name: Inspect imports and execute Rust guest
         run: go test -v -tags=wasmtoolchain -count=1 ./internal/wasm -run '^TestRustUnknownUnknownGuestImportsOnlyEuromniCallAndExecutes$'
+
+      - name: Verify Selfnamed IR build reproducibility
+        run: go test -v -tags=wasmtoolchain -count=1 ./internal/pipeline -run '^TestCompileSelfnamedPreviewIRToWasmIsReproducibleAndBoundToIR$'

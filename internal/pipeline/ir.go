@@ -249,13 +249,8 @@ func ValidateIR(ir ModuleIR) (*ValidatedIR, error) {
 	if len(ir.Triggers) != 1 {
 		return nil, errors.New("IR v1 requires exactly one trigger")
 	}
-	if strings.TrimSpace(ir.Triggers[0].Kind) == "" || strings.TrimSpace(ir.Triggers[0].Name) == "" {
-		return nil, errors.New("IR trigger kind and name are required")
-	}
-	for field, fieldType := range ir.Triggers[0].Fields {
-		if !validIRFieldName(field) || (fieldType != "string" && fieldType != "uuid" && fieldType != "integer") {
-			return nil, fmt.Errorf("invalid IR trigger field %q type %q", field, fieldType)
-		}
+	if err := validateIRTrigger(ir.Triggers[0]); err != nil {
+		return nil, err
 	}
 	if len(ir.Operations) != 1 {
 		return nil, errors.New("IR v1 requires exactly one operation")
@@ -273,6 +268,21 @@ func ValidateIR(ir ModuleIR) (*ValidatedIR, error) {
 		ModuleIR:     ir,
 		Capabilities: []string{string(call.Cap)},
 	}, nil
+}
+
+func validateIRTrigger(trigger IRTrigger) error {
+	if trigger.Kind != "hook" && trigger.Kind != "manual" {
+		return fmt.Errorf("unsupported IR trigger kind %q", trigger.Kind)
+	}
+	if strings.TrimSpace(trigger.Name) == "" || strings.TrimSpace(trigger.Name) != trigger.Name {
+		return errors.New("IR trigger name is required and must be trimmed")
+	}
+	for field, fieldType := range trigger.Fields {
+		if !validIRFieldName(field) || (fieldType != "string" && fieldType != "uuid" && fieldType != "integer") {
+			return fmt.Errorf("invalid IR trigger field %q type %q", field, fieldType)
+		}
+	}
+	return nil
 }
 
 func validateIROperationInput(operation IROperation, trigger IRTrigger) error {
