@@ -67,6 +67,10 @@ type supplierProductVolumePreview struct {
 	Unit  *string `json:"unit"`
 }
 
+type supplierProductPreviewResultInput struct {
+	Preview json.RawMessage `json:"preview"`
+}
+
 func catalogSupplierProductPreview(env *abi.Envelope) (any, error) {
 	input, err := abi.DecodeInput[supplierProductPreviewInput](env.Input)
 	if err != nil {
@@ -77,6 +81,135 @@ func catalogSupplierProductPreview(env *abi.Envelope) (any, error) {
 		return nil, abi.Fail(abi.CodeInvalid, "invalid supplier product")
 	}
 	return preview, nil
+}
+
+func catalogSupplierProductPreviewResult(env *abi.Envelope) (any, error) {
+	input, err := abi.DecodeInput[supplierProductPreviewResultInput](env.Input)
+	if err != nil || len(input.Preview) == 0 {
+		return nil, abi.Fail(abi.CodeInvalid, "invalid preview result")
+	}
+	if err := validatePreviewObjectFields(input.Preview); err != nil {
+		return nil, abi.Fail(abi.CodeInvalid, "invalid preview result")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(input.Preview))
+	decoder.DisallowUnknownFields()
+	var preview supplierProductPreview
+	if err := decoder.Decode(&preview); err != nil {
+		return nil, abi.Fail(abi.CodeInvalid, "invalid preview result")
+	}
+	if err := validateSupplierProductPreview(preview); err != nil {
+		return nil, abi.Fail(abi.CodeInvalid, "invalid preview result")
+	}
+	return preview, nil
+}
+
+func validatePreviewObjectFields(raw json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return errors.New("preview result must be an object")
+	}
+	for _, field := range []string{
+		"provider", "external_id", "publication_status", "name", "description",
+		"locale", "price", "inventory", "weight", "volume", "tags", "unresolved",
+	} {
+		if _, exists := fields[field]; !exists {
+			return fmt.Errorf("preview result is missing %s", field)
+		}
+	}
+	if !isJSONArray(fields["tags"]) || !isJSONArray(fields["unresolved"]) {
+		return errors.New("preview result tags and unresolved fields must be arrays")
+	}
+	for objectName, required := range map[string][]string{
+		"price":     {"amount", "currency"},
+		"inventory": {"status", "track_quantity"},
+		"weight":    {"grams", "unit"},
+		"volume":    {"value", "unit"},
+	} {
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(fields[objectName], &object); err != nil || object == nil {
+			return fmt.Errorf("preview result %s must be an object", objectName)
+		}
+		for _, field := range required {
+			if _, exists := object[field]; !exists {
+				return fmt.Errorf("preview result %s is missing %s", objectName, field)
+			}
+		}
+		switch objectName {
+		case "inventory":
+			if !isJSONBoolean(object["track_quantity"]) {
+				return errors.New("preview result track_quantity must be a boolean")
+			}
+		case "weight":
+			if !isJSONInteger(object["grams"]) {
+				return errors.New("preview result grams must be an integer")
+			}
+		case "volume":
+			if !isJSONInteger(object["value"]) {
+				return errors.New("preview result volume must be an integer")
+			}
+		}
+	}
+	return nil
+}
+
+func isJSONArray(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	return len(raw) > 0 && raw[0] == '['
+}
+
+func isJSONInteger(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return false
+	}
+	var value int64
+	return json.Unmarshal(raw, &value) == nil
+}
+
+func isJSONBoolean(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	return bytes.Equal(raw, []byte("true")) || bytes.Equal(raw, []byte("false"))
+}
+
+func validateSupplierProductPreview(preview supplierProductPreview) error {
+	if preview.Provider != "selfnamed" ||
+		preview.PublicationStatus != "draft" ||
+		preview.Name == "" || strings.TrimSpace(preview.Name) != preview.Name ||
+		len(preview.Name) > 512 || !utf8.ValidString(preview.Name) ||
+		len(preview.Description) > 8192 || !utf8.ValidString(preview.Description) {
+		return errors.New("preview result identity or text is invalid")
+	}
+	if preview.ExternalID == "" || len(preview.ExternalID) > 20 || !isPositiveInteger(preview.ExternalID) {
+		return errors.New("preview result external ID is invalid")
+	}
+	if preview.Locale != nil || !supplierDecimalPattern.MatchString(preview.Price.Amount) ||
+		normalizeSupplierDecimal(preview.Price.Amount) != preview.Price.Amount ||
+		preview.Price.Currency != nil {
+		return errors.New("preview result price or locale is invalid")
+	}
+	if (preview.Inventory.Status != "instock" && preview.Inventory.Status != "outofstock") ||
+		preview.Inventory.Track {
+		return errors.New("preview result inventory is invalid")
+	}
+	if preview.Weight.Grams < 0 || preview.Weight.Grams > 100_000_000 || preview.Weight.Unit != nil ||
+		preview.Volume.Value < 0 || preview.Volume.Value > 1_000_000_000 || preview.Volume.Unit != nil {
+		return errors.New("preview result dimensions are invalid")
+	}
+	if preview.Tags == nil || len(preview.Tags) > 64 {
+		return errors.New("preview result has too many tags")
+	}
+	for _, tag := range preview.Tags {
+		if tag == "" || len(tag) > 128 || strings.TrimSpace(tag) != tag || !utf8.ValidString(tag) {
+			return errors.New("preview result tag is invalid")
+		}
+	}
+	if len(preview.Unresolved) != 3 ||
+		preview.Unresolved[0] != "currency" ||
+		preview.Unresolved[1] != "locale" ||
+		preview.Unresolved[2] != "volume_unit" {
+		return errors.New("preview result unresolved fields are invalid")
+	}
+	return nil
 }
 
 func buildSelfnamedProductPreview(productJSON string) (supplierProductPreview, error) {

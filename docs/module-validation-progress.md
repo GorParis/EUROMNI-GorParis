@@ -282,20 +282,24 @@ aucune requête de téléchargement ne peut partir. Les tests vérifiés sont
 
 ### Première prévisualisation Wasm catalogue Selfnamed
 
-Le call expérimental `catalog.supplier.product.preview` reçoit le JSON produit
-par le trigger IR, puis construit côté hôte un DTO de prévisualisation sans
-lecture ni écriture de table. La capability `catalog` est allowlistée, mais ce
-call n’a aucun accès réseau, filesystem ou catalogue persistant. L’entrée
-fournisseur est bornée à 8 KiB ; les images et champs hors périmètre sont
-ignorés. Le prix est normalisé comme dans la caractérisation WooCommerce
+Le guest Rust `no_std` reçoit le JSON produit par le trigger IR et calcule le
+DTO de prévisualisation. Il appelle ensuite
+`catalog.supplier.product.preview.result` : l’hôte valide le DTO et le renvoie,
+sans lecture ni écriture de table. La capability `catalog` est allowlistée,
+mais ces appels n’ont aucun accès réseau, filesystem ou catalogue persistant.
+L’entrée fournisseur est bornée à 8 KiB ; les images et champs hors périmètre
+sont ignorés. Le prix est normalisé comme dans la caractérisation WooCommerce
 (`17.40` → `17.4`, sans supprimer les zéros d’un entier). La réponse présente
 le produit comme brouillon et le poids en grammes ; devise, locale et unité du
-volume sont encore inconnues et apparaissent dans `unresolved`.
+volume sont encore inconnues et apparaissent dans `unresolved`. Le mapper Go
+est conservé comme oracle natif ; le test Wasmtime compare le résultat du guest
+aux mêmes fixtures.
 
-`TestSelfnamedProductPreviewWasmRunsWithoutPersistence` compile un IR dynamique,
-vérifie que l’import Wasm est limité à `euromni.call`, publie puis charge le
-module installé dans Wasmtime et compare la sortie attendue pour les trois
-fixtures partagées avec le pilote natif : nominal, rupture de stock avec poids
+`TestSelfnamedProductPreviewWasmRunsWithoutPersistence` compile le guest Rust
+épinglé avec Cargo `--frozen`, vérifie que l’import Wasm est limité à
+`euromni.call`, publie puis charge le module installé dans Wasmtime et compare
+la sortie attendue pour les trois fixtures partagées avec le pilote natif :
+nominal, rupture de stock avec poids
 de 1 001 g et tags, et prix `0.10` avec description vide. Le nombre de produits
 en base reste identique après les trois appels. Le même module Wasmtime rejette
 aussi un JSON produit malformé et une entrée produit dépassant 8 KiB avec
@@ -309,10 +313,13 @@ ce call. La restriction d’import à `euromni.call` et les trois sorties oracle
 restent vérifiées ; devise, locale et unité de volume restent non résolues. Le
 travail ne vise pas la traduction générale du plugin PHP.
 
-Cette preuve valide une frontière ABI Wasm → hôte et un aperçu non persistant,
-pas la traduction de PHP ni l’équivalence complète du plugin Selfnamed. La
-caractérisation du plugin natif et le mapper hôte sont deux implémentations
-distinctes. Devise, locale et unité du volume doivent encore être décidées ;
+Cette preuve valide un mapping de prévisualisation exécuté dans le guest Rust,
+une validation ABI hôte et un aperçu non persistant ; elle ne valide pas la
+traduction de PHP ni l’équivalence complète du plugin Selfnamed. La
+caractérisation du plugin natif, le mapper hôte oracle et le guest Rust sont des
+implémentations distinctes. Le compilateur IR générique ne génère pas encore ce
+guest spécialisé ; le test le compile séparément depuis le crate épinglé.
+Devise, locale et unité du volume doivent encore être décidées ;
 images/téléchargements, catégories, mise à jour de produits existants et
 publication active restent hors périmètre.
 
@@ -321,22 +328,19 @@ publication active restent hors périmètre.
 L’objectif immédiat est une preuve verticale limitée, pas la traduction
 générale du plugin ni une décision sur son mode de distribution.
 
-1. Définir le contrat métier pur de prévisualisation : JSON produit accepté,
-   DTO produit attendu, champs connus et champs explicitement non résolus. Les
-   trois fixtures Selfnamed et leur oracle restent la référence.
-2. Déplacer le calcul de cette projection dans le guest Wasm. À l’état actuel,
-   le module compilé appelle `euromni.call` et c’est le handler hôte qui
-   construit le DTO ; cela prouve le transport ABI et l’exécution Wasmtime, pas
-   un mapping métier exécuté dans le guest.
-3. Comparer la sortie du guest au même oracle pour les trois fixtures ; vérifier
-   le rejet explicite des entrées malformées ou trop grandes, l’import limité à
-   `euromni.call`, et l’absence de mutation persistante. Aucun accès réseau,
-   pagination, commande, livraison ou écriture CMS ne doit être ajouté au guest.
-4. Garder l’hôte comme frontière CMS : il valide la réponse et reste seul
-   responsable d’afficher la prévisualisation ou, dans une étape ultérieure,
-   d’effectuer une action d’import explicitement autorisée.
-5. Après cette preuve, définir le contrat du build distribuable (provenance,
-   versions compatibles, capacités, hash et validation). Ce contrat pourra
+1. Terminé : définir le contrat métier pur de prévisualisation. Les trois
+   fixtures Selfnamed et leur oracle restent la référence.
+2. Terminé : déplacer le mapping dans un guest Rust `no_std` spécialisé. Le
+   guest fait un seul appel `catalog.supplier.product.preview.result`, sans
+   accès réseau, pagination, commande, livraison ou écriture CMS.
+3. Terminé pour le prototype : comparer les trois sorties, rejeter les entrées
+   malformées ou supérieures à 8 KiB, vérifier l’unique import `euromni.call`
+   et l’absence de mutation persistante.
+4. Terminé : garder l’hôte comme frontière CMS ; il valide le DTO guest et
+   reste seul responsable de l’affichage ou de toute future action d’import.
+5. Prochaine étape : intégrer ce guest spécialisé à une génération de build
+   reproductible liée à l’IR, puis définir le contrat du build distribuable
+   (provenance, versions compatibles, capacités, hash et validation). Ce contrat pourra
    servir aussi bien à un catalogue central de builds qu’à des imports privés ;
    le choix entre distribution centrale et traitement local est différé.
 

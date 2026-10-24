@@ -100,6 +100,8 @@ func (h *Host) dispatch(ctx context.Context, tc TrustedContext, env *abi.Envelop
 		return h.catalogProductGet(ctx, tc, env)
 	case "catalog.supplier.product.preview":
 		return catalogSupplierProductPreview(env)
+	case "catalog.supplier.product.preview.result":
+		return catalogSupplierProductPreviewResult(env)
 	case "catalog.category.list":
 		return h.catalogCategoryList(ctx, tc, env)
 	default:
