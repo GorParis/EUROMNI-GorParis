@@ -352,9 +352,16 @@ PrestaShop `ps_newproducts` sur `displayHome` vers
 `catalog.product.newest`. Cette dernière ne s’applique qu’à l’analyse qui
 reconnaît l’appel de nouveaux produits et ses réglages de fenêtre et de nombre.
 À l’exécution, l’hôte lit `days` et `limit` depuis la configuration persistée
-de `shop_modules` ; ils ne sont pas fournis par le guest. `days: 0` désactive
-le widget, et l’hôte borne les requêtes à 3 650 jours et 100 produits. L’appel
-filtre les produits actifs sur `created_at`, du plus récent au plus ancien.
+de `shop_modules` ; ils ne sont pas fournis par le guest. Ce mapping ne
+reproduit pas exactement la configuration source : PrestaShop configure
+`NEW_PRODUCTS_NBR` dans le module (`8` par défaut), tandis que
+`PS_NB_DAYS_NEW_PRODUCT` est un réglage global qui désactive le widget quand il
+est vide. EUROMNI garde le nombre par boutique et ajoute une fenêtre `days`
+également par boutique (30 jours par défaut) ; `days: 0` désactive le widget.
+L’hôte borne les requêtes à 3 650 jours et 100 produits et filtre les produits
+actifs sur `created_at`, du plus récent au plus ancien. La présentation des
+produits et le lien Smarty du module amont ne sont pas reproduits : EUROMNI
+utilise les cartes de sa propre vitrine.
 
 Le prototype `catalog.supplier.product.preview` exerce aussi un trigger IR
 dynamique avec les trois fixtures Selfnamed synthétiques, communes au pilote
@@ -581,6 +588,12 @@ digest ; ces accès ne sont pas faits par les conteneurs. Les sources sont
 montées en lecture seule. Les données
 utilisent trois fixtures produit et un acheteur synthétiques, l’API reçoit
 uniquement un bearer token fictif et la stack n’a aucun credential Selfnamed.
+Le pilote monte également en lecture seule le plugin
+`woocommerce-extra-product-sorting-options` depuis sa fixture source épinglée
+et vérifie, dans cette même installation jetable, l’option native WooCommerce
+`by_stock` avec trois produits simples synthétiques (stock décroissant, nom
+croissant en cas d’égalité). Ce test natif du plugin est distinct de l’exécution
+Wasmtime EUROMNI ; il ne couvre pas les produits variables ni une boutique réelle.
 Le pilote contrôle le mapping catalogue vers un produit brouillon (prix, poids,
 volume et stock), les tags, le refus HTTP 401, le réimport sans doublon, puis
 les appels de commande et le groupe de livraison ; les courriels sont

@@ -27,6 +27,7 @@ services:
     volumes:
       - wordpress-data:/var/www/html
       - ${PILOT_DIR:?}/plugins/woocommerce:/var/www/html/wp-content/plugins/woocommerce:ro,z
+      - ${PILOT_DIR:?}/plugins/woocommerce-extra-product-sorting-options:/var/www/html/wp-content/plugins/woocommerce-extra-product-sorting-options:ro,z
       - ${PILOT_DIR:?}/plugins/selfnamed-cosmetics-on-demand:/var/www/html/wp-content/plugins/selfnamed-cosmetics-on-demand:ro,z
     depends_on:
       database:
@@ -47,6 +48,7 @@ services:
     volumes:
       - wordpress-data:/var/www/html
       - ${PILOT_DIR:?}/plugins/woocommerce:/var/www/html/wp-content/plugins/woocommerce:ro,z
+      - ${PILOT_DIR:?}/plugins/woocommerce-extra-product-sorting-options:/var/www/html/wp-content/plugins/woocommerce-extra-product-sorting-options:ro,z
       - ${PILOT_DIR:?}/plugins/selfnamed-cosmetics-on-demand:/var/www/html/wp-content/plugins/selfnamed-cosmetics-on-demand:ro,z
       - ./order-flow.php:/opt/pilot/order-flow.php:ro,z
     depends_on:

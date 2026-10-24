@@ -157,11 +157,16 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 		t.Fatalf("new-products widget = (%+v, installed=%t, error=%v), want %d products",
 			widgetProducts, moduleInstalled, err, len(expectedProducts))
 	}
-	for i, product := range expectedProducts {
-		if widgetProducts[i].ID != product.ID || widgetProducts[i].Slug != product.Slug {
-			t.Fatalf("new-products widget product %d = (%s, %s), want (%s, %s)",
-				i, widgetProducts[i].ID, widgetProducts[i].Slug, product.ID, product.Slug)
-		}
+	expectedData, err := json.Marshal(expectedProducts)
+	if err != nil {
+		t.Fatalf("encode expected widget products: %v", err)
+	}
+	widgetData, err := json.Marshal(widgetProducts)
+	if err != nil {
+		t.Fatalf("encode actual widget products: %v", err)
+	}
+	if !bytes.Equal(widgetData, expectedData) {
+		t.Fatalf("new-products widget data = %s, want %s", widgetData, expectedData)
 	}
 	modules, err := widgetRunner.ListModules(ctx, seed.ShopID)
 	if err != nil {
@@ -256,11 +261,12 @@ func TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS(t *testing.T) {
 		t.Fatalf("widget after build promotion = (%d products, installed=%t, error=%v)",
 			len(promotedProducts), promotedInstalled, err)
 	}
-	for i, product := range expectedProducts {
-		if promotedProducts[i].ID != product.ID || promotedProducts[i].Slug != product.Slug {
-			t.Fatalf("promoted widget product %d = (%s, %s), want (%s, %s)",
-				i, promotedProducts[i].ID, promotedProducts[i].Slug, product.ID, product.Slug)
-		}
+	promotedData, err := json.Marshal(promotedProducts)
+	if err != nil {
+		t.Fatalf("encode promoted widget products: %v", err)
+	}
+	if !bytes.Equal(promotedData, expectedData) {
+		t.Fatalf("promoted widget data = %s, want %s", promotedData, expectedData)
 	}
 	if err := widgetRunner.UninstallModule(ctx, seed.ShopID, store.NewProductsModuleName); err != nil {
 		t.Fatalf("reversibly uninstall module: %v", err)

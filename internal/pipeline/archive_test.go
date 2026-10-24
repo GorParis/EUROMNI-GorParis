@@ -373,6 +373,19 @@ func TestLowerRealPrestaShopNewProductsFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read ps_newproducts fixture: %v", err)
 	}
+	for _, sourceBehavior := range []string{
+		"Configuration::updateValue('NEW_PRODUCTS_NBR', 8)",
+		"Configuration::get('PS_NB_DAYS_NEW_PRODUCT')",
+		"Tools::getValue('NEW_PRODUCTS_NBR')",
+		"Product::getNewProducts(",
+		"(int) $this->context->language->id",
+		"Configuration::get('NEW_PRODUCTS_NBR')",
+		"'allNewProductsLink' => Context::getContext()->link->getPageLink('new-products')",
+	} {
+		if !strings.Contains(string(source), sourceBehavior) {
+			t.Errorf("pinned PrestaShop source does not contain expected behavior %q", sourceBehavior)
+		}
+	}
 	analysis, err := AnalyzePHPSource(string(source))
 	if err != nil {
 		t.Fatalf("AnalyzePHPSource() returned error: %v", err)

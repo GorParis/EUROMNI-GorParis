@@ -53,11 +53,24 @@ func TestCatalogProductSortMatchesSupportedWooCommerceOptions(t *testing.T) {
 	h := testHost()
 	tc := mustCtx(t, CapCatalog)
 	tests := []struct {
-		orderby string
-		want    []string
+		orderby  string
+		want     []string
+		variants map[string]int
 	}{
-		{orderby: "alphabetical", want: []string{"bougie-cedre", "cabas-lin", "ceinture-cuir", "chemise-lin", "tasse-gres"}},
-		{orderby: "reverse_alpha", want: []string{"tasse-gres", "chemise-lin", "ceinture-cuir", "cabas-lin", "bougie-cedre"}},
+		{
+			orderby: "alphabetical",
+			want:    []string{"bougie-cedre", "cabas-lin", "ceinture-cuir", "chemise-lin", "tasse-gres"},
+			variants: map[string]int{
+				"bougie-cedre": 1, "cabas-lin": 1, "ceinture-cuir": 3, "chemise-lin": 3, "tasse-gres": 1,
+			},
+		},
+		{
+			orderby: "reverse_alpha",
+			want:    []string{"tasse-gres", "chemise-lin", "ceinture-cuir", "cabas-lin", "bougie-cedre"},
+			variants: map[string]int{
+				"bougie-cedre": 1, "cabas-lin": 1, "ceinture-cuir": 3, "chemise-lin": 3, "tasse-gres": 1,
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.orderby, func(t *testing.T) {
@@ -84,9 +97,78 @@ func TestCatalogProductSortMatchesSupportedWooCommerceOptions(t *testing.T) {
 			got := make([]string, len(products))
 			for i, product := range products {
 				got[i] = product.Slug
+				if len(product.Variants) != test.variants[product.Slug] {
+					t.Errorf("%s variants = %d, want %d", product.Slug, len(product.Variants), test.variants[product.Slug])
+				}
 			}
 			if !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("sorted products = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCatalogProductSortByStockUsesWooCommerceFallbackOrder(t *testing.T) {
+	h := &Host{Products: sortingProductReader{
+		{
+			ID: "product-c", Slug: "citron", Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Citron"}},
+			Variants: []store.VariantView{{Inventory: store.InventoryView{Quantity: 9, Track: true}}},
+		},
+		{
+			ID: "product-b", Slug: "banane", Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Banane"}},
+			Variants: []store.VariantView{{Inventory: store.InventoryView{Quantity: 3, Track: true}}},
+		},
+		{
+			ID: "product-a", Slug: "abricot", Translations: []store.TranslationView{{Locale: "fr-FR", Name: "Abricot"}},
+			Variants: []store.VariantView{{Inventory: store.InventoryView{Quantity: 9, Track: true}}},
+		},
+	}}
+	tc := mustCtx(t, CapCatalog)
+	raw := h.Invoke(context.Background(), tc, sortingEnvelope(t, []byte(`{"locale":"fr-FR","orderby":"by_stock"}`)))
+	var response abi.Response
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.OK {
+		t.Fatalf("stock sorting call failed: %s", raw)
+	}
+	encoded, err := json.Marshal(response.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var products []store.ProductView
+	if err := json.Unmarshal(encoded, &products); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, len(products))
+	for i, product := range products {
+		got[i] = product.Slug
+	}
+	want := []string{"abricot", "citron", "banane"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stock-sorted products = %#v, want %#v", got, want)
+	}
+}
+
+func TestCatalogProductSortByStockRejectsUnsupportedInventoryShapes(t *testing.T) {
+	tests := []struct {
+		name     string
+		variants []store.VariantView
+	}{
+		{name: "no variant"},
+		{name: "multiple variants", variants: []store.VariantView{{Inventory: store.InventoryView{Track: true}}, {Inventory: store.InventoryView{Track: true}}}},
+		{name: "untracked stock", variants: []store.VariantView{{Inventory: store.InventoryView{Quantity: 5}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h := &Host{Products: sortingProductReader{{ID: "product", Slug: "product", Variants: test.variants}}}
+			raw := h.Invoke(context.Background(), mustCtx(t, CapCatalog), sortingEnvelope(t, []byte(`{"locale":"fr-FR","orderby":"by_stock"}`)))
+			var response abi.Response
+			if err := json.Unmarshal(raw, &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.OK || response.Error == nil || response.Error.Code != abi.CodeInvalid {
+				t.Fatalf("unsupported inventory shape was not rejected: %s", raw)
 			}
 		})
 	}
@@ -108,6 +190,16 @@ func TestCatalogProductSortRejectsUnsupportedOptionsAndLocales(t *testing.T) {
 			t.Fatalf("unsupported sorting input %s was not rejected: %s", input, raw)
 		}
 	}
+}
+
+type sortingProductReader []store.ProductView
+
+func (p sortingProductReader) GetProduct(context.Context, string, string) (*store.ProductView, error) {
+	return nil, store.ErrNotFound
+}
+
+func (p sortingProductReader) ListProducts(context.Context, string) ([]store.ProductView, error) {
+	return append([]store.ProductView(nil), p...), nil
 }
 
 func sortingEnvelope(t *testing.T, input []byte) []byte {

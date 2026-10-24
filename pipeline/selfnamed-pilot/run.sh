@@ -33,6 +33,17 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$PLUGIN_DIR"
+SORTING_PLUGIN_SOURCE="$ROOT_DIR/pipeline/fixtures/woocommerce-extra-product-sorting-options/woocommerce-extra-product-sorting-options-bc5829d4d2383ae956869386eb40e772cf4a76a0"
+mkdir -p "$PLUGIN_DIR/woocommerce-extra-product-sorting-options"
+cp -a "$SORTING_PLUGIN_SOURCE"/. "$PLUGIN_DIR/woocommerce-extra-product-sorting-options/"
+SORTING_PLUGIN_ENTRY="$PLUGIN_DIR/woocommerce-extra-product-sorting-options/woocommerce-extra-product-sorting-options.php"
+printf '%s  %s\n' \
+  aaf1a1a13ec7e0465a4c451b952aba79626be3288104c18122c47bf01c81306f \
+  "$SORTING_PLUGIN_ENTRY" | sha256sum --check --status
+if ! grep -q "^ \* Version: 2.11.0$" "$SORTING_PLUGIN_ENTRY"; then
+  printf 'WooCommerce sorting plugin does not declare the pinned version 2.11.0.\n' >&2
+  exit 1
+fi
 curl --fail --location --silent --show-error \
   https://downloads.wordpress.org/plugin/woocommerce.10.9.0.zip \
   --output "$PILOT_DIR/woocommerce.zip"
@@ -86,5 +97,6 @@ podman compose -p "$PROJECT" -f "$COMPOSE_FILE" exec -T cli \
   --skip-email
 
 podman compose -p "$PROJECT" -f "$COMPOSE_FILE" exec -T cli wp plugin activate woocommerce
+podman compose -p "$PROJECT" -f "$COMPOSE_FILE" exec -T cli wp plugin activate woocommerce-extra-product-sorting-options
 podman compose -p "$PROJECT" -f "$COMPOSE_FILE" exec -T cli wp plugin activate selfnamed-cosmetics-on-demand
 podman compose -p "$PROJECT" -f "$COMPOSE_FILE" exec -T cli wp eval-file /opt/pilot/order-flow.php

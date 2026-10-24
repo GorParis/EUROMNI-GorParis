@@ -1,8 +1,73 @@
 # Reprise du projet EUROMNI
 
 Ce document est le point de départ pour le prochain développeur. Lire d'abord
-les consignes du dépôt et le statut Git actuel ; ce guide décrit le contexte,
-pas une preuve que l'arbre de travail est propre.
+les consignes du dépôt, le [système de management de la qualité](systeme-management-qualite.md)
+et le statut Git actuel ; ce guide décrit le contexte, pas une preuve que
+l'arbre de travail est propre.
+
+## Passation immédiate — 24 octobre 2026
+
+- HEAD partagé est `e0547bbb898a4312d663f7614e9f4ae478ed487f`
+  (`Test transported signed build publication`), sur `main` et aligné avec
+  `origin/main` lors de cette vérification.
+- GitHub Actions Go CI #94 a réussi sur ce commit : les quatre jobs Go/Rust
+  Linux/Windows sont verts. Les jobs Go incluent `go vet ./...`, les tests
+  unitaires et les intégrations PostgreSQL ; la preuve distante est le
+  [run #94](https://github.com/GorParis/EUROMNI-GorParis/actions/runs/40102898132).
+- QP-07 est partagé et validé techniquement sur Linux/Windows pour ce lot. Les
+  tests couvrent le rejet d’un manifeste signé altéré, la stabilité du build
+  courant et du pin lorsqu’un package est rejeté, l’échec DB après écriture de
+  l’artefact, la relecture validée des composants transportés et l’exécution
+  Wasmtime du package signé transporté. Le test complet ne couvre toujours pas
+  la passerelle API entre approbation d’un candidat et publication.
+- Depuis cette reprise, des changements locaux QP-08 ajoutent le tri
+  WooCommerce `by_stock` au sous-ensemble strict d’une variante suivie, des
+  tests vérifiant que les variantes restent dans les résultats triés, et une
+  intégration du module publié dans Wasmtime. Le pilote WooCommerce WordPress
+  natif a aussi réussi localement sous Podman. La suite a ensuite comparé
+  `ps_newproducts` à sa configuration source : le nombre est configurable dans
+  le module PrestaShop (défaut 8), mais la fenêtre de nouveauté est un réglage
+  global du CMS ; EUROMNI la rend par boutique (défaut 30 jours). Les tests de
+  lowering et d’intégration ont été renforcés pour vérifier la source épinglée
+  et le contenu complet des réponses Wasm. Les validations de ce dernier lot
+  restent à exécuter ; aucune validation CI Windows n’est disponible.
+- La suite intégration complète
+  `go test -p 1 -tags=integration -count=1 ./...` passe pour le pipeline, le
+  store et Wasmtime, mais échoue dans `internal/backup/TestBackupAndRestorePostgreSQL` :
+  `pg_restore` local 18.6 émet `SET transaction_timeout`, absent du PostgreSQL 16
+  temporaire. Cette incompatibilité de version des outils locaux est une limite
+  de l’essai, pas une preuve d’échec du changement QP-08.
+- Avant toute modification, relire l’état Git courant. Au début de cette
+  reprise, l’arbre contenait des modifications locales à `AGENTS.md`,
+  `cmd/quarantine-reconciler/main.go`, ce guide et `internal/store/store.go`,
+  ainsi que `.vscode/` et `docs/systeme-management-qualite.md` non suivis.
+  Préserver ces changements ; isoler précisément tout lot avant un commit et
+  ne rien commiter ou pousser sans demande explicite.
+
+### Reproduction ciblée sur Windows
+
+Utiliser Go 1.25.0, CGO activé et GCC UCRT64 (`mingw-w64-ucrt-x86_64-gcc`),
+comme dans le job Windows de [Go CI](../.github/workflows/ci.yml). Pour les
+tests d’intégration, le runner démarre PostgreSQL 16 embarqué et temporaire ;
+aucun service PostgreSQL local, conteneur ou base persistante n’est nécessaire.
+Le cache partagé se trouve dans `.tmp/embedded-postgres/cache`, les instances
+jetables sont nettoyées par les tests. Le run #94 valide déjà le commit courant ;
+ces commandes permettent de reproduire les tests ciblés sous Windows :
+
+```powershell
+go test ./internal/api ./internal/pipeline
+go test -tags=integration -count=1 ./internal/pipeline -run '^TestRejectedBuildPublicationPreservesCurrentBuildAndInstalledPin$'
+go test -tags=integration -count=1 ./internal/pipeline -run '^TestBuildRegistrationFailurePreservesCurrentBuildAndInstalledPin$'
+go test -tags=integration -count=1 ./internal/pipeline -run '^TestTransportedSignedBuildPackageRunsAsInstalledModule$'
+go vet ./...
+git diff --check
+```
+
+Pour reproduire la CI complète, appliquer les prérequis Rust/Cargo et
+PostgreSQL client éventuel décrits dans [Dépendances](dependencies.md), puis
+lancer `go test -p 1 -tags=integration -count=1 ./...`. Le sous-ensemble QP-07
+ci-dessus n’a pas besoin de Rust ni des outils `pg_dump`/`pg_restore`. Noter
+explicitement les résultats Windows avant de modifier les statuts du plan.
 
 ## État connu
 
@@ -90,11 +155,11 @@ pas une preuve que l'arbre de travail est propre.
   interpréter ce résultat comme une autorisation de production. La coordination
   PostgreSQL multi-instance décrite ci-dessus a été ajoutée après cette revue
   et n'est pas couverte par son résultat.
-- QP-06 est en cours et QP-07 en vérification, uniquement pour le prototype
-  Selfnamed lié à son IR et le validateur de package ; le chemin de publication
-  rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP
-  générale ni toolchain/worker de production n'est qualifié. QP-04/05 restent
-  des prérequis à tout élargissement métier.
+- QP-06 est en cours et QP-07 reste en vérification du prototype ; la CI #94
+  valide les changements QP-07 du commit courant sur Linux et Windows. Le chemin
+  de publication rejette un Wasm non conforme avant stockage. Aucune traduction
+  PHP générale ni toolchain/worker de production n'est qualifié. QP-04/05
+  restent des prérequis à tout élargissement métier.
 - Le premier staging Selfnamed explicite est maintenant implémenté :
   `POST /v1/admin/products/supplier-drafts` crée/actualise un brouillon
   idempotent tenant-scopé à partir du DTO de prévisualisation déjà calculé.
@@ -226,49 +291,30 @@ pas une preuve que l'arbre de travail est propre.
 
 ## Prochaines actions recommandées
 
-1. Qualifier la primitive Ed25519 et le récepteur ZIP avec tests complets, CI
-   Linux/Windows et revue de sécurité indépendante avant tout usage de production.
-2. Pour les candidats reçus, définir la rétention avant toute passerelle vers
-   le registre global de builds. L'inventaire et la revue admin (approbation,
-   rejet avec motif, réouverture auditée) sont disponibles ; aucune action ne
-   publie ni ne promeut. Le quota local reste provisoire et non coordonné
-   multi-instance.
-3. Garder les builds locaux disponibles et le catalogue facultatif. Une
-   signature prouve l'origine cryptographique seulement, jamais l'innocuité ;
-   tout passage futur au registre puis toute promotion doivent rester distincts
-   et explicites.
-4. Documenter et tester le déploiement de `EUROMNI_BUILD_TRUST_FILE` et
-   `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR`, notamment les droits d'accès.
-   Compléter la politique : rotation/retrait, identité affichée, validité et
-   rôles autorisés à promouvoir.
-5. Obtenir une revue de sécurité indépendante du validateur ZIP, de l'endpoint
-   d'upload et du stockage en quarantaine ; traiter les findings avant toute
-   activation hors environnement de test. Le contrôle local du 21 octobre était
-   ciblé et ne remplace pas cette revue.
-6. Décider la durée et la fréquence de rétention, puis planifier
-   `cmd/quarantine-reconciler` avec `EUROMNI_QUARANTINE_DIR` et une option
-   `-older-than` explicite (par exemple `720h` pour 30 jours). La commande ne
-   crée pas le répertoire cible et ne définit pas de politique par défaut.
-   Garder la quarantaine isolée des artefacts publiés.
-7. Évaluer l'absence de limitation de débit, l'usage du stockage local et le
-   scénario multi-instance ; documenter les limites ou choisir une solution
-   coordonnée avant le déploiement.
-8. Rejouer `go test ./...`, `go vet ./...`, les tests d'intégration pertinents,
-   et vérifier la matrice CI Windows/Linux après chaque changement.
-9. Si des régressions UI deviennent fréquentes, étendre le runner Playwright
-   avec des scénarios isolés pour les actions administratives actuellement
-   vérifiées manuellement ; garder toute base de test séparée de la base locale
-   persistante.
-10. Ne pas commencer la traduction PHP générale. QP-04/05 (contrats des
-     adaptateurs et de l'IR) sont des prérequis avant l'élargissement métier.
+1. La CI #94 a validé QP-07 sur Linux et Windows. Garder explicite la limite
+   restante : l’approbation d’un candidat n’est pas intégrée à la publication ;
+   décider si ce parcours appartient au périmètre avant d’ajouter du code.
+2. Relancer les validations du lot local et poursuivre QP-08 selon les étapes de
+   [`module-validation-progress.md`](module-validation-progress.md#prochaines-étapes-prévisibles) :
+   cadrer une preuve PrestaShop sur instance réelle isolée, puis WooCommerce
+   réel, avec environnements autorisés et données maîtrisées.
+3. Le staging explicite Selfnamed preview → brouillon tenant-scopé est déjà
+   implémenté ; ne pas le reprendre comme travail restant. Ne pas élargir la
+   traduction PHP générale avant les prérequis QP-04/05.
+4. Garder réception signée et quarantaine hors production sans décisions et
+   contrôles opérationnels confirmés. La revue de sécurité du parcours de
+   packages consignée sur `df7a6a7` ne couvre pas la coordination multi-instance
+   ajoutée après cette revue et ne constitue pas une autorisation de production.
 
 ## Message de reprise à copier dans une nouvelle conversation
 
 > Je reprends le dépôt EUROMNI-GorParis. Lis d'abord
 > `docs/reprise-prochain-developpeur.md`, `docs/plan-directeur-qualite.md` et
 > `pipeline/README.md`. Vérifie ensuite `git status --short --branch`, le dernier
-> commit et l'état du run GitHub Actions correspondant. Ne touche pas à
-> `.vscode/` ni aux modifications locales préexistantes non liées. Le contrat
+> commit et l'état du run GitHub Actions correspondant. La CI Go #94 du commit
+> `e0547bbb898a4312d663f7614e9f4ae478ed487f` valide déjà les jobs Linux/Windows
+> et PostgreSQL du lot QP-07 ; ne pas répéter cette validation sans raison.
+> Préserve `.vscode/` et toutes les modifications locales. Le contrat
 > prototype manifeste/IR/Wasm et la réception ZIP signée sont implémentés :
 > `EUROMNI_BUILD_TRUST_FILE` configure la confiance, et
 > `EUROMNI_BUILD_PACKAGE_CANDIDATE_DIR` active le staging privé par boutique.
@@ -276,9 +322,13 @@ pas une preuve que l'arbre de travail est propre.
 > .../candidates/{packageSHA256}` les métadonnées revalidées et `POST
 > .../candidates/{packageSHA256}/approval`, `/rejection` et `/reopen` enregistrent
 > les décisions auditables owner/admin (le rejet exige un motif). L'interface
-> Modules expose ce parcours, sans publier, installer ni promouvoir. Consulte
-> les prochaines actions pour la rétention, les quotas multi-instance et la revue
-> sécurité indépendante. L'orientation
+> Modules expose ce parcours, sans publier, installer ni promouvoir. La
+> passerelle candidat approuvé → publication reste hors test ; décider si
+> elle doit entrer dans le périmètre. Le staging Selfnamed preview → brouillon
+> est déjà implémenté. Continuer QP-08 selon les étapes de
+> `docs/module-validation-progress.md`, avec environnement autorisé et données
+> maîtrisées.
+> L'orientation
 > reste hybride : build local possible, catalogue signé facultatif.
 > QP-03 (quarantaine ZIP) est un chantier distinct. Ne lance aucune traduction
 > PHP générale avant les prérequis QP-04/05. Exécute les validations pertinentes

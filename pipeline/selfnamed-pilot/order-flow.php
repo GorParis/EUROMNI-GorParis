@@ -6,6 +6,51 @@ function pilot_assert( $condition, string $message ): void {
 	}
 }
 
+function pilot_assert_stock_sorting(): void {
+	set_theme_mod( 'wc_extra_product_sorting_options', array( 'by_stock' ) );
+	$sorting_options = apply_filters( 'woocommerce_catalog_orderby', array( 'menu_order' => 'Default sorting' ) );
+	pilot_assert( isset( $sorting_options['by_stock'] ), 'WooCommerce stock sorting option was not registered.' );
+
+	$stock_products = array(
+		'citron'  => array( 'name' => 'Synthetic Stock Citron', 'quantity' => 9 ),
+		'banane'  => array( 'name' => 'Synthetic Stock Banane', 'quantity' => 3 ),
+		'abricot' => array( 'name' => 'Synthetic Stock Abricot', 'quantity' => 9 ),
+	);
+	$product_ids = array();
+	foreach ( $stock_products as $slug => $stock_product ) {
+		$product = new WC_Product_Simple();
+		$product->set_name( $stock_product['name'] );
+		$product->set_slug( 'euromni-' . $slug );
+		$product->set_status( 'publish' );
+		$product->set_regular_price( '1.00' );
+		$product->set_manage_stock( true );
+		$product->set_stock_quantity( $stock_product['quantity'] );
+		$product->set_stock_status( 'instock' );
+		$product_ids[ $slug ] = $product->save();
+	}
+
+	$ordering_args = WC()->query->get_catalog_ordering_args( 'by_stock', 'ASC' );
+	pilot_assert( '_stock' === $ordering_args['meta_key'], 'WooCommerce stock sorting did not select the stock metadata.' );
+	$query = new WP_Query(
+		array_merge(
+			array(
+				'post_type'      => 'product',
+				'post_status'    => 'publish',
+				'posts_per_page' => -1,
+				'post__in'       => array_values( $product_ids ),
+				'fields'         => 'ids',
+				'no_found_rows'  => true,
+			),
+			$ordering_args
+		)
+	);
+	$expected_ids = array( $product_ids['abricot'], $product_ids['citron'], $product_ids['banane'] );
+	pilot_assert(
+		$expected_ids === $query->posts,
+		sprintf( 'WooCommerce stock order = %s, want %s.', wp_json_encode( $query->posts ), wp_json_encode( $expected_ids ) )
+	);
+}
+
 add_filter( 'woocommerce_email_enabled_new_order', '__return_false' );
 add_filter( 'woocommerce_email_enabled_customer_processing_order', '__return_false' );
 
@@ -53,6 +98,8 @@ foreach ( array( 842002, 842003, 842004 ) as $selfnamed_id ) {
 update_option( 'selfnamed_api_url', 'http://mock-api:8080/unauthorized' );
 pilot_assert( false === $product_importer->create_all_products( 1, 10 ), 'Unauthorized catalog API was reported as a successful import.' );
 update_option( 'selfnamed_api_url', 'http://mock-api:8080' );
+
+pilot_assert_stock_sorting();
 
 pilot_assert_shipping_behavior();
 
@@ -252,7 +299,7 @@ pilot_assert(
 pilot_assert( 1 === $assertions['order_posts'], 'Expected exactly one order submission despite the repeated sync.' );
 pilot_assert( true === $assertions['payload_valid'], 'The synthetic buyer, product, or shipping data did not match the expected payload.' );
 
-WP_CLI::success( 'Selfnamed 2.0.19 catalog, shipping, order, and callback mock flows passed; fake credentials only.' );
+WP_CLI::success( 'WooCommerce by_stock sorting and Selfnamed 2.0.19 synthetic pilot flows passed; fake credentials only.' );
 
 function pilot_send_notification( array $payload ) {
 	$response = wp_remote_post(

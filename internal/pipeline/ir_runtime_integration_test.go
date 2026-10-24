@@ -541,13 +541,35 @@ func TestRealPrestaShopNewProductsWasmRunsAsInstalledModule(t *testing.T) {
 	if err := runtime.LoadInstalled(ctx, moduleStore, seed.ShopID, seed.ModuleID, storedWasm); err != nil {
 		t.Fatalf("load published PrestaShop module: %v", err)
 	}
-	results, err := runtime.Run(ctx, moduleStore, seed.ShopID, seed.ModuleID, "run")
+	responseBytes, err := runtime.RunInstalledWithInputAndResponse(ctx, moduleStore, seed.ShopID, seed.ModuleID, "run", nil)
 	if err != nil {
 		t.Fatalf("execute published PrestaShop module: %v", err)
 	}
-	expectedResponse := abi.EncodeOK("catalog.product.newest", "", expectedProducts)
-	if len(results) != 1 || results[0] != int32(len(expectedResponse)) {
-		t.Fatalf("guest result = %v, want successful new-products response length %d", results, len(expectedResponse))
+	var response abi.Response
+	if err := json.Unmarshal(responseBytes, &response); err != nil {
+		t.Fatalf("decode published PrestaShop response: %v", err)
+	}
+	if !response.OK || response.Call != "catalog.product.newest" {
+		t.Fatalf("published PrestaShop response = %s, want successful new-products call", responseBytes)
+	}
+	responseData, err := json.Marshal(response.Data)
+	if err != nil {
+		t.Fatalf("encode published PrestaShop product data: %v", err)
+	}
+	var actualProducts []store.ProductView
+	if err := json.Unmarshal(responseData, &actualProducts); err != nil {
+		t.Fatalf("decode published PrestaShop products: %v", err)
+	}
+	expectedData, err := json.Marshal(expectedProducts)
+	if err != nil {
+		t.Fatalf("encode expected PrestaShop product data: %v", err)
+	}
+	actualData, err := json.Marshal(actualProducts)
+	if err != nil {
+		t.Fatalf("encode actual PrestaShop product data: %v", err)
+	}
+	if !bytes.Equal(actualData, expectedData) {
+		t.Fatalf("published PrestaShop products = %s, want %s", actualData, expectedData)
 	}
 	if _, err := database.ExecContext(ctx, `
 		UPDATE shop_modules
@@ -556,13 +578,22 @@ func TestRealPrestaShopNewProductsWasmRunsAsInstalledModule(t *testing.T) {
 	`, seed.ShopID, seed.ModuleID, `{"days":0,"limit":8}`); err != nil {
 		t.Fatalf("disable installed PrestaShop module widget: %v", err)
 	}
-	results, err = runtime.Run(ctx, moduleStore, seed.ShopID, seed.ModuleID, "run")
+	responseBytes, err = runtime.RunInstalledWithInputAndResponse(ctx, moduleStore, seed.ShopID, seed.ModuleID, "run", nil)
 	if err != nil {
 		t.Fatalf("execute module after changing installed settings: %v", err)
 	}
-	disabledResponse := abi.EncodeOK("catalog.product.newest", "", []store.ProductView{})
-	if len(results) != 1 || results[0] != int32(len(disabledResponse)) {
-		t.Fatalf("guest result after settings update = %v, want disabled response length %d", results, len(disabledResponse))
+	if err := json.Unmarshal(responseBytes, &response); err != nil {
+		t.Fatalf("decode disabled PrestaShop response: %v", err)
+	}
+	if !response.OK || response.Call != "catalog.product.newest" {
+		t.Fatalf("disabled PrestaShop response = %s, want successful new-products call", responseBytes)
+	}
+	responseData, err = json.Marshal(response.Data)
+	if err != nil {
+		t.Fatalf("encode disabled PrestaShop product data: %v", err)
+	}
+	if string(responseData) != "[]" {
+		t.Fatalf("disabled PrestaShop products = %s, want []", responseData)
 	}
 }
 

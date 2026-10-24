@@ -69,30 +69,53 @@ incluses dans cette campagne.
 ## Pilote Wasm PrestaShop `ps_newproducts` — 20 octobre 2026
 
 Le lowering reconnaît le hook `displayHome`, son handler widget et les accès
-aux nouveaux produits et à leurs deux réglages. Il produit un appel statique
-`catalog.product.newest` ; l’hôte lit `days` (fenêtre de nouveauté PrestaShop)
-et `limit` (nombre de produits configuré, défaut du module : 8) depuis le
-document `shop_modules.config` associé au module et à la boutique. La
-configuration n’est jamais transmise par le guest.
+aux nouveaux produits et à leurs réglages. Le contrat amont distingue deux
+sources : `ps_newproducts` initialise `NEW_PRODUCTS_NBR` à 8 et permet de
+modifier ce nombre dans sa configuration de module ; la fenêtre de nouveauté
+vient du réglage global PrestaShop `PS_NB_DAYS_NEW_PRODUCT`, dont la valeur
+vide désactive la requête. L’adaptateur EUROMNI conserve un `limit` par module
+et boutique (défaut 8) et expose aussi `days` par module et boutique (défaut
+EUROMNI : 30), au lieu de relire le réglage global du CMS source. `days: 0`
+reproduit l’effet de désactivation ; la portée et les valeurs par défaut de
+`days` ne sont donc pas une parité de configuration PrestaShop.
+
+Le module amont appelle `Product::getNewProducts` avec la langue courante, un
+décalage de zéro et la limite configurée, puis assemble et présente les produits
+pour Smarty et construit un lien vers la page « nouveaux produits ». EUROMNI
+retourne les produits actifs de sa boutique selon `created_at`, du plus récent
+au plus ancien, puis les rend avec ses cartes catalogue existantes. Les champs
+de présentation Smarty et le lien amont ne sont pas traduits ; cette preuve ne
+revendique pas une parité de rendu. L’appel est statique
+`catalog.product.newest` ; la configuration n’est jamais transmise par le guest.
 L’hôte rejette les fenêtres supérieures à 3 650 jours et les limites hors de
 1–100 ; une fenêtre nulle produit une liste vide, comme le widget désactivé.
 La requête ne retourne que les produits actifs créés dans la fenêtre, triés du
 plus récent au plus ancien.
 
 `TestLowerRealPrestaShopNewProductsFixture` vérifie l’analyse et le lowering
-sur l’entrée PHP réelle épinglée et la compilation. Les tests hôte vérifient
+sur l’entrée PHP réelle épinglée, ses réglages source (défaut du nombre,
+fenêtre globale, langue, décalage et lien) et la compilation. Les tests hôte vérifient
 les bornes, le type entier et le refus d’une configuration manquante ou invalide.
 Le test d’intégration
 `TestRealPrestaShopNewProductsWasmRunsAsInstalledModule` attribue des dates
 synthétiques à des produits seedés, publie le Wasm et son manifeste dans une
 base PostgreSQL d’intégration jetable, charge le module installé dans Wasmtime,
-puis vérifie la réponse pour les réglages persistés et leur prise en compte
-immédiate après modification.
+puis compare le contenu complet des réponses ABI aux résultats catalogue pour
+les réglages persistés et leur prise en compte immédiate après modification,
+y compris le cas désactivé.
 
 Cette preuve ne prétend pas exécuter le PHP tiers : l’IR est une règle de
 traduction explicite et bornée. Elle ne couvre ni le paquet PrestaShop Addons
 amont, ni le rendu Smarty, ni l’installation du module PHP dans une instance
 PrestaShop.
+
+Validation du rapprochement source/données sous Linux avec Go 1.26.10 :
+`go test -count=1 ./internal/pipeline -run '^TestLowerRealPrestaShopNewProductsFixture$'`,
+`go test -tags=integration -count=1 ./internal/pipeline -run '^(TestRealPrestaShopNewProductsWasmRunsAsInstalledModule|TestUpstreamPrestaShopArchivePublishesAndRunsInIsolatedCMS)$'`,
+`go test ./...`, `go vet ./...` et `git diff --check` réussissent. Les tests
+d’intégration utilisent PostgreSQL jetable. Aucune instance PrestaShop réelle
+n’a été utilisée ; la comparaison du contrat source reste statique et ne
+démontre pas la valeur effective du réglage global ni le rendu natif.
 
 ## Pilote Wasm WooCommerce `woocommerce-extra-product-sorting-options`
 
@@ -108,25 +131,42 @@ L’importeur refuse tout autre hash, borne et valide la structure ZIP, lit
 l’entrée PHP sans extraction et vérifie l’identité/version du module.
 
 La règle de lowering ne traduit que le hook
-`woocommerce_get_catalog_ordering_args` pour les options `alphabetical` et
-`reverse_alpha`. Le guest appelle uniquement `catalog.product.sort` sous la
-capacité `catalog`; le host trie le nom traduit pour la locale reçue
-(`fr-FR` ou `en-GB`) avec des critères déterministes de départage. Les options
-`by_stock`, `review_count`, `on_sale_first`, les hooks de configuration et les
-autres versions source restent explicitement non prises en charge. Aucun code
-PHP n’est exécuté.
+`woocommerce_get_catalog_ordering_args` pour les options `alphabetical`,
+`reverse_alpha` et un sous-ensemble strict de `by_stock`. Le guest appelle
+uniquement `catalog.product.sort` sous la capacité `catalog`; le host trie le
+nom traduit pour la locale reçue (`fr-FR` ou `en-GB`) avec des critères
+déterministes de départage. `by_stock` reproduit le tri `_stock` numérique
+décroissant puis le repli par nom croissant uniquement si chaque produit a
+exactement une variante avec inventaire géré. Les produits sans variante,
+multi-variantes ou sans inventaire suivi sont refusés explicitement ; aucune
+agrégation de stock parente n’est inventée. `review_count`, `on_sale_first`,
+les hooks de configuration et les autres versions source restent
+explicitement non pris en charge. Aucun code PHP n’est exécuté.
 
 `TestBuildWooCommerceSortingArchiveUsesPinnedSource` vérifie le hash, la
 provenance, le hook, l’IR dynamique et l’import Wasm limité à `euromni.call`.
-`TestCatalogProductSortMatchesSupportedWooCommerceOptions` valide l’oracle de
-tri. Le test d’intégration
+`TestCatalogProductSortMatchesSupportedWooCommerceOptions` valide l’oracle
+alphabétique ; les tests `TestCatalogProductSortByStock*` vérifient le tri
+numérique, le repli par nom et le refus des formes d’inventaire non prises en
+charge. Le test d’intégration
 `TestRealWooCommerceSortingArchiveRunsAsPublishedWasm` importe l’archive,
-publie Wasm et manifeste dans PostgreSQL jetable, puis exécute les deux options
+publie Wasm et manifeste dans PostgreSQL jetable, puis exécute les trois options
 dans Wasmtime et compare les produits ordonnés à l’oracle français.
 
-Cette preuve QP-08 n’est ni une installation du plugin dans WordPress ni une
-compatibilité générale WooCommerce ; elle n’active pas de gestion de cycle de
-vie WooCommerce dans l’admin EUROMNI.
+Cette preuve Wasm QP-08 reste distincte d’une installation du plugin dans
+WordPress et n’active pas de cycle de vie WooCommerce dans l’admin EUROMNI.
+
+Le pilote WordPress/WooCommerce jetable exécute aussi le plugin source épinglé
+`2.11.0` avec trois produits simples synthétiques : stock numérique décroissant,
+puis nom croissant en cas d’égalité. WooCommerce `10.9.0` est téléchargé avec
+SHA-256 contrôlé ; le plugin est copié depuis la fixture épinglée après contrôle
+du SHA-256 source, monté en lecture seule, activé dans le conteneur et évalué
+sur le réseau interne sans ports publiés. La base temporaire et le volume sont
+supprimés en fin de test. Cette validation native confirme le comportement du
+plugin dans cette version et ce cas synthétique ; elle ne prouve ni
+l’équivalence complète du module Wasm, ni le tri de produits variables, ni une
+compatibilité générale WooCommerce, ni le cycle de vie du module dans l’admin
+EUROMNI.
 
 Les rôles `owner` et `admin` peuvent lire et modifier `days` et `limit` depuis
 l’administration. Les endpoints sont authentifiés, limités à `ps_newproducts`
@@ -493,7 +533,7 @@ exécuté ce build avec succès.
 
 ## Prochaines étapes prévisibles
 
-1. comparer plus largement le widget avec les données et la configuration PrestaShop d’origine ;
+1. comparer le widget à une instance PrestaShop réelle isolée, notamment la portée globale de la fenêtre de nouveauté et le rendu/pagination ; le test source local ne démontre pas ces comportements CMS ;
 2. examiner le paquet PrestaShop Addons et définir une preuve distincte de compatibilité avec une instance PrestaShop réelle ;
 3. tester le plugin de tri WooCommerce sur une instance réelle et décider si d’autres options limitées méritent un lowering ;
 4. définir des règles explicites de lowering pour d’autres triggers et vérifier leur sémantique ;

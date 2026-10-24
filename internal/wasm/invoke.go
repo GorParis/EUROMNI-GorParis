@@ -134,7 +134,7 @@ func (h *Host) catalogProductSort(ctx context.Context, tc TrustedContext, env *a
 	if err != nil {
 		return nil, err
 	}
-	if input.Orderby != "alphabetical" && input.Orderby != "reverse_alpha" {
+	if input.Orderby != "alphabetical" && input.Orderby != "reverse_alpha" && input.Orderby != "by_stock" {
 		return nil, abi.Fail(abi.CodeInvalid, "unsupported product sorting option")
 	}
 	var locale language.Tag
@@ -156,8 +156,22 @@ func (h *Host) catalogProductSort(ctx context.Context, tc TrustedContext, env *a
 	if products == nil {
 		products = []store.ProductView{}
 	}
+	if input.Orderby == "by_stock" {
+		for _, product := range products {
+			if len(product.Variants) != 1 || !product.Variants[0].Inventory.Track {
+				return nil, abi.Fail(abi.CodeInvalid, "stock sorting requires exactly one tracked inventory variant per product")
+			}
+		}
+	}
 	comparator := collate.New(locale)
 	sort.SliceStable(products, func(i, j int) bool {
+		if input.Orderby == "by_stock" {
+			leftStock := products[i].Variants[0].Inventory.Quantity
+			rightStock := products[j].Variants[0].Inventory.Quantity
+			if leftStock != rightStock {
+				return leftStock > rightStock
+			}
+		}
 		leftName := productSortName(products[i], input.Locale)
 		rightName := productSortName(products[j], input.Locale)
 		comparison := comparator.CompareString(leftName, rightName)
