@@ -318,8 +318,9 @@ que le refus d’un IR différent.
 Cette tranche Wasm reste limitée à la prévisualisation catalogue : aucun accès
 réseau, pagination, commande, livraison ou modification de produit n’entre dans
 ce call. La restriction d’import à `euromni.call` et les trois sorties oracle
-restent vérifiées ; devise, locale et unité de volume restent non résolues. Le
-travail ne vise pas la traduction générale du plugin PHP.
+restent vérifiées ; devise et locale sont encore absentes de la sortie guest,
+et l’unité de volume reste inconnue. Le travail ne vise pas la traduction
+générale du plugin PHP.
 
 Cette preuve valide un mapping de prévisualisation exécuté dans le guest Rust,
 une validation ABI hôte et un aperçu non persistant ; elle ne valide pas la
@@ -328,9 +329,33 @@ caractérisation du plugin natif, le mapper hôte oracle et le guest Rust sont d
 implémentations distinctes. Le compilateur IR générique délègue explicitement
 les IR Selfnamed à la fonction dédiée ; les autres IR conservent leur chemin
 WAT actuel.
-Devise, locale et unité du volume doivent encore être décidées ;
-images/téléchargements, catégories, mise à jour de produits existants et
-publication active restent hors périmètre.
+La devise et la locale utilisées par le staging proviennent des réglages de la
+boutique ; l’unité du volume reste inconnue et n’est pas inventée. Les
+images/téléchargements, catégories et publication automatique restent hors
+périmètre.
+
+### Staging explicite en brouillon Selfnamed
+
+`POST /v1/admin/products/supplier-drafts` accepte, pour `owner`, `admin` ou
+`editor`, le DTO de prévisualisation déjà produit par le guest. La route ne
+lance pas elle-même le guest Wasm et n’exécute jamais le PHP fournisseur : le
+raccord runtime → prévisualisation → action admin reste explicite et séparé.
+Le store valide les champs et prend langue/devise depuis la boutique, crée un
+produit `draft` avec poids en grammes, volume sans unité, tags, prix et état de
+disponibilité. La référence `(boutique, fournisseur, ID externe)` rend les
+réimports idempotents ; seul le brouillon déjà associé peut être actualisé.
+Une collision indépendante ou un produit déjà activé/archivé est refusé. Les
+images ne sont pas téléchargées et aucun produit n’est publié automatiquement.
+
+Les migrations PostgreSQL `0019_supplier_product_drafts.sql` et MariaDB
+`0013_supplier_product_drafts.sql` ajoutent volume, tags, état de stock et
+référence fournisseur. L’API REST, les lectures admin/catalogue, GraphQL,
+l’ajout au panier et le checkout utilisent maintenant ces champs. Les tests
+unitaires store/API/migrations, le parcours d’intégration PostgreSQL de staging
+et d’API ainsi que les migrations et le flux commerce PostgreSQL/MariaDB passent
+sous Linux avec bases de test éphémères. Cette preuve ne qualifie ni un flux de
+production, ni la traduction complète du plugin, ni le transfert automatique
+de la sortie Wasm vers cette route.
 
 ### Suite recommandée pour le chantier Wasm
 
@@ -361,10 +386,9 @@ générale du plugin ni une décision sur son mode de distribution.
    signature ou flux de réception n'est connecté. Le choix entre catalogue
    central et traitement local est différé.
 
-Devise, locale et unité de volume restent non résolues : ne pas les inventer
-pour faire passer l’oracle. La cible est une transformation métier contrôlée et
-reproductible, pas une promesse de performance ni l’exécution/traduction du PHP
-source.
+L’unité de volume reste non résolue : ne pas l’inventer pour faire passer
+l’oracle. La cible est une transformation métier contrôlée et reproductible,
+pas une promesse de performance ni l’exécution/traduction du PHP source.
 
 ## Copie locale WooCommerce de référence — 23 octobre 2026
 

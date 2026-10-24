@@ -355,6 +355,16 @@ inchangé après tous les appels. Le guest effectue le mapping et soumet le DTO 
 données. Ce n’est pas une traduction du PHP Selfnamed : aucune image ni requête
 réseau n’est impliquée.
 
+Le résultat de prévisualisation peut ensuite être envoyé explicitement à
+`POST /v1/admin/products/supplier-drafts`. Cette route authentifiée crée ou
+actualise le brouillon fournisseur idempotent, avec locale/devise de la
+boutique, volume sans unité supposée et disponibilité appliquée par le panier
+et le checkout. Elle ne déclenche pas elle-même la prévisualisation Wasm, ne
+télécharge pas les images et ne publie jamais le produit ; le raccord
+automatique entre runtime et import reste à concevoir. Détails du contrat et
+preuves dans [`module-validation-progress.md`](../docs/module-validation-progress.md#staging-explicite-en-brouillon-selfnamed)
+et [`api.md`](../docs/api.md).
+
 Le build dédié est vérifié avec :
 
 ```sh

@@ -96,6 +96,7 @@ func Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/me", withStaffAuth(adminMe))
 	mux.HandleFunc("GET /v1/admin/products", withStaffAuth(adminProducts))
 	mux.HandleFunc("POST /v1/admin/products", withCatalogWriteAuth(adminCreateProduct))
+	mux.HandleFunc("POST /v1/admin/products/supplier-drafts", withCatalogWriteAuth(adminStageSupplierProductDraft))
 	mux.HandleFunc("PUT /v1/admin/products/{id}", withCatalogWriteAuth(adminUpdateProduct))
 	mux.HandleFunc("DELETE /v1/admin/products/{id}", withCatalogWriteAuth(adminArchiveProduct))
 	mux.HandleFunc("GET /v1/admin/brands", withStaffAuth(adminBrands))

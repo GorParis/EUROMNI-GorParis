@@ -456,19 +456,20 @@ func (s *Store) CheckoutCart(ctx context.Context, shopID string, tokenHash []byt
 	for _, line := range lines {
 		var available int
 		var tracked bool
+		var stockStatus string
 		err := tx.QueryRowContext(ctx, `
-			SELECT quantity, track
+			SELECT quantity, track, stock_status
 			FROM inventory_items
 			WHERE variant_id::text = $1
 			FOR UPDATE
-		`, line.variantID).Scan(&available, &tracked)
+		`, line.variantID).Scan(&available, &tracked, &stockStatus)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrOutOfStock
 		}
 		if err != nil {
 			return nil, err
 		}
-		if tracked && available < line.Quantity {
+		if stockStatus == "out_of_stock" || (tracked && available < line.Quantity) {
 			return nil, ErrOutOfStock
 		}
 		if tracked {
@@ -748,7 +749,8 @@ func (m *Memory) CheckoutCart(ctx context.Context, shopID string, tokenHash []by
 	}
 	for variantID, quantity := range variantQuantities {
 		variant := variants[variantID]
-		if variant.Inventory.Track && variant.Inventory.Quantity < quantity {
+		if variant.Inventory.StockStatus == "out_of_stock" ||
+			(variant.Inventory.Track && variant.Inventory.Quantity < quantity) {
 			return nil, ErrOutOfStock
 		}
 	}

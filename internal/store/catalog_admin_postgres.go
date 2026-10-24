@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"euromni/internal/dbdialect"
 )
@@ -62,53 +63,14 @@ func (s *Store) CreateProduct(ctx context.Context, shopID string, input ProductI
 	}
 	defer tx.Rollback()
 
-	if err := validateCatalogReferenceIDs(ctx, tx, shopID, input.BrandID, input.SupplierIDs, input.Variants); err != nil {
-		return nil, err
-	}
-	personalizationOptions, err := json.Marshal(input.PersonalizationOptions)
+	productID, err := writeProductTx(ctx, tx, shopID, "", input)
 	if err != nil {
-		return nil, err
-	}
-	if input.PersonalizationOptions == nil {
-		personalizationOptions = []byte("[]")
-	}
-	var product ProductView
-	product.ID, err = NewCatalogID()
-	if err != nil {
-		return nil, err
-	}
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO products (id, shop_id, slug, status, brand_id, personalization_options)
-		VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, $6::jsonb)
-	`, product.ID, shopID, input.Slug, input.Status, input.BrandID, string(personalizationOptions))
-	if err != nil {
-		return nil, catalogDBError(err)
-	}
-	product.Slug, product.Status = input.Slug, input.Status
-	for _, translation := range input.Translations {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO product_translations (product_id, locale, name, description)
-			VALUES ($1, $2, $3, $4)
-		`, product.ID, translation.Locale, translation.Name, translation.Description); err != nil {
-			return nil, catalogDBError(err)
-		}
-	}
-	if err := replaceProductCategories(ctx, tx, shopID, product.ID, input.CategoryIDs); err != nil {
-		return nil, err
-	}
-	if err := replaceProductMedia(ctx, tx, shopID, product.ID, input.Media); err != nil {
-		return nil, err
-	}
-	if err := replaceProductSuppliers(ctx, tx, product.ID, input.SupplierIDs); err != nil {
-		return nil, err
-	}
-	if err := replaceProductVariants(ctx, tx, shopID, product.ID, input.Variants); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, catalogDBError(err)
 	}
-	return s.readAdminProduct(ctx, shopID, product.ID)
+	return s.readAdminProduct(ctx, shopID, productID)
 }
 
 func (s *Store) UpdateProduct(ctx context.Context, shopID, productID string, input ProductInput) (*ProductView, error) {
@@ -121,59 +83,87 @@ func (s *Store) UpdateProduct(ctx context.Context, shopID, productID string, inp
 	}
 	defer tx.Rollback()
 
-	if err := validateCatalogReferenceIDs(ctx, tx, shopID, input.BrandID, input.SupplierIDs, input.Variants); err != nil {
-		return nil, err
-	}
-	personalizationOptions, err := json.Marshal(input.PersonalizationOptions)
-	if err != nil {
-		return nil, err
-	}
-	if input.PersonalizationOptions == nil {
-		personalizationOptions = []byte("[]")
-	}
-	result, err := tx.ExecContext(ctx, `
-		UPDATE products
-		SET slug = $3, status = $4, brand_id = NULLIF($5, '')::uuid,
-		    personalization_options = $6::jsonb, updated_at = now()
-		WHERE shop_id = $1 AND id = $2
-	`, shopID, productID, input.Slug, input.Status, input.BrandID, string(personalizationOptions))
-	if err != nil {
-		return nil, catalogDBError(err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if affected == 0 {
-		return nil, ErrNotFound
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM product_translations WHERE product_id = $1`, productID); err != nil {
-		return nil, err
-	}
-	for _, translation := range input.Translations {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO product_translations (product_id, locale, name, description)
-			VALUES ($1, $2, $3, $4)
-		`, productID, translation.Locale, translation.Name, translation.Description); err != nil {
-			return nil, catalogDBError(err)
-		}
-	}
-	if err := replaceProductCategories(ctx, tx, shopID, productID, input.CategoryIDs); err != nil {
-		return nil, err
-	}
-	if err := replaceProductMedia(ctx, tx, shopID, productID, input.Media); err != nil {
-		return nil, err
-	}
-	if err := replaceProductSuppliers(ctx, tx, productID, input.SupplierIDs); err != nil {
-		return nil, err
-	}
-	if err := replaceProductVariants(ctx, tx, shopID, productID, input.Variants); err != nil {
+	if _, err := writeProductTx(ctx, tx, shopID, productID, input); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, catalogDBError(err)
 	}
 	return s.readAdminProduct(ctx, shopID, productID)
+}
+
+func writeProductTx(ctx context.Context, tx *sql.Tx, shopID, productID string, input ProductInput) (string, error) {
+	if err := validateCatalogReferenceIDs(ctx, tx, shopID, input.BrandID, input.SupplierIDs, input.Variants); err != nil {
+		return "", err
+	}
+	personalizationOptions, err := json.Marshal(input.PersonalizationOptions)
+	if err != nil {
+		return "", err
+	}
+	if input.PersonalizationOptions == nil {
+		personalizationOptions = []byte("[]")
+	}
+	var volumeValue, volumeUnit any
+	if input.Volume != nil {
+		volumeValue, volumeUnit = input.Volume.Value, input.Volume.Unit
+	}
+	if productID == "" {
+		productID, err = NewCatalogID()
+		if err != nil {
+			return "", err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO products (id, shop_id, slug, status, brand_id, personalization_options, volume_value, volume_unit)
+			VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, $6::jsonb, $7, $8)
+		`, productID, shopID, input.Slug, input.Status, input.BrandID, string(personalizationOptions), volumeValue, volumeUnit)
+		if err != nil {
+			return "", catalogDBError(err)
+		}
+	} else {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE products
+			SET slug = $3, status = $4, brand_id = NULLIF($5, '')::uuid,
+			    personalization_options = $6::jsonb, volume_value = $7, volume_unit = $8, updated_at = now()
+			WHERE shop_id = $1 AND id = $2
+		`, shopID, productID, input.Slug, input.Status, input.BrandID, string(personalizationOptions), volumeValue, volumeUnit)
+		if err != nil {
+			return "", catalogDBError(err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return "", err
+		}
+		if affected == 0 {
+			return "", ErrNotFound
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM product_translations WHERE product_id = $1`, productID); err != nil {
+			return "", err
+		}
+	}
+	for _, translation := range input.Translations {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO product_translations (product_id, locale, name, description)
+			VALUES ($1, $2, $3, $4)
+		`, productID, translation.Locale, translation.Name, translation.Description); err != nil {
+			return "", catalogDBError(err)
+		}
+	}
+	if err := replaceProductCategories(ctx, tx, shopID, productID, input.CategoryIDs); err != nil {
+		return "", err
+	}
+	if err := replaceProductMedia(ctx, tx, shopID, productID, input.Media); err != nil {
+		return "", err
+	}
+	if err := replaceProductSuppliers(ctx, tx, productID, input.SupplierIDs); err != nil {
+		return "", err
+	}
+	if err := replaceProductTags(ctx, tx, productID, input.Tags); err != nil {
+		return "", err
+	}
+	if err := replaceProductVariants(ctx, tx, shopID, productID, input.Variants); err != nil {
+		return "", err
+	}
+	return productID, nil
 }
 
 func (s *Store) ArchiveProduct(ctx context.Context, shopID, productID string) error {
@@ -302,6 +292,7 @@ func replaceProductCategories(ctx context.Context, tx *sql.Tx, shopID, productID
 	if _, err := tx.ExecContext(ctx, `DELETE FROM product_categories WHERE product_id = $1`, productID); err != nil {
 		return err
 	}
+
 	seen := make(map[string]struct{}, len(categoryIDs))
 	for _, categoryID := range categoryIDs {
 		if _, exists := seen[categoryID]; exists {
@@ -321,6 +312,29 @@ func replaceProductCategories(ctx context.Context, tx *sql.Tx, shopID, productID
 		}
 		if affected != 1 {
 			return ErrNotFound
+		}
+	}
+	return nil
+}
+
+func replaceProductTags(ctx context.Context, tx *sql.Tx, productID string, tags []string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM product_tags WHERE product_id = $1`, productID); err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if _, exists := seen[tag]; exists {
+			continue
+		}
+		seen[tag] = struct{}{}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO product_tags (product_id, tag) VALUES ($1, $2)
+		`, productID, tag); err != nil {
+			return catalogDBError(err)
 		}
 	}
 	return nil
@@ -433,12 +447,17 @@ func replaceProductVariants(ctx context.Context, tx *sql.Tx, shopID, productID s
 		`, variantID, string(options), input.WeightGrams); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO inventory_items (variant_id, quantity, track)
-			VALUES ($1, $2, $3)
+		stockStatus := input.Inventory.StockStatus
+		if stockStatus == "" {
+			stockStatus = "in_stock"
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO inventory_items (variant_id, quantity, track, stock_status)
+			VALUES ($1, $2, $3, $4)
 			ON CONFLICT (variant_id) DO UPDATE SET quantity = EXCLUDED.quantity,
-				track = EXCLUDED.track, updated_at = now()
-		`, variantID, input.Inventory.Quantity, input.Inventory.Track); err != nil {
+				track = EXCLUDED.track, stock_status = EXCLUDED.stock_status, updated_at = now()
+		`, variantID, input.Inventory.Quantity, input.Inventory.Track, stockStatus)
+		if err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM prices WHERE variant_id = $1`, variantID); err != nil {

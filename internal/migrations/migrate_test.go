@@ -37,7 +37,7 @@ func TestMariaDBMigrationSourceStartsWithInstalledSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ordered) != 12 || ordered[0].name != "0001_mariadb_schema.sql" ||
+	if len(ordered) != 13 || ordered[0].name != "0001_mariadb_schema.sql" ||
 		ordered[1].name != "0002_mariadb_demo_seed.sql" || ordered[2].name != "0003_shipping_weight_value_rates.sql" ||
 		ordered[3].name != "0004_shipping_rate_mode_check.sql" ||
 		ordered[4].name != "0005_shipping_services_rate_versions.sql" ||
@@ -47,7 +47,8 @@ func TestMariaDBMigrationSourceStartsWithInstalledSchema(t *testing.T) {
 		ordered[8].name != "0009_supplier_order_sync.sql" ||
 		ordered[9].name != "0010_immutable_module_builds.sql" ||
 		ordered[10].name != "0011_email_outbox.sql" ||
-		ordered[11].name != "0012_order_lifecycle.sql" {
+		ordered[11].name != "0012_order_lifecycle.sql" ||
+		ordered[12].name != "0013_supplier_product_drafts.sql" {
 		t.Fatalf("unexpected MariaDB migration order: %#v", ordered)
 	}
 	rateModeMigration, err := schemafiles.MariaDBFiles.ReadFile("mariadb/0004_shipping_rate_mode_check.sql")
@@ -99,5 +100,14 @@ func TestMariaDBMigrationSourceStartsWithInstalledSchema(t *testing.T) {
 		!strings.Contains(string(buildMigration), "current_build_id") ||
 		!strings.Contains(string(buildMigration), "shop_modules_build") {
 		t.Fatal("MariaDB build migration does not add immutable builds and installation pinning")
+	}
+	draftMigration, err := schemafiles.MariaDBFiles.ReadFile("mariadb/0013_supplier_product_drafts.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(draftMigration), "stock_status") ||
+		!strings.Contains(string(draftMigration), "CREATE TABLE product_tags") ||
+		!strings.Contains(string(draftMigration), "CREATE TABLE supplier_product_refs") {
+		t.Fatal("MariaDB supplier draft migration does not extend stock and product metadata")
 	}
 }

@@ -14,6 +14,8 @@ type ProductView struct {
 	ID                     string                  `json:"id"`
 	Slug                   string                  `json:"slug"`
 	Status                 string                  `json:"status"`
+	Volume                 *ProductVolume          `json:"volume,omitempty"`
+	Tags                   []string                `json:"tags"`
 	Brand                  *BrandView              `json:"brand,omitempty"`
 	SupplierIDs            []string                `json:"-"`
 	PersonalizationOptions []PersonalizationOption `json:"personalization_options"`
@@ -105,8 +107,14 @@ type PriceView struct {
 }
 
 type InventoryView struct {
-	Quantity int  `json:"quantity"`
-	Track    bool `json:"track"`
+	Quantity    int    `json:"quantity"`
+	Track       bool   `json:"track"`
+	StockStatus string `json:"stock_status,omitempty"`
+}
+
+type ProductVolume struct {
+	Value int64   `json:"value"`
+	Unit  *string `json:"unit"`
 }
 
 type ProductReader interface {
@@ -274,10 +282,13 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	}
 
 	var p ProductView
+	p.Tags = make([]string, 0)
 	var brandID sql.NullString
+	var volumeValue sql.NullInt64
+	var volumeUnit sql.NullString
 	var personalizationOptions []byte
 	query := `
-		SELECT id::text, slug, status::text, brand_id::text, personalization_options
+		SELECT id::text, slug, status::text, brand_id::text, personalization_options, volume_value, volume_unit
 		FROM products
 		WHERE shop_id = $1 AND id = $2
 	`
@@ -285,13 +296,19 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 		query += ` AND status = 'active'`
 	}
 	err := s.SQL.QueryRowContext(ctx, query, shopID, productID).Scan(
-		&p.ID, &p.Slug, &p.Status, &brandID, &personalizationOptions,
+		&p.ID, &p.Slug, &p.Status, &brandID, &personalizationOptions, &volumeValue, &volumeUnit,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if volumeValue.Valid {
+		p.Volume = &ProductVolume{Value: volumeValue.Int64}
+		if volumeUnit.Valid {
+			p.Volume.Unit = &volumeUnit.String
+		}
 	}
 	p.PersonalizationOptions, err = decodePersonalizationOptions(personalizationOptions)
 	if err != nil {
@@ -337,6 +354,28 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 		return nil, err
 	}
 	if err := supplierRows.Close(); err != nil {
+		return nil, err
+	}
+
+	tagRows, err := s.SQL.QueryContext(ctx, `
+		SELECT tag FROM product_tags WHERE product_id = $1 ORDER BY tag
+	`, productID)
+	if err != nil {
+		return nil, err
+	}
+	for tagRows.Next() {
+		var tag string
+		if err := tagRows.Scan(&tag); err != nil {
+			_ = tagRows.Close()
+			return nil, err
+		}
+		p.Tags = append(p.Tags, tag)
+	}
+	if err := tagRows.Err(); err != nil {
+		_ = tagRows.Close()
+		return nil, err
+	}
+	if err := tagRows.Close(); err != nil {
 		return nil, err
 	}
 
@@ -409,7 +448,8 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	}
 
 	vRows, err := s.SQL.QueryContext(ctx, `
-		SELECT v.id::text, v.sku, v.options, v.weight_grams, COALESCE(i.quantity, 0), COALESCE(i.track, true)
+		SELECT v.id::text, v.sku, v.options, v.weight_grams, COALESCE(i.quantity, 0),
+		       COALESCE(i.track, true), COALESCE(i.stock_status, 'in_stock')
 		FROM variants v
 		LEFT JOIN inventory_items i ON i.variant_id = v.id
 		WHERE v.product_id = $1
@@ -425,7 +465,8 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 		var v VariantView
 		var options []byte
 		var weight sql.NullInt64
-		if err := vRows.Scan(&v.ID, &v.SKU, &options, &weight, &v.Inventory.Quantity, &v.Inventory.Track); err != nil {
+		if err := vRows.Scan(&v.ID, &v.SKU, &options, &weight,
+			&v.Inventory.Quantity, &v.Inventory.Track, &v.Inventory.StockStatus); err != nil {
 			return nil, err
 		}
 		if weight.Valid {
@@ -469,6 +510,9 @@ func (s *Store) getProduct(ctx context.Context, shopID, productID string, active
 	}
 	if p.SupplierIDs == nil {
 		p.SupplierIDs = []string{}
+	}
+	if p.Tags == nil {
+		p.Tags = []string{}
 	}
 	return &p, nil
 }

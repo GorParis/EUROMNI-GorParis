@@ -173,9 +173,11 @@ func (s *Store) AddCartLine(ctx context.Context, shopID string, tokenHash []byte
 
 	var inventoryQuantity int
 	var inventoryTracked bool
+	var stockStatus string
 	var optionJSON []byte
 	err = tx.QueryRowContext(ctx, `
-		SELECT COALESCE(i.quantity, 0), COALESCE(i.track, true), pr.personalization_options
+		SELECT COALESCE(i.quantity, 0), COALESCE(i.track, true),
+		       COALESCE(i.stock_status, 'in_stock'), pr.personalization_options
 		FROM variants v
 		JOIN products pr ON pr.id = v.product_id
 		JOIN prices p ON p.variant_id = v.id AND p.currency = $3
@@ -184,12 +186,15 @@ func (s *Store) AddCartLine(ctx context.Context, shopID string, tokenHash []byte
 		  AND pr.shop_id::text = $1
 		  AND pr.status = 'active'
 		FOR UPDATE OF v
-	`, shopID, variantID, currency).Scan(&inventoryQuantity, &inventoryTracked, &optionJSON)
+	`, shopID, variantID, currency).Scan(&inventoryQuantity, &inventoryTracked, &stockStatus, &optionJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if stockStatus == "out_of_stock" {
+		return nil, ErrOutOfStock
 	}
 
 	options, err := decodePersonalizationOptions(optionJSON)

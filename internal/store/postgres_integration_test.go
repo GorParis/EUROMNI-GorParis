@@ -247,6 +247,53 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	if product.Slug != "cabas-lin" || len(product.Variants) != 1 {
 		t.Fatalf("unexpected seeded product: %+v", product)
 	}
+	if product.Variants[0].Inventory.StockStatus != "in_stock" {
+		t.Fatalf("seeded stock status = %q, want in_stock", product.Variants[0].Inventory.StockStatus)
+	}
+	availabilityToken := sha256.Sum256([]byte("postgres availability test cart"))
+	if err := db.CreateCart(ctx, seed.ShopID, availabilityToken[:]); err != nil {
+		t.Fatalf("create availability test cart: %v", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		UPDATE inventory_items SET stock_status = 'out_of_stock' WHERE variant_id = $1
+	`, seed.VariantID); err != nil {
+		t.Fatalf("mark product unavailable: %v", err)
+	}
+	if _, err := db.AddCartLine(ctx, seed.ShopID, availabilityToken[:], seed.VariantID, 1); !errors.Is(err, ErrOutOfStock) {
+		t.Fatalf("add unavailable product error = %v, want ErrOutOfStock", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		UPDATE inventory_items SET stock_status = 'in_stock' WHERE variant_id = $1
+	`, seed.VariantID); err != nil {
+		t.Fatalf("restore product availability: %v", err)
+	}
+	if _, err := db.AddCartLine(ctx, seed.ShopID, availabilityToken[:], seed.VariantID, 1); err != nil {
+		t.Fatalf("add product before availability changes: %v", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		UPDATE inventory_items SET stock_status = 'out_of_stock' WHERE variant_id = $1
+	`, seed.VariantID); err != nil {
+		t.Fatalf("mark cart product unavailable: %v", err)
+	}
+	if _, err := db.CheckoutCart(ctx, seed.ShopID, availabilityToken[:], CheckoutDetails{
+		Email: "unavailable@example.com", Name: "Unavailable product",
+		ShippingCarrierCode: "colissimo",
+		ShippingAddress: ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	}); !errors.Is(err, ErrOutOfStock) {
+		t.Fatalf("checkout unavailable product error = %v, want ErrOutOfStock", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		UPDATE inventory_items SET stock_status = 'in_stock' WHERE variant_id = $1
+	`, seed.VariantID); err != nil {
+		t.Fatalf("restore cart product availability: %v", err)
+	}
+	if _, err := db.SQL.ExecContext(ctx, `
+		DELETE FROM carts WHERE access_token_hash = $1
+	`, availabilityToken[:]); err != nil {
+		t.Fatalf("delete availability test cart: %v", err)
+	}
 
 	products, err := db.ListProducts(ctx, seed.ShopID)
 	if err != nil {

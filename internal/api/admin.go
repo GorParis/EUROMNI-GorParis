@@ -720,6 +720,37 @@ func adminCreateProduct(w http.ResponseWriter, r *http.Request) {
 	writePrivateJSON(w, http.StatusCreated, map[string]any{"data": store.AdminProduct(*product)})
 }
 
+func adminStageSupplierProductDraft(w http.ResponseWriter, r *http.Request) {
+	var input store.SupplierProductDraftInput
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminInputError(w, err)
+		return
+	}
+	if err := store.ValidateSupplierProductDraftInput(input); err != nil {
+		writePrivateJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writer, ok := currentProductReader().(store.SupplierProductDraftWriter)
+	if !ok {
+		writePrivateJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "supplier product staging unavailable"})
+		return
+	}
+	session, _ := adminSessionFromContext(r.Context())
+	result, err := writer.StageSupplierProductDraft(r.Context(), session.ShopID, input)
+	if err != nil {
+		writeCatalogWriteError(w, err)
+		return
+	}
+	status := http.StatusOK
+	if result.Created {
+		status = http.StatusCreated
+	}
+	writePrivateJSON(w, status, map[string]any{
+		"data":    store.AdminProduct(result.Product),
+		"created": result.Created,
+	})
+}
+
 func adminUpdateProduct(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
@@ -1060,6 +1091,23 @@ func validateProductInput(input store.ProductInput) error {
 	default:
 		return errors.New("status must be draft, active, or archived")
 	}
+	if input.Volume != nil && (input.Volume.Value < 0 || input.Volume.Value > 1_000_000_000 ||
+		(input.Volume.Unit != nil && (strings.TrimSpace(*input.Volume.Unit) == "" || len(*input.Volume.Unit) > 32))) {
+		return errors.New("product volume is invalid")
+	}
+	if len(input.Tags) > 64 {
+		return errors.New("at most 64 product tags are allowed")
+	}
+	tags := make(map[string]struct{}, len(input.Tags))
+	for _, tag := range input.Tags {
+		if tag == "" || strings.TrimSpace(tag) != tag || len(tag) > 128 {
+			return errors.New("product tags must be between 1 and 128 bytes without surrounding whitespace")
+		}
+		if _, exists := tags[tag]; exists {
+			return errors.New("product tags must be unique")
+		}
+		tags[tag] = struct{}{}
+	}
 	if len(input.Translations) == 0 || len(input.Translations) > 32 {
 		return errors.New("at least one and at most 32 translations are required")
 	}
@@ -1131,6 +1179,10 @@ func validateProductInput(input store.ProductInput) error {
 		variantSKUs[sku] = struct{}{}
 		if variant.Inventory.Quantity < 0 {
 			return errors.New("inventory quantity cannot be negative")
+		}
+		if variant.Inventory.StockStatus != "" && variant.Inventory.StockStatus != "in_stock" &&
+			variant.Inventory.StockStatus != "out_of_stock" {
+			return errors.New("inventory stock_status must be in_stock or out_of_stock")
 		}
 		if len(variant.Prices) > 10 {
 			return errors.New("at most 10 prices are allowed per variant")

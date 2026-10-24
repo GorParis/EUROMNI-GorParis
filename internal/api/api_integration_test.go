@@ -231,6 +231,30 @@ func TestPostgresAPIEndToEnd(t *testing.T) {
 		t.Fatalf("staff login payload = %+v; want a token and owner role", staffLogin.Data)
 	}
 	staffAuthorization := "Bearer " + staffLogin.Data.Token
+	supplierDraftPath := "/v1/admin/products/supplier-drafts"
+	supplierDraftBody := `{"provider":"selfnamed","external_id":"842003","publication_status":"draft","name":"Synthetic Out-of-Stock Balm","description":"Synthetic product description","locale":null,"price":{"amount":"17.4","currency":null},"inventory":{"status":"outofstock","track_quantity":false},"weight":{"grams":1001,"unit":null},"volume":{"value":88,"unit":null},"tags":["synthetic","edge-case"],"unresolved":["currency","locale","volume_unit"]}`
+	unauthorizedSupplierDraft := performAPIRequest(mux, http.MethodPost, supplierDraftPath, "", supplierDraftBody)
+	if unauthorizedSupplierDraft.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized supplier draft status/body = %d/%s; want 401", unauthorizedSupplierDraft.Code, unauthorizedSupplierDraft.Body)
+	}
+	missingSupplierFlag := strings.Replace(supplierDraftBody, `"track_quantity":false`, `"track_quantity":null`, 1)
+	invalidSupplierDraft := performAPIRequest(mux, http.MethodPost, supplierDraftPath, staffAuthorization, missingSupplierFlag)
+	if invalidSupplierDraft.Code != http.StatusBadRequest {
+		t.Fatalf("supplier draft with unresolved stock tracking status/body = %d/%s; want 400", invalidSupplierDraft.Code, invalidSupplierDraft.Body)
+	}
+	createdSupplierDraft := performAPIRequest(mux, http.MethodPost, supplierDraftPath, staffAuthorization, supplierDraftBody)
+	if createdSupplierDraft.Code != http.StatusCreated ||
+		!strings.Contains(createdSupplierDraft.Body.String(), `"status":"draft"`) ||
+		!strings.Contains(createdSupplierDraft.Body.String(), `"stock_status":"out_of_stock"`) ||
+		!strings.Contains(createdSupplierDraft.Body.String(), `"volume":{"value":88`) {
+		t.Fatalf("supplier draft creation status/body = %d/%s; want persisted draft preview fields", createdSupplierDraft.Code, createdSupplierDraft.Body)
+	}
+	updatedSupplierDraftBody := strings.Replace(supplierDraftBody, "Synthetic Out-of-Stock Balm", "Updated Synthetic Balm", 1)
+	updatedSupplierDraft := performAPIRequest(mux, http.MethodPost, supplierDraftPath, staffAuthorization, updatedSupplierDraftBody)
+	if updatedSupplierDraft.Code != http.StatusOK || !strings.Contains(updatedSupplierDraft.Body.String(), `"created":false`) ||
+		!strings.Contains(updatedSupplierDraft.Body.String(), "Updated Synthetic Balm") {
+		t.Fatalf("supplier draft update status/body = %d/%s; want idempotent update", updatedSupplierDraft.Code, updatedSupplierDraft.Body)
+	}
 	protectedOwner := performAPIRequest(mux, http.MethodDelete, "/v1/admin/staff/"+staffLogin.Data.UserID, staffAuthorization, "")
 	if protectedOwner.Code != http.StatusConflict {
 		t.Fatalf("remove owner status/body = %d/%s; want 409", protectedOwner.Code, protectedOwner.Body)

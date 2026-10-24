@@ -172,7 +172,7 @@ func NewMemory() *Memory {
 		},
 	}
 	seededAt := time.Now().UTC()
-	return &Memory{
+	memory := &Memory{
 		products: map[string]*ProductView{
 			seed.ShopID + "/" + seed.ProductID:       p,
 			seed.ShopID + "/" + seed.SecondProductID: belt,
@@ -199,6 +199,14 @@ func NewMemory() *Memory {
 		orders:        make(map[string]*memoryOrder),
 		supplierSyncs: make(map[string]*memorySupplierOrderSync),
 	}
+	for _, product := range memory.products {
+		for i := range product.Variants {
+			if product.Variants[i].Inventory.StockStatus == "" {
+				product.Variants[i].Inventory.StockStatus = "in_stock"
+			}
+		}
+	}
+	return memory
 }
 
 func (m *Memory) GetProduct(_ context.Context, shopID, productID string) (*ProductView, error) {
@@ -400,6 +408,8 @@ func (m *Memory) CreateProduct(ctx context.Context, shopID string, input Product
 		ID:                     id,
 		Slug:                   input.Slug,
 		Status:                 input.Status,
+		Volume:                 cloneProductVolume(input.Volume),
+		Tags:                   append([]string(nil), input.Tags...),
 		SupplierIDs:            append([]string(nil), input.SupplierIDs...),
 		PersonalizationOptions: clonePersonalizationOptions(input.PersonalizationOptions),
 		Translations:           append([]TranslationView(nil), input.Translations...),
@@ -469,6 +479,8 @@ func (m *Memory) UpdateProduct(ctx context.Context, shopID, productID string, in
 	}
 	product.Slug = input.Slug
 	product.Status = input.Status
+	product.Volume = cloneProductVolume(input.Volume)
+	product.Tags = append([]string(nil), input.Tags...)
 	product.Brand = cloneBrand(m.brands[shopID+"/"+input.BrandID])
 	product.SupplierIDs = append([]string(nil), input.SupplierIDs...)
 	product.PersonalizationOptions = clonePersonalizationOptions(input.PersonalizationOptions)
@@ -646,6 +658,11 @@ func newMemoryVariants(inputs []VariantInput) ([]VariantView, error) {
 		if err != nil {
 			return nil, err
 		}
+		stockStatus := input.Inventory.StockStatus
+		if stockStatus == "" {
+			stockStatus = "in_stock"
+		}
+		input.Inventory.StockStatus = stockStatus
 		variants = append(variants, VariantView{
 			ID:          id,
 			SKU:         input.SKU,
@@ -694,6 +711,9 @@ func (m *Memory) updatedMemoryVariants(product *ProductView, inputs []VariantInp
 		variant.WeightGrams = cloneInt64(input.WeightGrams)
 		variant.Prices = clonePrices(input.Prices)
 		variant.Inventory = input.Inventory
+		if variant.Inventory.StockStatus == "" {
+			variant.Inventory.StockStatus = "in_stock"
+		}
 		variants = append(variants, variant)
 	}
 	return variants, nil
@@ -705,6 +725,18 @@ func cloneInt64(value *int64) *int64 {
 	}
 	copy := *value
 	return &copy
+}
+
+func cloneProductVolume(volume *ProductVolume) *ProductVolume {
+	if volume == nil {
+		return nil
+	}
+	cloned := *volume
+	if volume.Unit != nil {
+		unit := *volume.Unit
+		cloned.Unit = &unit
+	}
+	return &cloned
 }
 
 func cloneObject(value map[string]any) map[string]any {
@@ -824,15 +856,21 @@ func (m *Memory) AddCartLine(ctx context.Context, shopID string, tokenHash []byt
 	if shopID != seed.ShopID || len(tokenHash) != sha256.Size {
 		return nil, ErrInvalidCartToken
 	}
+	m.mu.Lock()
 	product, variant := m.findVariant(shopID, variantID)
 	if variant == nil {
+		m.mu.Unlock()
 		return nil, ErrNotFound
+	}
+	if variant.Inventory.StockStatus == "out_of_stock" {
+		m.mu.Unlock()
+		return nil, ErrOutOfStock
 	}
 	selections, _, personalizationHash, err := ValidatePersonalizationSelections(product.PersonalizationOptions, submitted)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
-	m.mu.Lock()
 	key := hex.EncodeToString(tokenHash)
 	cart, ok := m.carts[key]
 	if !ok || !time.Now().Before(cart.expiresAt) {
@@ -901,6 +939,7 @@ func cloneProduct(p *ProductView) (*ProductView, error) {
 		return nil, err
 	}
 	out.SupplierIDs = append([]string(nil), p.SupplierIDs...)
+	out.Tags = append([]string{}, p.Tags...)
 	for i := range out.Variants {
 		if i < len(p.Variants) {
 			out.Variants[i].Suppliers = append([]VariantSupplierView(nil), p.Variants[i].Suppliers...)

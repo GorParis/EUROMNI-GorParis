@@ -13,6 +13,8 @@ var ErrConflict = errors.New("catalog conflict")
 type ProductInput struct {
 	Slug                   string                  `json:"slug"`
 	Status                 string                  `json:"status"`
+	Volume                 *ProductVolume          `json:"volume,omitempty"`
+	Tags                   []string                `json:"tags"`
 	BrandID                string                  `json:"brand_id,omitempty"`
 	SupplierIDs            []string                `json:"supplier_ids"`
 	PersonalizationOptions []PersonalizationOption `json:"personalization_options"`
@@ -55,6 +57,50 @@ type CatalogAdminWriter interface {
 	CreateCategory(ctx context.Context, shopID string, input CategoryInput) (*CategoryView, error)
 	UpdateCategory(ctx context.Context, shopID, categoryID string, input CategoryInput) (*CategoryView, error)
 	DeleteCategory(ctx context.Context, shopID, categoryID string) error
+}
+
+type SupplierProductDraftInput struct {
+	Provider          string                   `json:"provider"`
+	ExternalID        string                   `json:"external_id"`
+	PublicationStatus string                   `json:"publication_status"`
+	Name              string                   `json:"name"`
+	Description       string                   `json:"description"`
+	Locale            *string                  `json:"locale"`
+	Price             SupplierProductPrice     `json:"price"`
+	Inventory         SupplierProductInventory `json:"inventory"`
+	Weight            SupplierProductWeight    `json:"weight"`
+	Volume            SupplierProductVolume    `json:"volume"`
+	Tags              []string                 `json:"tags"`
+	Unresolved        []string                 `json:"unresolved"`
+}
+
+type SupplierProductPrice struct {
+	Amount   string  `json:"amount"`
+	Currency *string `json:"currency"`
+}
+
+type SupplierProductInventory struct {
+	Status string `json:"status"`
+	Track  *bool  `json:"track_quantity"`
+}
+
+type SupplierProductWeight struct {
+	Grams *int64  `json:"grams"`
+	Unit  *string `json:"unit"`
+}
+
+type SupplierProductVolume struct {
+	Value *int64  `json:"value"`
+	Unit  *string `json:"unit"`
+}
+
+type SupplierProductDraftResult struct {
+	Product ProductView `json:"product"`
+	Created bool        `json:"created"`
+}
+
+type SupplierProductDraftWriter interface {
+	StageSupplierProductDraft(ctx context.Context, shopID string, input SupplierProductDraftInput) (*SupplierProductDraftResult, error)
 }
 
 type CatalogReferenceWriter interface {

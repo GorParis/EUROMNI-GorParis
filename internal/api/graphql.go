@@ -157,8 +157,16 @@ func getGraphQLSchema() (gql.Schema, error) {
 		inventoryType := gql.NewObject(gql.ObjectConfig{
 			Name: "Inventory",
 			Fields: gql.Fields{
-				"quantity": &gql.Field{Type: gql.NewNonNull(gql.Int)},
-				"track":    &gql.Field{Type: gql.NewNonNull(gql.Boolean)},
+				"quantity":    &gql.Field{Type: gql.NewNonNull(gql.Int)},
+				"track":       &gql.Field{Type: gql.NewNonNull(gql.Boolean)},
+				"stockStatus": &gql.Field{Type: gql.NewNonNull(gql.String)},
+			},
+		})
+		volumeType := gql.NewObject(gql.ObjectConfig{
+			Name: "ProductVolume",
+			Fields: gql.Fields{
+				"value": &gql.Field{Type: gql.NewNonNull(gql.Int)},
+				"unit":  &gql.Field{Type: gql.String},
 			},
 		})
 		optionType := gql.NewObject(gql.ObjectConfig{
@@ -224,6 +232,8 @@ func getGraphQLSchema() (gql.Schema, error) {
 				"id":                     &gql.Field{Type: gql.NewNonNull(gql.ID)},
 				"slug":                   &gql.Field{Type: gql.NewNonNull(gql.String)},
 				"status":                 &gql.Field{Type: gql.NewNonNull(gql.String)},
+				"volume":                 &gql.Field{Type: volumeType},
+				"tags":                   &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(gql.String)))},
 				"brand":                  &gql.Field{Type: brandType},
 				"personalizationOptions": &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(personalizationOptionType)))},
 				"translations":           &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(translationType)))},
@@ -434,6 +444,10 @@ func productGraphQLValue(product *store.ProductView) map[string]interface{} {
 
 	variants := make([]interface{}, 0, len(product.Variants))
 	for _, variant := range product.Variants {
+		stockStatus := variant.Inventory.StockStatus
+		if stockStatus == "" {
+			stockStatus = "in_stock"
+		}
 		optionNames := make([]string, 0, len(variant.Options))
 		for name := range variant.Options {
 			optionNames = append(optionNames, name)
@@ -466,10 +480,19 @@ func productGraphQLValue(product *store.ProductView) map[string]interface{} {
 			"options": options,
 			"prices":  prices,
 			"inventory": map[string]interface{}{
-				"quantity": variant.Inventory.Quantity,
-				"track":    variant.Inventory.Track,
+				"quantity":    variant.Inventory.Quantity,
+				"track":       variant.Inventory.Track,
+				"stockStatus": stockStatus,
 			},
 		})
+	}
+	var volume interface{}
+	if product.Volume != nil {
+		var unit interface{}
+		if product.Volume.Unit != nil {
+			unit = *product.Volume.Unit
+		}
+		volume = map[string]interface{}{"value": product.Volume.Value, "unit": unit}
 	}
 	var brand interface{}
 	if product.Brand != nil {
@@ -488,10 +511,13 @@ func productGraphQLValue(product *store.ProductView) map[string]interface{} {
 		})
 	}
 
+	tags := append([]string{}, product.Tags...)
 	return map[string]interface{}{
 		"id":                     product.ID,
 		"slug":                   product.Slug,
 		"status":                 product.Status,
+		"volume":                 volume,
+		"tags":                   tags,
 		"brand":                  brand,
 		"personalizationOptions": personalizationOptions,
 		"translations":           translations,

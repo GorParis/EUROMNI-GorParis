@@ -256,6 +256,25 @@ func TestMemoryCheckoutConsumesStockAndEmptiesCart(t *testing.T) {
 	if _, err := memory.AddCartLine(ctx, seed.ShopID, tokenHash[:], seed.VariantID, 2); err != nil {
 		t.Fatalf("add cart line: %v", err)
 	}
+	memory.mu.Lock()
+	memory.products[seed.ShopID+"/"+seed.ProductID].Variants[0].Inventory.StockStatus = "out_of_stock"
+	memory.mu.Unlock()
+	if _, err := memory.AddCartLine(ctx, seed.ShopID, tokenHash[:], seed.VariantID, 1); !errors.Is(err, ErrOutOfStock) {
+		t.Fatalf("add unavailable product error = %v, want ErrOutOfStock", err)
+	}
+	if _, err := memory.CheckoutCart(ctx, seed.ShopID, tokenHash[:], CheckoutDetails{
+		Email:               "buyer@example.com",
+		Name:                "Client de test",
+		ShippingCarrierCode: "colissimo",
+		ShippingAddress: ShippingAddress{
+			Line1: "1 rue du Test", City: "Paris", PostalCode: "75001", Country: "FR",
+		},
+	}); !errors.Is(err, ErrOutOfStock) {
+		t.Fatalf("checkout unavailable product error = %v, want ErrOutOfStock", err)
+	}
+	memory.mu.Lock()
+	memory.products[seed.ShopID+"/"+seed.ProductID].Variants[0].Inventory.StockStatus = "in_stock"
+	memory.mu.Unlock()
 
 	order, err := memory.CheckoutCart(ctx, seed.ShopID, tokenHash[:], CheckoutDetails{
 		Email:               "buyer@example.com",

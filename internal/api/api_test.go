@@ -850,12 +850,23 @@ func TestGraphQLProductsQueryReturnsCatalog(t *testing.T) {
 
 func TestGraphQLProductQueryReturnsProductData(t *testing.T) {
 	originalReader := productReader
-	SetProductReader(store.NewMemory())
+	memory := store.NewMemory()
+	testProduct, err := memory.GetProduct(context.Background(), seed.ShopID, seed.ProductID)
+	if err != nil {
+		t.Fatalf("read test product: %v", err)
+	}
+	volumeUnit := "ml"
+	testProduct.Volume = &store.ProductVolume{Value: 88, Unit: &volumeUnit}
+	testProduct.Tags = []string{"synthetic", "edge-case"}
+	testProduct.Variants[0].Inventory.StockStatus = "out_of_stock"
+	SetProductReader(productReaderFunc(func(context.Context, string, string) (*store.ProductView, error) {
+		return testProduct, nil
+	}))
 	t.Cleanup(func() {
 		SetProductReader(originalReader)
 	})
 
-	query := `{"query":"{ product(id: \"` + seed.ProductID + `\") { id slug status translations { locale name description } media { uri mimeType alt } variants { id sku options { name value } prices { currency amount compareAt } inventory { quantity track } } } }"}`
+	query := `{"query":"{ product(id: \"` + seed.ProductID + `\") { id slug status volume { value unit } tags translations { locale name description } media { uri mimeType alt } variants { id sku options { name value } prices { currency amount compareAt } inventory { quantity track stockStatus } } } }"}`
 	request := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(query))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -869,9 +880,14 @@ func TestGraphQLProductQueryReturnsProductData(t *testing.T) {
 	var body struct {
 		Data struct {
 			Product struct {
-				ID           string `json:"id"`
-				Slug         string `json:"slug"`
-				Status       string `json:"status"`
+				ID     string `json:"id"`
+				Slug   string `json:"slug"`
+				Status string `json:"status"`
+				Volume *struct {
+					Value int     `json:"value"`
+					Unit  *string `json:"unit"`
+				} `json:"volume"`
+				Tags         []string `json:"tags"`
 				Translations []struct {
 					Locale string `json:"locale"`
 					Name   string `json:"name"`
@@ -886,7 +902,8 @@ func TestGraphQLProductQueryReturnsProductData(t *testing.T) {
 						Amount string `json:"amount"`
 					} `json:"prices"`
 					Inventory struct {
-						Quantity int `json:"quantity"`
+						Quantity    int    `json:"quantity"`
+						StockStatus string `json:"stockStatus"`
 					} `json:"inventory"`
 				} `json:"variants"`
 			} `json:"product"`
@@ -916,6 +933,11 @@ func TestGraphQLProductQueryReturnsProductData(t *testing.T) {
 		return
 	}
 	variant := product.Variants[0]
+	if product.Volume == nil || product.Volume.Value != 88 || product.Volume.Unit == nil ||
+		*product.Volume.Unit != "ml" || strings.Join(product.Tags, ",") != "synthetic,edge-case" ||
+		variant.Inventory.StockStatus != "out_of_stock" {
+		t.Errorf("volume/tags/stock status = %+v/%+v/%q", product.Volume, product.Tags, variant.Inventory.StockStatus)
+	}
 	if len(variant.Options) != 2 || variant.Options[0].Name != "color" || variant.Options[0].Value != "naturel" {
 		t.Errorf("options = %+v, want sorted color and size options", variant.Options)
 	}

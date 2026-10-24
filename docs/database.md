@@ -18,6 +18,11 @@ Schéma initial : [`migrations/0001_init.sql`](../migrations/0001_init.sql).
 Jeu exemple : [`migrations/0002_seed_example.sql`](../migrations/0002_seed_example.sql).  
 Mapping Wasm : [`docs/abi.md`](abi.md).
 
+Les migrations `0019_supplier_product_drafts.sql` et
+`mariadb/0013_supplier_product_drafts.sql` ajoutent les tags produit, le volume,
+le statut de disponibilité et les références fournisseur tenant-scopées
+utilisées pour les brouillons Selfnamed idempotents.
+
 ## Choix
 
 | Sujet | Décision |
@@ -58,7 +63,7 @@ Groupes :
 
 1. **Boutique / staff** — `shops`, `shop_locales`, `users`, `shop_members`, `sessions`
 2. **Clients** — `customers`, `addresses`, `customer_consents`
-3. **Catalogue** — `categories`, `products`, `brands`, `suppliers`, `product_suppliers`, `variant_suppliers`, `variants`, `prices`, `inventory_items`, `media`
+3. **Catalogue** — `categories`, `products`, `product_tags`, `supplier_product_refs`, `brands`, `suppliers`, `product_suppliers`, `variant_suppliers`, `variants`, `prices`, `inventory_items`, `media`
 4. **Commerce** — `carts`, `orders`, `payments`, `shipments`
 5. **CMS** — `pages`, `menus`
 6. **Sandbox** — `modules`, `shop_modules`, `module_kv`, `domain_events`

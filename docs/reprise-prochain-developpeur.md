@@ -95,6 +95,15 @@ pas une preuve que l'arbre de travail est propre.
   rejette désormais un Wasm non conforme avant stockage. Aucune traduction PHP
   générale ni toolchain/worker de production n'est qualifié. QP-04/05 restent
   des prérequis à tout élargissement métier.
+- Le premier staging Selfnamed explicite est maintenant implémenté :
+  `POST /v1/admin/products/supplier-drafts` crée/actualise un brouillon
+  idempotent tenant-scopé à partir du DTO de prévisualisation déjà calculé.
+  Locale/devise viennent de la boutique ; tags, volume sans unité inventée et
+  disponibilité sont conservés. Le panier et le checkout refusent
+  `out_of_stock`. PostgreSQL/MariaDB ont leurs migrations ; tests ciblés et
+  intégrations temporaires PostgreSQL/MariaDB passent sous Linux. La route ne
+  lance pas encore le guest Wasm, ne télécharge pas d’image et ne publie pas.
+  Voir [`module-validation-progress.md`](module-validation-progress.md#staging-explicite-en-brouillon-selfnamed).
 - QP-03 demeure un chantier distinct : l'endpoint admin accepte un ZIP brut,
   le valide en mémoire, puis le dépose en quarantaine privée séparée des builds.
   Aucun contenu PHP n'est extrait ou exécuté.
